@@ -35,8 +35,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-06-09 12:26 CEST 98c87f3`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-06-09 12:26 CEST 98c87f3";
+// `2026-06-10 00:20 CEST aa9c782`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-06-10 00:20 CEST aa9c782";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -63,6 +63,15 @@ let refreshTimerId = null;
  * top-level static `import` would force ESM-module ordering and miss MSAL.
  */
 let WRITE_HELPERS = null;
+
+/** Dynamically imported pure helpers for the IDE-tabs view (M2.1). */
+let IDE_HELPERS = null;
+
+/** Cached last-known ide-tabs.json snapshot. Refreshed by loadIdeTabs(). */
+let cachedIdeSnapshot = null;
+
+/** Auto-refresh handle for the ide-tabs view (independent of sessions). */
+let ideRefreshTimerId = null;
 
 // =============================================================================
 // 1. Auth — MSAL.js v4 PKCE flow
@@ -213,6 +222,47 @@ async function putState(stateObj, etagOrNull) {
   return res.json().catch(() => null);
 }
 
+/**
+ * Load the OneDrive `cursor-cockpit/ide-tabs.json` snapshot written by the
+ * read-only mirror daemon (flows/mobile-cockpit/ide-mirror/poll.mjs).
+ *
+ * GET-only — the PWA never writes this file in M2.1. Returns the parsed
+ * snapshot envelope `{schemaVersion, snapshotAt, workspaceKey, workspacePath,
+ * tabs[]}`, or an empty stub `{schemaVersion:1, tabs:[]}` on 404 (daemon has
+ * not run yet). Refreshes the module-level cachedIdeSnapshot for instant
+ * re-render. Throws on any non-404 HTTP error.
+ *
+ * Skips the eTag dance entirely (no write-back side, no need for
+ * If-Match). The daemon writes ~every 10s when changed; the PWA polls
+ * `ideTabs.pollIntervalSeconds` (default 20s) -- always read-fresh, never
+ * If-None-Match (so we always see the latest write, eTag churn doesn't
+ * matter here).
+ */
+async function loadIdeTabs() {
+  const endpoint = CONFIG && CONFIG.ideTabs && CONFIG.ideTabs.endpoint;
+  if (!endpoint) {
+    throw new Error("config.ideTabs.endpoint missing -- update pwa/config.json");
+  }
+  const contentRes = await graphFetch(`${endpoint}:/content`);
+  if (contentRes.status === 404) {
+    const stub = {
+      schemaVersion: 1,
+      snapshotAt: null,
+      workspaceKey: null,
+      workspacePath: null,
+      tabs: [],
+    };
+    cachedIdeSnapshot = stub;
+    return stub;
+  }
+  if (!contentRes.ok) {
+    throw new Error(`ide-tabs.json GET failed: ${contentRes.status} ${contentRes.statusText}`);
+  }
+  const snapshot = await contentRes.json();
+  cachedIdeSnapshot = snapshot;
+  return snapshot;
+}
+
 // =============================================================================
 // 3. Pure helpers (sortable / testable)
 // =============================================================================
@@ -357,12 +407,25 @@ function setView(viewId, payload) {
   for (const section of document.querySelectorAll(".cockpit-view")) {
     section.hidden = section.dataset.viewId !== viewId;
   }
+  // Sync the mode-toggle aria-current so the active pill matches the
+  // current top-level view (the toggle is hidden by CSS in sub-views, so
+  // this only matters when we're in list / ide-tabs).
+  for (const btn of document.querySelectorAll(".cockpit-mode-btn")) {
+    btn.setAttribute(
+      "aria-current",
+      btn.dataset.targetView === viewId ? "true" : "false",
+    );
+  }
   if (viewId === "list") {
     renderList().catch((err) => showListError(err.message));
   } else if (viewId === "detail" && payload && payload.sessionId) {
     renderDetail(payload.sessionId);
   } else if (viewId === "new") {
     renderNew();
+  } else if (viewId === "ide-tabs") {
+    renderIdeTabsList().catch((err) => showIdeTabsError(err.message));
+  } else if (viewId === "ide-tab-detail" && payload && payload.composerId) {
+    renderIdeTabDetail(payload.composerId);
   }
 }
 
@@ -540,6 +603,221 @@ function populateCwdSelect() {
   }
 }
 
+// -----------------------------------------------------------------------------
+// IDE-tabs view (M2.1, read-only)
+// -----------------------------------------------------------------------------
+
+function showIdeTabsError(message) {
+  const el = document.getElementById("ide-tabs-error-state");
+  if (!el) return;
+  el.textContent = message;
+  el.hidden = false;
+}
+function clearIdeTabsError() {
+  const el = document.getElementById("ide-tabs-error-state");
+  if (el) el.hidden = true;
+}
+function showIdeDetailError(message) {
+  const el = document.getElementById("ide-detail-error-state");
+  if (!el) return;
+  el.textContent = message;
+  el.hidden = false;
+}
+function clearIdeDetailError() {
+  const el = document.getElementById("ide-detail-error-state");
+  if (el) el.hidden = true;
+}
+
+async function renderIdeTabsList() {
+  if (!IDE_HELPERS) {
+    showIdeTabsError("ide-helpers module not loaded yet (bootstrap order bug)");
+    return;
+  }
+  clearIdeTabsError();
+  const ul = document.getElementById("ide-tabs-list");
+  const empty = document.getElementById("ide-tabs-empty-state");
+  const summary = document.getElementById("ide-summary");
+  if (!ul || !empty || !summary) return;
+
+  try {
+    await loadIdeTabs(); // populates cachedIdeSnapshot
+  } catch (err) {
+    showIdeTabsError(err.message);
+    return;
+  }
+
+  const snapshot = cachedIdeSnapshot || { tabs: [] };
+  const tabs = Array.isArray(snapshot.tabs) ? snapshot.tabs : [];
+  // Defensive cap; sortIdeTabs also caps, but pulling the limit from config
+  // keeps the two paths consistent. recentSessionsCount is reused as the
+  // "max tabs to show in the list" cap.
+  const cap = (CONFIG.pwa && CONFIG.pwa.recentSessionsCount) || 50;
+  const sorted = IDE_HELPERS.sortIdeTabs(tabs, cap);
+
+  const bucket = IDE_HELPERS.summarizeWaitingOn(sorted);
+  const snapshotAtRel = IDE_HELPERS.relativeIdeTime(snapshot.snapshotAt, Date.now());
+  summary.innerHTML = "";
+  const total = document.createElement("span");
+  total.className = "cockpit-ide-summary-bucket";
+  total.innerHTML = `<strong>${bucket.total}</strong> tab${bucket.total === 1 ? "" : "s"}`;
+  summary.appendChild(total);
+  if (bucket.agent > 0) {
+    const b = document.createElement("span");
+    b.className = "cockpit-ide-summary-bucket";
+    b.innerHTML = `<strong>${bucket.agent}</strong> agent thinking`;
+    summary.appendChild(b);
+  }
+  if (bucket.user > 0) {
+    const b = document.createElement("span");
+    b.className = "cockpit-ide-summary-bucket";
+    b.innerHTML = `<strong>${bucket.user}</strong> your turn`;
+    summary.appendChild(b);
+  }
+  if (bucket.none > 0) {
+    const b = document.createElement("span");
+    b.className = "cockpit-ide-summary-bucket";
+    b.innerHTML = `<strong>${bucket.none}</strong> idle`;
+    summary.appendChild(b);
+  }
+  const ts = document.createElement("span");
+  ts.className = "cockpit-ide-summary-bucket";
+  ts.textContent = `mirrored ${snapshotAtRel}`;
+  summary.appendChild(ts);
+
+  ul.innerHTML = "";
+  if (sorted.length === 0) {
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+
+  for (const t of sorted) {
+    const li = document.createElement("li");
+    li.className = "cockpit-session-row";
+    li.dataset.composerId = t.composerId || "";
+    li.tabIndex = 0;
+    li.addEventListener("click", () => setView("ide-tab-detail", { composerId: t.composerId }));
+    li.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        setView("ide-tab-detail", { composerId: t.composerId });
+      }
+    });
+
+    const title = document.createElement("span");
+    title.className = "cockpit-row-title";
+    title.textContent = IDE_HELPERS.formatTabTitle(t.title, 60);
+    li.appendChild(title);
+
+    const status = document.createElement("span");
+    status.className = "cockpit-row-status";
+    status.dataset.waitingOn = t.waitingOn || "none";
+    status.textContent = IDE_HELPERS.waitingOnLabel(t.waitingOn);
+    li.appendChild(status);
+
+    const time = document.createElement("time");
+    time.className = "cockpit-row-time";
+    if (t.lastActivityAt) time.dateTime = t.lastActivityAt;
+    time.textContent = IDE_HELPERS.relativeIdeTime(t.lastActivityAt, Date.now());
+    li.appendChild(time);
+
+    ul.appendChild(li);
+  }
+}
+
+function renderIdeTabDetail(composerId) {
+  if (!IDE_HELPERS) {
+    showIdeDetailError("ide-helpers module not loaded yet (bootstrap order bug)");
+    return;
+  }
+  clearIdeDetailError();
+  if (!cachedIdeSnapshot || !Array.isArray(cachedIdeSnapshot.tabs)) {
+    showIdeTabsError("No cached IDE snapshot — refresh the IDE-tabs list first.");
+    setView("ide-tabs");
+    return;
+  }
+  const tab = cachedIdeSnapshot.tabs.find((x) => x.composerId === composerId);
+  if (!tab) {
+    showIdeTabsError(`IDE tab not in current snapshot: ${composerId}`);
+    setView("ide-tabs");
+    return;
+  }
+
+  const set = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text == null ? "—" : String(text);
+  };
+  set("ide-detail-title", IDE_HELPERS.formatTabTitle(tab.title, 120));
+  set("ide-detail-waiting", IDE_HELPERS.waitingOnLabel(tab.waitingOn));
+  set("ide-detail-composer-id", tab.composerId);
+  set("ide-detail-last-activity",
+      tab.lastActivityAt
+        ? `${tab.lastActivityAt} (${IDE_HELPERS.relativeIdeTime(tab.lastActivityAt, Date.now())})`
+        : "—");
+  set("ide-detail-message-count", tab.messageCount);
+  // Friendly KB formatting; falls back to bytes for sub-1KB.
+  if (typeof tab.transcriptSizeBytes === "number" && tab.transcriptSizeBytes >= 0) {
+    const kb = tab.transcriptSizeBytes / 1024;
+    set("ide-detail-transcript-size",
+        kb >= 1
+          ? `${kb.toFixed(1)} KB (${tab.transcriptSizeBytes} bytes)`
+          : `${tab.transcriptSizeBytes} bytes`);
+  } else {
+    set("ide-detail-transcript-size", "—");
+  }
+
+  const threadOl = document.getElementById("ide-detail-thread");
+  const threadEmpty = document.getElementById("ide-detail-thread-empty");
+  if (!threadOl || !threadEmpty) return;
+  threadOl.innerHTML = "";
+  const thread = Array.isArray(tab.thread) ? tab.thread : [];
+  if (thread.length === 0) {
+    threadEmpty.hidden = false;
+    return;
+  }
+  threadEmpty.hidden = true;
+  // Most-recent first — `thread` is chronological in the snapshot so we
+  // reverse for the UI. Avoid mutating the source array (cached snapshot).
+  const reversed = [...thread].reverse();
+  for (const raw of reversed) {
+    const entry = IDE_HELPERS.formatThreadEntry(raw);
+    const li = document.createElement("li");
+    li.className = "cockpit-ide-turn";
+    li.dataset.role = entry.role;
+
+    const header = document.createElement("header");
+    const label = document.createElement("span");
+    label.className = "cockpit-ide-turn-label";
+    label.textContent = entry.label;
+    header.appendChild(label);
+    if (entry.tools.length > 0) {
+      const tools = document.createElement("span");
+      tools.className = "cockpit-ide-turn-tools";
+      tools.textContent = entry.tools.length === 1
+        ? `1 tool: ${entry.tools[0]}`
+        : `${entry.tools.length} tools: ${entry.tools.slice(0, 3).join(", ")}${entry.tools.length > 3 ? "…" : ""}`;
+      header.appendChild(tools);
+    }
+    li.appendChild(header);
+
+    if (entry.text.length > 0) {
+      const p = document.createElement("p");
+      p.className = "cockpit-ide-turn-text";
+      // Cap on-screen text per turn so long agent responses stay scannable.
+      const MAX = 1200;
+      p.textContent = entry.text.length > MAX ? entry.text.slice(0, MAX) + "…" : entry.text;
+      li.appendChild(p);
+    } else if (entry.tools.length === 0) {
+      const p = document.createElement("p");
+      p.className = "cockpit-ide-turn-empty";
+      p.textContent = "(no content)";
+      li.appendChild(p);
+    }
+
+    threadOl.appendChild(li);
+  }
+}
+
 // =============================================================================
 // 6. Status badge + auto-refresh
 // =============================================================================
@@ -565,13 +843,40 @@ function flashSavedBadge(holdMs = 2000) {
 }
 
 function startAutoRefresh() {
-  if (refreshTimerId !== null) return;
-  const intervalMs = Math.max(5, (CONFIG.pwa.pollIntervalSeconds | 0)) * 1000;
-  refreshTimerId = setInterval(() => {
-    if (document.body.dataset.view === "list") {
-      renderList().catch((err) => showListError(err.message));
-    }
-  }, intervalMs);
+  if (refreshTimerId === null) {
+    const intervalMs = Math.max(5, (CONFIG.pwa.pollIntervalSeconds | 0)) * 1000;
+    refreshTimerId = setInterval(() => {
+      if (document.body.dataset.view === "list") {
+        renderList().catch((err) => showListError(err.message));
+      }
+    }, intervalMs);
+  }
+  // Independent timer for the read-only IDE-tabs view — typically faster
+  // (CONFIG.ideTabs.pollIntervalSeconds = 20 vs 30) because the GET path
+  // is lighter (no ETag dance, single content stream, daemon batches
+  // writes via fingerprint dedup so PUTs are sparse).
+  if (ideRefreshTimerId === null && CONFIG.ideTabs && CONFIG.ideTabs.pollIntervalSeconds) {
+    const ideIntervalMs = Math.max(5, (CONFIG.ideTabs.pollIntervalSeconds | 0)) * 1000;
+    ideRefreshTimerId = setInterval(() => {
+      const v = document.body.dataset.view;
+      // Refresh either the list OR the detail (so the open thread stays
+      // live if the user is reading it while the agent posts new turns).
+      if (v === "ide-tabs") {
+        renderIdeTabsList().catch((err) => showIdeTabsError(err.message));
+      } else if (v === "ide-tab-detail") {
+        // Re-fetch and re-render the same detail; if the tab disappeared
+        // from the snapshot, renderIdeTabDetail bounces back to the list.
+        loadIdeTabs()
+          .then(() => {
+            const openId = document.getElementById("ide-detail-composer-id");
+            if (openId && openId.textContent) {
+              renderIdeTabDetail(openId.textContent);
+            }
+          })
+          .catch((err) => showIdeDetailError(err.message));
+      }
+    }, ideIntervalMs);
+  }
 }
 
 // =============================================================================
@@ -652,9 +957,14 @@ async function bootstrap() {
   // Pull in the pure helpers BEFORE we wire any write handlers. Dynamic
   // import keeps this script as a classic <script defer> while letting
   // the helpers live in their own ESM module (so the Node-side unit test
-  // can import them cleanly without dragging in MSAL / DOM).
+  // can import them cleanly without dragging in MSAL / DOM). The
+  // ide-helpers module is sibling; both are loaded in parallel because
+  // they have no inter-dependency.
   try {
-    WRITE_HELPERS = await import("./write-helpers.mjs");
+    [WRITE_HELPERS, IDE_HELPERS] = await Promise.all([
+      import("./write-helpers.mjs"),
+      import("./ide-helpers.mjs"),
+    ]);
   } catch (err) {
     setStatusBadge(`helpers import error: ${err.message}`, "error");
     return;
@@ -688,8 +998,28 @@ async function bootstrap() {
   if (btnNewCancel) btnNewCancel.addEventListener("click", () => setView("list"));
   const form = document.getElementById("new-session-form");
   if (form) form.addEventListener("submit", handleNewSubmit);
+  // Back buttons use their `data-target-view` attribute so the IDE-tab
+  // detail returns to the IDE-tabs list (not to sessions).
   for (const back of document.querySelectorAll(".cockpit-back-btn")) {
-    back.addEventListener("click", () => setView("list"));
+    const target = back.dataset.targetView || "list";
+    back.addEventListener("click", () => setView(target));
+  }
+
+  // Mode toggle (Sessions / IDE tabs) — read data-target-view so we don't
+  // hard-code the mapping here.
+  for (const btn of document.querySelectorAll(".cockpit-mode-btn")) {
+    btn.addEventListener("click", () => {
+      const target = btn.dataset.targetView;
+      if (target) setView(target);
+    });
+  }
+
+  // IDE-tabs refresh button (mirror of the sessions refresh button).
+  const btnIdeRefresh = document.getElementById("btn-ide-refresh");
+  if (btnIdeRefresh) {
+    btnIdeRefresh.addEventListener("click", () => {
+      renderIdeTabsList().catch((err) => showIdeTabsError(err.message));
+    });
   }
 
   setView("list");
@@ -708,8 +1038,13 @@ if (typeof document !== "undefined") {
 // 9. Test surface
 // =============================================================================
 //
-// Pure helpers used by app.js live in ./write-helpers.mjs and ARE Node-
-// importable (see tests/flows/mobile-cockpit/pwa-write-helpers-unit.sh).
+// Pure helpers used by app.js live in two sibling ESM modules and ARE Node-
+// importable:
+//   - ./write-helpers.mjs    (Stage A2 write-path; unit-tested by
+//                             tests/flows/mobile-cockpit/pwa-write-helpers-unit.sh)
+//   - ./ide-helpers.mjs      (M2.1 read-only IDE-tabs view; unit-tested by
+//                             tests/flows/mobile-cockpit/pwa-ide-helpers-unit.sh)
+//
 // The local pure helpers in this file (sortSessions, relativeTime,
 // statusClass) are intentionally NOT module-exported here — they stay
 // internal to the browser script. Promote them to write-helpers.mjs if
@@ -717,6 +1052,7 @@ if (typeof document !== "undefined") {
 //
 // The DOM-coupled write paths (createSession / approveSession /
 // cancelSession + their button handlers + setView + renderList /
-// renderDetail / renderNew) are NOT unit-testable in isolation; they
-// are covered by live-validation runs against the OneDrive state.json
-// (see START_HERE.md §8 "Stage A2 end-to-end validation" once it lands).
+// renderDetail / renderNew + renderIdeTabsList / renderIdeTabDetail) are
+// NOT unit-testable in isolation; they are covered by live-validation
+// runs against the OneDrive state.json + ide-tabs.json (see
+// START_HERE.md §8 once that section lands).

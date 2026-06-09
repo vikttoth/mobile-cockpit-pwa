@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-06-09 12:26 CEST 98c87f3 in config.json + app.js).
+  script (replaces 2026-06-10 00:20 CEST aa9c782 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -59,6 +59,22 @@
       booting…
     </span>
   </header>
+
+  <!--
+    Top-level mode toggle: switch between read-write Sessions (mobile-spawned)
+    and read-only IDE tabs (mirror of live Cursor IDE chat tabs). app.js wires
+    the buttons to setView('list') / setView('ide-tabs') and updates the
+    aria-current attribute. The toggle is hidden in detail / new / ide-tab
+    detail views (app.js#setView toggles `body[data-view]` and CSS hides
+    .cockpit-mode-toggle when body[data-view] is anything except "list" or
+    "ide-tabs").
+  -->
+  <nav class="cockpit-mode-toggle" role="tablist" aria-label="View mode">
+    <button type="button" id="btn-mode-sessions" class="cockpit-mode-btn"
+            role="tab" data-target-view="list" aria-current="true">Sessions</button>
+    <button type="button" id="btn-mode-ide-tabs" class="cockpit-mode-btn"
+            role="tab" data-target-view="ide-tabs">IDE tabs</button>
+  </nav>
 
   <main>
     <!-- View 1: list of sessions (default). -->
@@ -144,6 +160,69 @@
         </div>
       </form>
       <p id="new-error-state" class="cockpit-error" hidden role="alert"></p>
+    </section>
+
+    <!--
+      View 4: IDE tabs list (M2.1, read-only).
+      Mirror of live Cursor IDE chat tabs from cursor-cockpit/ide-tabs.json
+      (written by flows/mobile-cockpit/ide-mirror/poll.mjs). No write-path
+      surface in M2.1; controls (open new / send message / close) land in M2.2.
+    -->
+    <section id="view-ide-tabs" class="cockpit-view" data-view-id="ide-tabs" hidden>
+      <div class="cockpit-ide-toolbar">
+        <span class="cockpit-ide-read-only" aria-label="Read-only indicator">read-only · M2.1</span>
+        <button type="button" id="btn-ide-refresh" class="cockpit-btn" aria-label="Refresh IDE tabs">↻</button>
+      </div>
+      <div class="cockpit-ide-summary" id="ide-summary" aria-live="polite">
+        <!-- Populated by app.js#renderIdeTabsList():
+             tabs total + per-bucket counts (agent/user/none) + snapshotAt -->
+      </div>
+      <ul id="ide-tabs-list" class="cockpit-session-list" role="list">
+        <!-- Populated by app.js#renderIdeTabsList() with:
+             <li class="cockpit-session-row" data-composer-id="...">
+               <span class="cockpit-row-title">…</span>
+               <span class="cockpit-row-status" data-waiting-on="…">…</span>
+               <time class="cockpit-row-time" datetime="…">…</time>
+             </li>
+        -->
+      </ul>
+      <p id="ide-tabs-empty-state" class="cockpit-empty" hidden>
+        No live IDE tabs found. Start a chat in Cursor and wait for the next
+        mirror poll (default 10 s daemon-side, 20 s PWA refresh).
+      </p>
+      <p id="ide-tabs-error-state" class="cockpit-error" hidden role="alert"></p>
+    </section>
+
+    <!--
+      View 5: single IDE-tab detail (M2.1, read-only).
+      Shows the tail thread that the daemon captured for one composer-id.
+      app.js#renderIdeTabDetail(composerId) populates from the cached snapshot.
+    -->
+    <section id="view-ide-tab-detail" class="cockpit-view" data-view-id="ide-tab-detail" hidden>
+      <button type="button" class="cockpit-back-btn" data-target-view="ide-tabs" aria-label="Back to IDE tabs">← Back to IDE tabs</button>
+      <h2 id="ide-detail-title">…</h2>
+      <dl class="cockpit-detail-meta">
+        <dt>Waiting on</dt><dd id="ide-detail-waiting">…</dd>
+        <dt>Composer ID</dt><dd id="ide-detail-composer-id">…</dd>
+        <dt>Last activity</dt><dd id="ide-detail-last-activity">…</dd>
+        <dt>Messages</dt><dd id="ide-detail-message-count">…</dd>
+        <dt>Transcript size</dt><dd id="ide-detail-transcript-size">…</dd>
+      </dl>
+      <section class="cockpit-ide-thread">
+        <h3>Thread (most recent first)</h3>
+        <ol id="ide-detail-thread" class="cockpit-ide-thread-list" role="list">
+          <!-- Populated by app.js#renderIdeTabDetail():
+               <li class="cockpit-ide-turn" data-role="user|assistant">
+                 <header><span class="cockpit-ide-turn-label">You|Agent</span><span class="cockpit-ide-turn-tools">+3 tools</span></header>
+                 <p class="cockpit-ide-turn-text">…</p>
+               </li>
+          -->
+        </ol>
+        <p id="ide-detail-thread-empty" class="cockpit-empty" hidden>
+          No turns captured yet for this tab.
+        </p>
+      </section>
+      <p id="ide-detail-error-state" class="cockpit-error" hidden role="alert"></p>
     </section>
   </main>
 

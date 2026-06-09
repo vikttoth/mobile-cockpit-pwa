@@ -163,3 +163,146 @@ main { padding: var(--cp-gap); }
   font-size: 0.85rem;
   text-align: center;
 }
+
+/* ----------------------------------------------------------------------------
+   M2.1 — mode toggle (Sessions / IDE tabs) + IDE-tabs view
+   ----------------------------------------------------------------------------
+   The toggle sits between the header and main, and is hidden in detail/new
+   sub-views via the body[data-view] selectors below. */
+
+.cockpit-mode-toggle {
+  display: flex;
+  gap: 0;
+  padding: 0 var(--cp-gap);
+  border-bottom: 1px solid var(--cp-border);
+}
+.cockpit-mode-btn {
+  flex: 1;
+  min-height: 44px;
+  padding: 10px 0;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--cp-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.cockpit-mode-btn[aria-current="true"] {
+  color: var(--cp-accent);
+  border-bottom-color: var(--cp-accent);
+  font-weight: 600;
+}
+
+/* Hide the toggle inside detail / new / ide-tab-detail (mobile real-estate). */
+body[data-view="detail"] .cockpit-mode-toggle,
+body[data-view="new"] .cockpit-mode-toggle,
+body[data-view="ide-tab-detail"] .cockpit-mode-toggle {
+  display: none;
+}
+
+.cockpit-ide-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--cp-gap);
+  margin-bottom: var(--cp-gap);
+}
+.cockpit-ide-read-only {
+  flex: 1;
+  font-size: 0.8rem;
+  color: var(--cp-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.cockpit-ide-summary {
+  margin: 0 0 var(--cp-gap);
+  padding: 8px var(--cp-gap);
+  background: rgba(74, 123, 168, 0.07);
+  border-radius: var(--cp-radius);
+  font-size: 0.9rem;
+  color: var(--cp-muted);
+}
+.cockpit-ide-summary strong { color: var(--cp-fg); font-weight: 600; }
+.cockpit-ide-summary-bucket {
+  display: inline-block;
+  margin-right: var(--cp-gap);
+}
+
+/* Per-row waiting-on color hints — keep subtle so the row hierarchy stays
+   readable on small screens. */
+.cockpit-row-status[data-waiting-on="agent"] { color: var(--cp-accent); }
+.cockpit-row-status[data-waiting-on="user"]  { color: var(--cp-warning); font-weight: 600; }
+.cockpit-row-status[data-waiting-on="none"]  { color: var(--cp-muted); }
+
+/* ----------------------------------------------------------------------------
+   IDE-tab detail thread
+   ---------------------------------------------------------------------------- */
+
+.cockpit-ide-thread { margin-top: var(--cp-gap); }
+.cockpit-ide-thread-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--cp-gap);
+}
+.cockpit-ide-turn {
+  padding: var(--cp-gap);
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+  background: var(--cp-bg);
+}
+.cockpit-ide-turn[data-role="user"] {
+  border-left: 3px solid var(--cp-warning);
+}
+.cockpit-ide-turn[data-role="assistant"] {
+  border-left: 3px solid var(--cp-accent);
+}
+.cockpit-ide-turn header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+  font-size: 0.85rem;
+}
+.cockpit-ide-turn-label { color: var(--cp-fg); font-weight: 600; }
+.cockpit-ide-turn-tools { color: var(--cp-muted); }
+.cockpit-ide-turn-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-size: 0.9rem;
+}
+.cockpit-ide-turn-empty {
+  margin: 0;
+  color: var(--cp-muted);
+  font-style: italic;
+  font-size: 0.85rem;
+}
+
+/* List rows are already styled by .cockpit-session-row (reused from sessions);
+   IDE-tabs view uses the same DOM class so tap targets / spacing stay
+   identical. Add minimal row-internal layout that matches sessions: */
+.cockpit-session-row {
+  display: grid;
+  grid-template-columns: 1fr max-content max-content;
+  gap: var(--cp-gap);
+  align-items: baseline;
+  padding: 12px var(--cp-gap);
+  border-bottom: 1px solid var(--cp-border);
+  cursor: pointer;
+  min-height: 44px;
+}
+.cockpit-session-row:hover,
+.cockpit-session-row:focus {
+  background: rgba(74, 123, 168, 0.07);
+  outline: none;
+}
+.cockpit-row-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cockpit-row-status { font-size: 0.85rem; }
+.cockpit-row-time { font-size: 0.8rem; color: var(--cp-muted); }

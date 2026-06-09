@@ -17,6 +17,12 @@
     "relativePath": "cursor-cockpit/state.json",
     "endpoint": "/me/drive/root:/cursor-cockpit/state.json"
   },
+  "ideTabs": {
+    "_comment": "M2.1 read-only mirror of live Cursor IDE chat tabs, written by flows/mobile-cockpit/ide-mirror/poll.mjs. PWA fetches GET-only; ETag tracking is not required here. The relativePath MUST match IDE_TABS_RELATIVE_PATH in ide-mirror/poll.mjs (which derives from ONEDRIVE.folderName + 'ide-tabs.json'). pollIntervalSeconds is independent of pwa.pollIntervalSeconds so the lighter read-only path can refresh faster than the sessions list.",
+    "relativePath": "cursor-cockpit/ide-tabs.json",
+    "endpoint": "/me/drive/root:/cursor-cockpit/ide-tabs.json",
+    "pollIntervalSeconds": 20
+  },
   "session": {
     "_comment": "Mirrors ALLOWED_CWDS + AUTO_APPROVE_DEFAULT from lib/config.mjs (design.md §7 L2 + L3). Coherence enforced by pwa-config-coherence.sh.",
     "allowedCwds": [
