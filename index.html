@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<!--
+  mobile-cockpit / pwa / index.html — Stage A2 (read-write).
+
+  Status: scaffolded for OneDrive + MSAL.js PKCE (post-2026-06-09 pivot).
+  Read path is wired in app.js (loadState + renderList). Write path
+  (createSession / approveSession / cancelSession) lives in
+  pwa/write-helpers.mjs + app.js (Stage A2, 2026-06-09). The pure
+  helpers are unit-tested by tests/flows/mobile-cockpit/pwa-write-helpers-unit.sh.
+
+  Deployment target (Stage B): single .html file (+ config.json + app.js +
+  write-helpers.mjs + style.css) uploaded to OneDrive at /cursor-cockpit/pwa/.
+  Mobile Edge bookmarks the share-link URL. For local development use
+  `python3 -m http.server 8000 --directory pwa/` and open
+  http://localhost:8000/ in Chrome / Edge (must match the SPA redirect URI
+  registered in Azure AD — see README.md).
+
+  Why monolithic file structure (no bundler, no framework): zero build step,
+  zero dependency drift, fits a single-file PWA deploy. MSAL Browser is
+  pinned via CDN with SRI for tamper-evidence.
+
+  Cache-busting: meta no-cache headers + a build-stamp injected by deploy
+  script (replaces 2026-06-09 12:26 CEST 98c87f3 in config.json + app.js).
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>Mobile cockpit</title>
+
+  <!--
+    MSAL Browser v4 LTS — public client / SPA / PKCE.
+
+    Bundled locally under ./vendor/ (no CDN). Microsoft deprecated the
+    @azure/msal-browser CDN as of v3.0.0 (alcdn.msauth.net only hosts
+    legacy 2.x), so the supported path is npm + self-host. To refresh:
+      curl -sLo flows/mobile-cockpit/pwa/vendor/msal-browser.min.js \
+        https://unpkg.com/@azure/msal-browser@<version>/lib/msal-browser.min.js
+    See pwa/README.md for the LTS-version pin policy.
+
+    `defer` so HTML parses fully first; app.js (also `defer`) runs after
+    this. Both defer-scripts execute in source order. app.js stays a
+    CLASSIC script (NOT type=module) so the source-order guarantee with
+    the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
+    `import("./write-helpers.mjs")` inside bootstrap() (see app.js).
+  -->
+  <script defer src="./vendor/msal-browser.min.js"></script>
+
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body data-view="list">
+  <header class="cockpit-header" role="banner">
+    <h1>Mobile cockpit</h1>
+    <span class="cockpit-status-badge" id="status-badge" data-status="unknown" aria-live="polite">
+      <!-- Filled by app.js: "signed in as ... (read-write)", "saving…", "saved", error messages. -->
+      booting…
+    </span>
+  </header>
+
+  <main>
+    <!-- View 1: list of sessions (default). -->
+    <section id="view-list" class="cockpit-view" data-view-id="list">
+      <div class="cockpit-list-toolbar">
+        <button type="button" id="btn-new-session" class="cockpit-btn cockpit-btn-primary">+ New session</button>
+        <button type="button" id="btn-refresh" class="cockpit-btn" aria-label="Refresh list">↻</button>
+      </div>
+      <ul id="session-list" class="cockpit-session-list" role="list">
+        <!-- Populated by app.js#renderList() with:
+             <li class="cockpit-session-row" data-session-id="...">
+               <span class="cockpit-row-title">…</span>
+               <span class="cockpit-row-status" data-status="...">…</span>
+               <time class="cockpit-row-time" datetime="…">…</time>
+             </li>
+        -->
+      </ul>
+      <p id="list-empty-state" class="cockpit-empty" hidden>
+        No sessions yet. Tap <strong>+ New session</strong> to create one.
+      </p>
+      <p id="list-error-state" class="cockpit-error" hidden role="alert"></p>
+    </section>
+
+    <!-- View 2: detail of a single session. -->
+    <section id="view-detail" class="cockpit-view" data-view-id="detail" hidden>
+      <button type="button" class="cockpit-back-btn" data-target-view="list" aria-label="Back to list">← Back</button>
+      <h2 id="detail-title">…</h2>
+      <dl class="cockpit-detail-meta">
+        <dt>Status</dt><dd id="detail-status">…</dd>
+        <dt>Session ID</dt><dd id="detail-session-id">…</dd>
+        <dt>Cursor agent</dt><dd id="detail-agent-id">…</dd>
+        <dt>Model</dt><dd id="detail-model">…</dd>
+        <dt>Created</dt><dd id="detail-created">…</dd>
+        <dt>Last updated</dt><dd id="detail-updated">…</dd>
+      </dl>
+      <section class="cockpit-detail-prompt">
+        <h3>Prompt</h3>
+        <pre id="detail-prompt-text">…</pre>
+      </section>
+      <section class="cockpit-detail-output">
+        <h3>Output</h3>
+        <pre id="detail-output-text">…</pre>
+      </section>
+      <div class="cockpit-detail-actions">
+        <!-- Stage A2: app.js#renderDetail() toggles visibility based on status + autoApprove. -->
+        <button type="button" id="btn-approve" class="cockpit-btn cockpit-btn-primary" hidden>Approve</button>
+        <button type="button" id="btn-cancel" class="cockpit-btn cockpit-btn-warning" hidden>Cancel</button>
+        <button type="button" id="btn-follow-up" class="cockpit-btn" hidden>Follow-up</button>
+      </div>
+      <p id="detail-error-state" class="cockpit-error" hidden role="alert"></p>
+    </section>
+
+    <!-- View 3: new-session composer (Stage A2). -->
+    <section id="view-new" class="cockpit-view" data-view-id="new" hidden>
+      <button type="button" class="cockpit-back-btn" data-target-view="list" aria-label="Back to list">← Back</button>
+      <h2>New session</h2>
+      <p class="cockpit-warning" role="note">
+        Do not include salary, talent, performance, standby, leave, or any
+        customer code / data in prompts. mobile-cockpit logs prompts and
+        outputs to OneDrive (cursor-cockpit/state.json).
+      </p>
+      <form id="new-session-form" class="cockpit-form">
+        <label>
+          Model (optional)
+          <input type="text" id="new-model" name="model" maxlength="80" autocomplete="off"
+                 placeholder="composer-2.5 (leave blank for daemon default)" />
+        </label>
+        <label>
+          Working directory
+          <!-- Options populated from CONFIG.session.allowedCwds in app.js#populateCwdSelect(). -->
+          <select id="new-cwd" name="cwd" required>
+            <option value="" selected>(daemon default)</option>
+          </select>
+        </label>
+        <label>
+          Prompt
+          <textarea id="new-prompt" name="prompt" required maxlength="8000" rows="6"
+                    placeholder="What should the agent do? Plain text only."></textarea>
+        </label>
+        <div class="cockpit-form-actions">
+          <button type="submit" id="btn-new-submit" class="cockpit-btn cockpit-btn-primary">Send</button>
+          <button type="button" id="btn-new-cancel" class="cockpit-btn">Cancel</button>
+        </div>
+      </form>
+      <p id="new-error-state" class="cockpit-error" hidden role="alert"></p>
+    </section>
+  </main>
+
+  <footer class="cockpit-footer">
+    <small>
+      mobile-cockpit Stage A2 (read-write) —
+      <span id="build-stamp" aria-label="Build timestamp">stamp-not-set</span>
+      —
+      <span id="conn-state" aria-live="polite">offline</span>
+    </small>
+  </footer>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>

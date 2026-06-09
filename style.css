@@ -1,0 +1,165 @@
+/*
+  mobile-cockpit / pwa / style.css — SCAFFOLD.
+
+  Minimal mobile-first CSS skeleton. No design system, no preprocessor.
+  Tap targets ≥ 44 × 44 CSS px. System font stack. Dark-mode-friendly via
+  prefers-color-scheme.
+
+  Reference for the structural classes used here: ./index.html
+*/
+
+:root {
+  --cp-bg: #fff;
+  --cp-fg: #1a2540;
+  --cp-muted: #7a7a7a;
+  --cp-accent: #4a7ba8;
+  --cp-warning: #d97706;
+  --cp-error: #b91c1c;
+  --cp-success: #15803d;
+  --cp-border: #d0d0d0;
+  --cp-radius: 6px;
+  --cp-gap: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cp-bg: #1a1a1a;
+    --cp-fg: #e6e6e6;
+    --cp-muted: #999;
+    --cp-border: #444;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--cp-bg);
+  color: var(--cp-fg);
+  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+
+.cockpit-header {
+  display: flex;
+  align-items: center;
+  gap: var(--cp-gap);
+  padding: var(--cp-gap);
+  border-bottom: 1px solid var(--cp-border);
+}
+.cockpit-header h1 { margin: 0; font-size: 1.2rem; flex: 1; }
+.cockpit-status-badge { font-size: 0.85rem; color: var(--cp-muted); }
+
+main { padding: var(--cp-gap); }
+.cockpit-view { display: block; }
+.cockpit-view[hidden] { display: none; }
+
+/* TODO(Phase 1.3 implementer): row layout, status badge colors per status,
+   tap target sizing, scroll behavior in <pre> blocks, focus states for
+   keyboard nav. Right now this is the bare minimum to render a non-broken
+   page. */
+
+.cockpit-btn {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px 16px;
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+  background: var(--cp-bg);
+  color: var(--cp-fg);
+  font: inherit;
+  cursor: pointer;
+}
+.cockpit-btn-primary { background: var(--cp-accent); color: #fff; border-color: var(--cp-accent); }
+.cockpit-btn-warning { background: var(--cp-warning); color: #fff; border-color: var(--cp-warning); }
+
+.cockpit-list-toolbar {
+  display: flex;
+  gap: var(--cp-gap);
+  margin-bottom: var(--cp-gap);
+}
+
+.cockpit-session-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cockpit-empty, .cockpit-error, .cockpit-warning {
+  padding: var(--cp-gap);
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+  margin: var(--cp-gap) 0;
+}
+.cockpit-error { color: var(--cp-error); border-color: var(--cp-error); }
+.cockpit-warning { color: var(--cp-warning); border-color: var(--cp-warning); font-size: 0.9rem; }
+
+.cockpit-back-btn {
+  background: none;
+  border: none;
+  color: var(--cp-accent);
+  font: inherit;
+  padding: 8px 0;
+  cursor: pointer;
+}
+
+.cockpit-form label {
+  display: block;
+  margin: var(--cp-gap) 0;
+}
+.cockpit-form input, .cockpit-form select, .cockpit-form textarea {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px;
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+  background: var(--cp-bg);
+  color: var(--cp-fg);
+  font: inherit;
+}
+
+.cockpit-detail-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px var(--cp-gap);
+  margin: var(--cp-gap) 0;
+}
+.cockpit-detail-meta dt { color: var(--cp-muted); }
+.cockpit-detail-meta dd { margin: 0; }
+
+.cockpit-detail-prompt pre,
+.cockpit-detail-output pre {
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+  padding: var(--cp-gap);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .cockpit-detail-prompt pre,
+  .cockpit-detail-output pre {
+    background: rgba(255, 255, 255, 0.04);
+  }
+}
+
+.cockpit-detail-actions {
+  display: flex;
+  gap: var(--cp-gap);
+  margin: var(--cp-gap) 0;
+}
+
+.cockpit-footer {
+  padding: var(--cp-gap);
+  border-top: 1px solid var(--cp-border);
+  color: var(--cp-muted);
+  font-size: 0.85rem;
+  text-align: center;
+}

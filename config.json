@@ -1,0 +1,35 @@
+{
+  "_comment": "mobile-cockpit / pwa / config.json — PUBLIC PWA configuration. NOT secret. Loaded by app.js at boot. Values MUST stay in lockstep with flows/mobile-cockpit/lib/config.mjs; the static guard `tests/flows/mobile-cockpit/pwa-config-coherence.sh` enforces this.",
+  "_invariant": "clientId/tenantId/scopes/stateRelativePath are mirrors of constants defined in lib/config.mjs (AZURE, GRAPH_SCOPES, STATE_RELATIVE_PATH). If you edit one, edit the other in the SAME commit.",
+  "azure": {
+    "clientId": "3597fa1a-58b0-4cd1-907e-59ad346c2c23",
+    "tenantId": "5d471751-9675-428d-917b-70f44f9630b0",
+    "authority": "https://login.microsoftonline.com/5d471751-9675-428d-917b-70f44f9630b0"
+  },
+  "graph": {
+    "scopes": [
+      "https://graph.microsoft.com/Files.ReadWrite",
+      "https://graph.microsoft.com/User.Read"
+    ],
+    "base": "https://graph.microsoft.com/v1.0"
+  },
+  "state": {
+    "relativePath": "cursor-cockpit/state.json",
+    "endpoint": "/me/drive/root:/cursor-cockpit/state.json"
+  },
+  "session": {
+    "_comment": "Mirrors ALLOWED_CWDS + AUTO_APPROVE_DEFAULT from lib/config.mjs (design.md §7 L2 + L3). Coherence enforced by pwa-config-coherence.sh.",
+    "allowedCwds": [
+      "/home/vikttoth/gitrepos/management_automation",
+      "/home/vikttoth/gitrepos/testproject-viktor"
+    ],
+    "autoApprove": false
+  },
+  "pwa": {
+    "buildStamp": "__BUILD_STAMP__",
+    "pollIntervalSeconds": 30,
+    "recentSessionsCount": 50,
+    "redirectUriDev": "http://localhost:8000/",
+    "redirectUriProdDoc": "Set this to the OneDrive-share-link URL of pwa/index.html once Stage B (deploy) runs. For Stage A1 (local dev), only redirectUriDev matters."
+  }
+}
