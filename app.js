@@ -35,8 +35,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-06-10 17:49 CEST 2a052e7`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-06-10 17:49 CEST 2a052e7";
+// `2026-06-10 18:10 CEST 2a052e7`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-06-10 18:10 CEST 2a052e7";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1209,10 +1209,8 @@ async function handleSendMessageClick() {
   }
   const text = ta.value;
   const action = IDE_ACTION_HELPERS.buildSendMessageAction({
+    tabId: activeIdeTabComposerId,
     text,
-    targetComposerId: activeIdeTabComposerId,
-    targetWorkspacePath: activeIdeWorkspacePath,
-    submittedBy: "pwa",
     now: new Date(),
     rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
   });
@@ -1273,9 +1271,8 @@ async function handleNewAgentSubmit(ev) {
   const workspace = select.value;
   const text = (ta.value || "").trim();
   const action = IDE_ACTION_HELPERS.buildNewAgentAction({
-    targetWorkspacePath: workspace,
+    workspace,
     text: text || null,
-    submittedBy: "pwa",
     now: new Date(),
     rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
   });
@@ -1318,9 +1315,7 @@ async function handleCloseTabConfirm(composerId) {
     return;
   }
   const action = IDE_ACTION_HELPERS.buildCloseTabAction({
-    targetComposerId: composerId,
-    targetWorkspacePath: activeIdeWorkspacePath,
-    submittedBy: "pwa",
+    tabId: composerId,
     now: new Date(),
     rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
   });
