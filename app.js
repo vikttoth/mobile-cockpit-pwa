@@ -15,6 +15,7 @@
 // Phase 2 (2026-06-10):
 //   - Faster detail poll while status=running (streaming output from daemon)
 //   - Follow-up / resume on done sessions (mergeQueueFollowUp + daemon --resume)
+//   - Hash routing (#list / #new / #detail/<id>) for Teams deep links + bookmarks
 //   - Teams push is daemon-side (MC_TEAMS_NOTIFY_WEBHOOK_URL); not in PWA yet
 //   - Service worker / offline cache still deferred
 //
@@ -36,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-06-10 20:48 CEST b3ebfe3`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-06-10 20:48 CEST b3ebfe3";
+// `2026-06-10 21:41 CEST ac44618`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-06-10 21:41 CEST ac44618";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -101,6 +102,9 @@ let activeIdeTabComposerId = null;
  * the workspace so the extension can refuse cross-workspace targeting.
  */
 let activeIdeWorkspacePath = null;
+
+/** When true, setView skips hash sync (hashchange handler is driving navigation). */
+let suppressHashSync = false;
 
 // =============================================================================
 // 1. Auth — MSAL.js v4 PKCE flow
@@ -466,6 +470,37 @@ async function updateSessionStatus(sessionId, newStatus) {
 // 5. Views
 // =============================================================================
 
+function syncHashForView(viewId, payload) {
+  if (typeof window === "undefined" || suppressHashSync || !WRITE_HELPERS) return;
+  const target = WRITE_HELPERS.formatViewHash(viewId, payload);
+  if (target == null) return;
+  const want = `#${target}`;
+  if (window.location.hash !== want) {
+    suppressHashSync = true;
+    try {
+      window.location.hash = target;
+    } finally {
+      suppressHashSync = false;
+    }
+  }
+}
+
+function applyHashRoute() {
+  if (!WRITE_HELPERS || typeof window === "undefined") return;
+  const route = WRITE_HELPERS.parseLocationHash(window.location.hash);
+  if (!route) return;
+  suppressHashSync = true;
+  try {
+    if (route.view === "list") setView("list");
+    else if (route.view === "new") setView("new");
+    else if (route.view === "detail" && route.sessionId) {
+      setView("detail", { sessionId: route.sessionId });
+    }
+  } finally {
+    suppressHashSync = false;
+  }
+}
+
 function setView(viewId, payload) {
   document.body.dataset.view = viewId;
   for (const section of document.querySelectorAll(".cockpit-view")) {
@@ -507,6 +542,9 @@ function setView(viewId, payload) {
   if (viewId !== "detail") {
     activeDetailSessionId = null;
     stopRunningDetailPoll();
+  }
+  if (viewId === "list" || viewId === "new" || (viewId === "detail" && payload && payload.sessionId)) {
+    syncHashForView(viewId, payload);
   }
 }
 
@@ -1579,7 +1617,11 @@ async function bootstrap() {
     setView("ide-tab-detail", { composerId: activeIdeTabComposerId });
   });
 
-  setView("list");
+  window.addEventListener("hashchange", () => {
+    if (suppressHashSync) return;
+    applyHashRoute();
+  });
+  applyHashRoute();
   startAutoRefresh();
 }
 

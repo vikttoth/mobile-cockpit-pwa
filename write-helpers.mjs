@@ -242,6 +242,50 @@ export function mergeQueueFollowUp(prevState, sessionId, { prompt, now, autoAppr
 }
 
 // =============================================================================
+// Hash routing — deep links (#detail/<sessionId>) for Teams notify + bookmarks
+// =============================================================================
+//
+// MSAL OAuth redirects use fragments like #code=... or #error=... — never
+// treat those as app routes. Only #list, #new, #detail/<id> are ours.
+
+const MSAL_OAUTH_FRAGMENT_RE =
+  /^(code|error|error_description|state|client_info|session_state)=/i;
+
+/**
+ * Parse a location hash string (e.g. "#detail/<sessionId>") into a route, or null if not ours.
+ * @returns {{ view: 'list'|'new'|'detail', sessionId?: string } | null}
+ */
+export function parseLocationHash(hash) {
+  if (hash == null || hash === "" || hash === "#") {
+    return { view: "list" };
+  }
+  const raw = String(hash).replace(/^#/, "").trim();
+  if (!raw) return { view: "list" };
+  if (MSAL_OAUTH_FRAGMENT_RE.test(raw)) return null;
+  if (raw === "list") return { view: "list" };
+  if (raw === "new") return { view: "new" };
+  const detailMatch = /^detail\/([^/?#]+)$/.exec(raw);
+  if (detailMatch) {
+    const sessionId = decodeURIComponent(detailMatch[1]);
+    if (sessionId) return { view: "detail", sessionId };
+  }
+  return null;
+}
+
+/**
+ * Build a hash string for the given view (without leading #).
+ * Returns null for views that should not update the URL (ide-* modals).
+ */
+export function formatViewHash(viewId, payload) {
+  if (viewId === "list") return "list";
+  if (viewId === "new") return "new";
+  if (viewId === "detail" && payload && payload.sessionId) {
+    return `detail/${encodeURIComponent(payload.sessionId)}`;
+  }
+  return null;
+}
+
+// =============================================================================
 // cryptoRandomBytes -- production rng wrapper for the browser
 // =============================================================================
 //
