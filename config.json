@@ -23,6 +23,15 @@
     "endpoint": "/me/drive/root:/cursor-cockpit/ide-tabs.json",
     "pollIntervalSeconds": 20
   },
+  "ideActions": {
+    "_comment": "M2.2.3 write-back: the PWA appends actions to ide-actions.json, the Cursor/VS Code extension (flows/mobile-cockpit/extension/) polls and executes them, then writes outcomes to ide-actions-results.json. relativePath + resultsRelativePath MUST match IDE_ACTIONS_RELATIVE_PATH + IDE_ACTIONS_RESULTS_RELATIVE_PATH in lib/config.mjs. resultPollIntervalSeconds controls how often the PWA polls for the extension's result of a just-submitted action (faster than the action poll because the result comes back ~1-5 s after the extension picks the action up).",
+    "relativePath": "cursor-cockpit/ide-actions.json",
+    "endpoint": "/me/drive/root:/cursor-cockpit/ide-actions.json",
+    "resultsRelativePath": "cursor-cockpit/ide-actions-results.json",
+    "resultsEndpoint": "/me/drive/root:/cursor-cockpit/ide-actions-results.json",
+    "resultPollIntervalSeconds": 3,
+    "resultTimeoutSeconds": 60
+  },
   "session": {
     "_comment": "Mirrors ALLOWED_CWDS + AUTO_APPROVE_DEFAULT from lib/config.mjs (design.md §7 L2 + L3). Coherence enforced by pwa-config-coherence.sh.",
     "allowedCwds": [

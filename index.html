@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-06-10 00:20 CEST aa9c782 in config.json + app.js).
+  script (replaces 2026-06-10 17:49 CEST 2a052e7 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -170,7 +170,8 @@
     -->
     <section id="view-ide-tabs" class="cockpit-view" data-view-id="ide-tabs" hidden>
       <div class="cockpit-ide-toolbar">
-        <span class="cockpit-ide-read-only" aria-label="Read-only indicator">read-only · M2.1</span>
+        <span class="cockpit-ide-write-back" aria-label="Write-back indicator">M2.2.3</span>
+        <button type="button" id="btn-ide-new-agent" class="cockpit-btn cockpit-btn-primary" aria-label="Open new agent in IDE">+ New agent</button>
         <button type="button" id="btn-ide-refresh" class="cockpit-btn" aria-label="Refresh IDE tabs">↻</button>
       </div>
       <div class="cockpit-ide-summary" id="ide-summary" aria-live="polite">
@@ -199,7 +200,10 @@
       app.js#renderIdeTabDetail(composerId) populates from the cached snapshot.
     -->
     <section id="view-ide-tab-detail" class="cockpit-view" data-view-id="ide-tab-detail" hidden>
-      <button type="button" class="cockpit-back-btn" data-target-view="ide-tabs" aria-label="Back to IDE tabs">← Back to IDE tabs</button>
+      <div class="cockpit-detail-header">
+        <button type="button" class="cockpit-back-btn" data-target-view="ide-tabs" aria-label="Back to IDE tabs">← Back to IDE tabs</button>
+        <button type="button" id="btn-ide-close-tab" class="cockpit-btn cockpit-btn-danger" aria-label="Close this IDE tab">✕ Close tab</button>
+      </div>
       <h2 id="ide-detail-title">…</h2>
       <dl class="cockpit-detail-meta">
         <dt>Waiting on</dt><dd id="ide-detail-waiting">…</dd>
@@ -222,8 +226,77 @@
           No turns captured yet for this tab.
         </p>
       </section>
+      <section class="cockpit-ide-compose" aria-label="Send message to this IDE tab">
+        <h3>Send to this tab</h3>
+        <label for="ide-detail-compose-text" class="cockpit-visually-hidden">Message to send</label>
+        <textarea id="ide-detail-compose-text" class="cockpit-compose-textarea"
+                  rows="4" maxlength="20000"
+                  placeholder="Type a message to inject into this tab and submit…"></textarea>
+        <div class="cockpit-compose-actions">
+          <span id="ide-detail-compose-counter" class="cockpit-compose-counter">0 / 20000</span>
+          <button type="button" id="btn-ide-send-message" class="cockpit-btn cockpit-btn-primary" disabled>Send</button>
+        </div>
+        <p id="ide-detail-compose-error" class="cockpit-error" hidden role="alert"></p>
+      </section>
       <p id="ide-detail-error-state" class="cockpit-error" hidden role="alert"></p>
     </section>
+
+    <!--
+      View 6: + New agent modal (M2.2.3). Hidden by default; shown when
+      the user clicks the toolbar button on view-ide-tabs. Submits a
+      new_agent action; on success, switches back to view-ide-tabs +
+      shows a toast linking to the polled result.
+    -->
+    <section id="view-new-agent" class="cockpit-view cockpit-modal" data-view-id="new-agent" role="dialog" aria-modal="true" aria-labelledby="new-agent-title" hidden>
+      <div class="cockpit-modal-inner">
+        <header class="cockpit-modal-header">
+          <h2 id="new-agent-title">Open a new agent</h2>
+          <button type="button" id="btn-new-agent-cancel" class="cockpit-btn" aria-label="Cancel">✕</button>
+        </header>
+        <form id="form-new-agent" class="cockpit-modal-body">
+          <label for="new-agent-workspace">Workspace</label>
+          <select id="new-agent-workspace" name="workspace" required>
+            <!-- Populated by app.js from CONFIG.session.allowedCwds at boot. -->
+          </select>
+          <label for="new-agent-text">Initial message (optional)</label>
+          <textarea id="new-agent-text" name="text" rows="3" maxlength="20000"
+                    placeholder="Optional first prompt to pre-fill + submit in the new tab."></textarea>
+          <p id="new-agent-error" class="cockpit-error" hidden role="alert"></p>
+          <div class="cockpit-modal-actions">
+            <button type="button" id="btn-new-agent-cancel-bottom" class="cockpit-btn">Cancel</button>
+            <button type="submit" id="btn-new-agent-create" class="cockpit-btn cockpit-btn-primary">Create</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!--
+      View 7: Close-tab confirmation modal (M2.2.3). Shown before the
+      destructive close_tab action is submitted. Per personal-kb.mdc
+      "Side-effect szabály" — destructive operations must surface
+      explicit user approval.
+    -->
+    <section id="view-close-confirm" class="cockpit-view cockpit-modal" data-view-id="close-confirm" role="dialog" aria-modal="true" aria-labelledby="close-confirm-title" hidden>
+      <div class="cockpit-modal-inner">
+        <header class="cockpit-modal-header">
+          <h2 id="close-confirm-title">Close IDE tab?</h2>
+        </header>
+        <div class="cockpit-modal-body">
+          <p>This will close the chat tab <strong id="close-confirm-title-name">…</strong> in the IDE. Unsaved scratch may be lost.</p>
+          <p class="cockpit-empty">Composer ID: <code id="close-confirm-tab-id">…</code></p>
+          <div class="cockpit-modal-actions">
+            <button type="button" id="btn-close-cancel" class="cockpit-btn">Cancel</button>
+            <button type="button" id="btn-close-confirm" class="cockpit-btn cockpit-btn-danger">Close tab</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!--
+      Toast container for action-result notifications (M2.2.3).
+      app.js#showToast(message, kind) appends transient banners here.
+    -->
+    <aside id="cockpit-toast-container" class="cockpit-toast-container" aria-live="polite"></aside>
   </main>
 
   <footer class="cockpit-footer">

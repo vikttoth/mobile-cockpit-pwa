@@ -306,3 +306,175 @@ body[data-view="ide-tab-detail"] .cockpit-mode-toggle {
 }
 .cockpit-row-status { font-size: 0.85rem; }
 .cockpit-row-time { font-size: 0.8rem; color: var(--cp-muted); }
+
+/* ----------------------------------------------------------------------------
+   M2.2.3 write-back UI: send-message compose, new-agent + close-tab modals,
+   danger button, toast container.
+   ---------------------------------------------------------------------------- */
+
+.cockpit-ide-write-back {
+  flex: 1;
+  font-size: 0.8rem;
+  color: var(--cp-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+.cockpit-btn-danger {
+  background: var(--cp-error);
+  color: #fff;
+  border-color: var(--cp-error);
+}
+
+.cockpit-detail-header {
+  display: flex;
+  align-items: center;
+  gap: var(--cp-gap);
+  margin-bottom: var(--cp-gap);
+}
+.cockpit-detail-header .cockpit-back-btn { flex: 1; }
+
+.cockpit-ide-compose {
+  margin-top: calc(var(--cp-gap) * 2);
+  padding: var(--cp-gap);
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+  background: rgba(74, 123, 168, 0.04);
+}
+.cockpit-ide-compose h3 {
+  margin: 0 0 var(--cp-gap);
+  font-size: 1rem;
+}
+.cockpit-compose-textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+  background: var(--cp-bg);
+  color: var(--cp-fg);
+  font: inherit;
+  resize: vertical;
+  min-height: 88px;
+}
+.cockpit-compose-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--cp-gap);
+  margin-top: 8px;
+}
+.cockpit-compose-counter {
+  flex: 1;
+  font-size: 0.8rem;
+  color: var(--cp-muted);
+  font-variant-numeric: tabular-nums;
+}
+.cockpit-compose-counter[data-over="true"] {
+  color: var(--cp-error);
+  font-weight: 600;
+}
+
+/* Modal overlay (new-agent + close-confirm) — full-screen on mobile, centered
+   on wider screens. */
+.cockpit-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  padding: var(--cp-gap);
+}
+.cockpit-modal[hidden] { display: none; }
+.cockpit-modal-inner {
+  background: var(--cp-bg);
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.cockpit-modal-header {
+  display: flex;
+  align-items: center;
+  gap: var(--cp-gap);
+  padding: var(--cp-gap);
+  border-bottom: 1px solid var(--cp-border);
+}
+.cockpit-modal-header h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 1.1rem;
+}
+.cockpit-modal-body {
+  padding: var(--cp-gap);
+  display: flex;
+  flex-direction: column;
+  gap: var(--cp-gap);
+}
+.cockpit-modal-body label {
+  font-size: 0.85rem;
+  color: var(--cp-muted);
+  font-weight: 600;
+}
+.cockpit-modal-body select,
+.cockpit-modal-body textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+  background: var(--cp-bg);
+  color: var(--cp-fg);
+  font: inherit;
+}
+.cockpit-modal-body textarea { resize: vertical; min-height: 72px; }
+.cockpit-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--cp-gap);
+  margin-top: var(--cp-gap);
+}
+
+.cockpit-visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0);
+  border: 0;
+}
+
+/* Toast container — fixed bottom-center, narrow on mobile. */
+.cockpit-toast-container {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--cp-gap) + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 200;
+  pointer-events: none;
+}
+.cockpit-toast {
+  pointer-events: auto;
+  padding: 10px 16px;
+  border-radius: var(--cp-radius);
+  background: var(--cp-fg);
+  color: var(--cp-bg);
+  font-size: 0.9rem;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+  max-width: 88vw;
+  text-align: center;
+  animation: cockpit-toast-in 180ms ease-out;
+}
+.cockpit-toast[data-kind="success"] { background: var(--cp-success); color: #fff; }
+.cockpit-toast[data-kind="error"]   { background: var(--cp-error);   color: #fff; }
+.cockpit-toast[data-kind="info"]    { background: var(--cp-accent);  color: #fff; }
+@keyframes cockpit-toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}

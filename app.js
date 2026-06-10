@@ -35,8 +35,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-06-10 00:20 CEST aa9c782`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-06-10 00:20 CEST aa9c782";
+// `2026-06-10 17:49 CEST 2a052e7`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-06-10 17:49 CEST 2a052e7";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -72,6 +72,28 @@ let cachedIdeSnapshot = null;
 
 /** Auto-refresh handle for the ide-tabs view (independent of sessions). */
 let ideRefreshTimerId = null;
+
+/**
+ * Dynamically imported pure helpers for the M2.2.3 write-back actions
+ * (`pwa/ide-actions-helpers.mjs`). Populated by bootstrap() before any
+ * action button is wired.
+ */
+let IDE_ACTION_HELPERS = null;
+
+/**
+ * Composer ID currently shown in `view-ide-tab-detail`. Cached so the
+ * "Close tab" confirmation modal and the "Send" button handler know
+ * which tab to target without re-parsing the DOM. Cleared when leaving
+ * the detail view.
+ */
+let activeIdeTabComposerId = null;
+
+/**
+ * Active workspace path that the extension is currently bound to (read
+ * from `cachedIdeSnapshot.workspacePath`). Every M2.2.3 action carries
+ * the workspace so the extension can refuse cross-workspace targeting.
+ */
+let activeIdeWorkspacePath = null;
 
 // =============================================================================
 // 1. Auth — MSAL.js v4 PKCE flow
@@ -426,6 +448,17 @@ function setView(viewId, payload) {
     renderIdeTabsList().catch((err) => showIdeTabsError(err.message));
   } else if (viewId === "ide-tab-detail" && payload && payload.composerId) {
     renderIdeTabDetail(payload.composerId);
+  } else if (viewId === "new-agent") {
+    renderNewAgentModal();
+  } else if (viewId === "close-confirm" && payload && payload.composerId) {
+    renderCloseConfirmModal(payload.composerId, payload.title || "");
+  }
+  // Drop the cached composer ID when navigating away from the IDE detail
+  // view so a stale value can't accidentally target the wrong tab on a
+  // later send/close click. The close-confirm + new-agent modals overlay
+  // the detail view and intentionally KEEP the cached ID.
+  if (viewId !== "ide-tab-detail" && viewId !== "close-confirm") {
+    activeIdeTabComposerId = null;
   }
 }
 
@@ -743,6 +776,24 @@ function renderIdeTabDetail(composerId) {
     return;
   }
 
+  // Cache for the send / close handlers; cleared by setView when navigating away.
+  activeIdeTabComposerId = tab.composerId;
+  activeIdeWorkspacePath = cachedIdeSnapshot.workspacePath || null;
+
+  // Refresh compose UI state (textarea cleared + counter reset + button disabled).
+  resetComposeUi();
+
+  // Wire the Close-tab button to the confirm modal. Idempotent on every
+  // re-render — we re-attach because the modal payload (composer ID +
+  // title) depends on which tab is open.
+  const btnClose = document.getElementById("btn-ide-close-tab");
+  if (btnClose) {
+    btnClose.onclick = () => setView("close-confirm", {
+      composerId: tab.composerId,
+      title: IDE_HELPERS.formatTabTitle(tab.title, 60),
+    });
+  }
+
   const set = (id, text) => {
     const el = document.getElementById(id);
     if (el) el.textContent = text == null ? "—" : String(text);
@@ -933,6 +984,364 @@ async function handleCancelClick(sessionId) {
 }
 
 // =============================================================================
+// 7b. M2.2.3 write-back: actions file I/O + toast + modal renderers
+// =============================================================================
+//
+// Shape (mirrors lib/config.mjs + extension/src/lib/types.ts):
+//   - GET  cursor-cockpit/ide-actions.json         (action queue)
+//   - PUT  cursor-cockpit/ide-actions.json         (append a new action)
+//   - GET  cursor-cockpit/ide-actions-results.json (poll for the result)
+//
+// The PWA is the only writer for ide-actions.json (single-writer); the
+// extension is the only writer for ide-actions-results.json. Therefore
+// we DO NOT need optimistic-concurrency ETag handshakes here — the
+// flows are append-only on a single writer per file. Compare with
+// state.json (multi-writer between PWA + daemon) which keeps the
+// If-Match dance.
+//
+// Result polling: after a successful PUT, we kick off a short polling
+// loop that GET-fetches ide-actions-results.json every
+// CONFIG.ideActions.resultPollIntervalSeconds until the matching
+// actionId appears or CONFIG.ideActions.resultTimeoutSeconds elapses.
+// The current toast reflects the outcome (in_progress → done → success
+// toast; error → error toast).
+
+/**
+ * Load ide-actions.json from OneDrive. Returns a normalized object
+ * (`{ schemaVersion, snapshotAt, actions }`) — on 404 we synthesize an
+ * empty stub so the very first PUT can seed the file.
+ */
+async function loadIdeActionsFile() {
+  const endpoint = CONFIG && CONFIG.ideActions && CONFIG.ideActions.endpoint;
+  if (!endpoint) {
+    throw new Error("config.ideActions.endpoint missing -- update pwa/config.json");
+  }
+  const res = await graphFetch(`${endpoint}:/content`);
+  if (res.status === 404) {
+    return { schemaVersion: 1, snapshotAt: null, actions: [] };
+  }
+  if (!res.ok) {
+    throw new Error(`ide-actions.json GET failed: ${res.status} ${res.statusText}`);
+  }
+  return await res.json();
+}
+
+/**
+ * PUT a fresh ide-actions.json. The action file is single-writer (PWA
+ * only), so no If-Match handshake. On any non-2xx response the caller
+ * surfaces an error toast.
+ */
+async function putIdeActionsFile(nextFile) {
+  const endpoint = CONFIG && CONFIG.ideActions && CONFIG.ideActions.endpoint;
+  if (!endpoint) {
+    throw new Error("config.ideActions.endpoint missing -- update pwa/config.json");
+  }
+  const res = await graphFetch(`${endpoint}:/content`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(nextFile),
+  });
+  if (!res.ok) {
+    throw new Error(`ide-actions.json PUT failed: ${res.status} ${res.statusText}`);
+  }
+}
+
+/**
+ * GET ide-actions-results.json. Returns null on 404 (extension never
+ * wrote a result yet); otherwise returns the parsed file.
+ */
+async function loadIdeActionsResultsFile() {
+  const endpoint = CONFIG && CONFIG.ideActions && CONFIG.ideActions.resultsEndpoint;
+  if (!endpoint) return null;
+  const res = await graphFetch(`${endpoint}:/content`);
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`ide-actions-results.json GET failed: ${res.status} ${res.statusText}`);
+  }
+  return await res.json();
+}
+
+/**
+ * Submit an action: append + PUT. On success, kicks off the result
+ * polling loop in the background and returns immediately so the caller
+ * can update the UI optimistically.
+ */
+async function submitIdeAction(action) {
+  if (!IDE_ACTION_HELPERS) {
+    throw new Error("ide-actions-helpers not loaded yet (bootstrap order bug)");
+  }
+  const prev = await loadIdeActionsFile();
+  const next = IDE_ACTION_HELPERS.mergeAppendAction(prev, action, new Date());
+  await putIdeActionsFile(next);
+  // Fire-and-forget the result poll; UI toast is updated inside.
+  pollIdeActionResult(action).catch((err) => {
+    showToast(`Action ${action.kind} (${action.actionId.slice(0, 8)}) result poll failed: ${err.message}`, "error");
+  });
+}
+
+/**
+ * Poll ide-actions-results.json until a result for `action.actionId`
+ * shows up OR the configured timeout elapses. Surfaces a toast on
+ * terminal states (`done`, `error`, `skipped`). Pure infinite loops are
+ * avoided via the timeout guard.
+ */
+async function pollIdeActionResult(action) {
+  const intervalMs = Math.max(1, (CONFIG.ideActions.resultPollIntervalSeconds | 0)) * 1000;
+  const timeoutMs = Math.max(5, (CONFIG.ideActions.resultTimeoutSeconds | 0)) * 1000;
+  const startedAt = Date.now();
+  showToast(`${humanizeKind(action.kind)} queued (${action.actionId.slice(0, 8)})…`, "info");
+  while (Date.now() - startedAt < timeoutMs) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    let file;
+    try {
+      file = await loadIdeActionsResultsFile();
+    } catch (err) {
+      // Network blip — keep trying; final timeout still applies.
+      continue;
+    }
+    const entry = IDE_ACTION_HELPERS.findResultForAction(file, action.actionId);
+    if (!entry) continue;
+    if (entry.status === "in_progress") {
+      // Extension picked it up but hasn't finished — keep polling.
+      continue;
+    }
+    if (entry.status === "done") {
+      showToast(`${humanizeKind(action.kind)} done.`, "success");
+      // Trigger a fresh IDE-tabs render so the user sees the new tab /
+      // closed tab. The detail view also auto-refreshes via the IDE
+      // refresh timer; we just give it a head start.
+      // Best-effort head-start refresh. The auto-refresh timer will
+      // retry on its next tick if either path fails; we log to console
+      // instead of toasting so a transient blip doesn't compete with
+      // the just-shown success banner.
+      loadIdeTabs().then(() => {
+        if (document.body.dataset.view === "ide-tabs") {
+          renderIdeTabsList().catch((e) => console.warn("post-action ide-tabs render failed:", e));
+        }
+      }).catch((e) => console.warn("post-action ide-tabs reload failed:", e));
+      return;
+    }
+    if (entry.status === "error") {
+      showToast(`${humanizeKind(action.kind)} failed: ${entry.error || "unknown"}`, "error");
+      return;
+    }
+    if (entry.status === "skipped") {
+      showToast(`${humanizeKind(action.kind)} skipped: ${entry.error || "no reason"}`, "info");
+      return;
+    }
+  }
+  showToast(`${humanizeKind(action.kind)} timed out waiting for extension result.`, "error");
+}
+
+function humanizeKind(kind) {
+  switch (kind) {
+    case "send_message": return "Send message";
+    case "new_agent":    return "New agent";
+    case "close_tab":    return "Close tab";
+    default:             return kind;
+  }
+}
+
+/**
+ * Append a toast banner to the bottom-center stack; auto-dismiss after
+ * ~5 s. `kind` ∈ {"info", "success", "error"} — styled via CSS.
+ */
+function showToast(message, kind) {
+  const container = document.getElementById("cockpit-toast-container");
+  if (!container) return;
+  const el = document.createElement("div");
+  el.className = "cockpit-toast";
+  el.dataset.kind = kind || "info";
+  el.textContent = message;
+  container.appendChild(el);
+  setTimeout(() => {
+    el.style.transition = "opacity 200ms ease-out";
+    el.style.opacity = "0";
+    setTimeout(() => el.remove(), 250);
+  }, 5000);
+}
+
+// -----------------------------------------------------------------------------
+// Compose UI (per-tab Send) — wired by renderIdeTabDetail()
+// -----------------------------------------------------------------------------
+
+function resetComposeUi() {
+  const ta = document.getElementById("ide-detail-compose-text");
+  const btn = document.getElementById("btn-ide-send-message");
+  const counter = document.getElementById("ide-detail-compose-counter");
+  const err = document.getElementById("ide-detail-compose-error");
+  if (ta) ta.value = "";
+  if (counter) {
+    counter.textContent = `0 / ${IDE_ACTION_HELPERS ? IDE_ACTION_HELPERS.MAX_TEXT_LEN : 20000}`;
+    counter.dataset.over = "false";
+  }
+  if (btn) btn.disabled = true;
+  if (err) err.hidden = true;
+}
+
+function wireComposeUi() {
+  const ta = document.getElementById("ide-detail-compose-text");
+  const btn = document.getElementById("btn-ide-send-message");
+  const counter = document.getElementById("ide-detail-compose-counter");
+  if (!ta || !btn || !counter) return;
+  const max = IDE_ACTION_HELPERS ? IDE_ACTION_HELPERS.MAX_TEXT_LEN : 20000;
+  ta.addEventListener("input", () => {
+    const len = ta.value.length;
+    counter.textContent = `${len} / ${max}`;
+    counter.dataset.over = len > max ? "true" : "false";
+    btn.disabled = len === 0 || len > max;
+  });
+  btn.addEventListener("click", () => handleSendMessageClick());
+}
+
+async function handleSendMessageClick() {
+  const ta = document.getElementById("ide-detail-compose-text");
+  const btn = document.getElementById("btn-ide-send-message");
+  const err = document.getElementById("ide-detail-compose-error");
+  if (!ta || !btn) return;
+  if (!activeIdeTabComposerId) {
+    if (err) { err.textContent = "No active IDE tab — re-open the tab from the list."; err.hidden = false; }
+    return;
+  }
+  if (!IDE_ACTION_HELPERS) {
+    if (err) { err.textContent = "Action helpers not loaded."; err.hidden = false; }
+    return;
+  }
+  const text = ta.value;
+  const action = IDE_ACTION_HELPERS.buildSendMessageAction({
+    text,
+    targetComposerId: activeIdeTabComposerId,
+    targetWorkspacePath: activeIdeWorkspacePath,
+    submittedBy: "pwa",
+    now: new Date(),
+    rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
+  });
+  const allowedCwds = (CONFIG.session && CONFIG.session.allowedCwds) || [];
+  const validation = IDE_ACTION_HELPERS.validateActionInputs(action, allowedCwds);
+  if (!validation.valid) {
+    if (err) { err.textContent = validation.errors.join("; "); err.hidden = false; }
+    return;
+  }
+  if (err) err.hidden = true;
+  btn.disabled = true;
+  try {
+    await submitIdeAction(action);
+    resetComposeUi();
+  } catch (e) {
+    if (err) { err.textContent = e.message; err.hidden = false; }
+    btn.disabled = false;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// New-agent modal — toolbar button → modal → action
+// -----------------------------------------------------------------------------
+
+function renderNewAgentModal() {
+  // Populate the workspace dropdown from CONFIG.session.allowedCwds.
+  const select = document.getElementById("new-agent-workspace");
+  const ta = document.getElementById("new-agent-text");
+  const err = document.getElementById("new-agent-error");
+  if (!select) return;
+  const allowed = (CONFIG.session && CONFIG.session.allowedCwds) || [];
+  select.innerHTML = "";
+  // Pre-select the current IDE workspace if it's in the allow-list — that
+  // matches the user's mental model ("open another agent in this project").
+  const current = (cachedIdeSnapshot && cachedIdeSnapshot.workspacePath) || null;
+  for (const cwd of allowed) {
+    const opt = document.createElement("option");
+    opt.value = cwd;
+    opt.textContent = cwd;
+    if (cwd === current) opt.selected = true;
+    select.appendChild(opt);
+  }
+  if (ta) ta.value = "";
+  if (err) err.hidden = true;
+}
+
+async function handleNewAgentSubmit(ev) {
+  ev.preventDefault();
+  const select = document.getElementById("new-agent-workspace");
+  const ta = document.getElementById("new-agent-text");
+  const err = document.getElementById("new-agent-error");
+  const btn = document.getElementById("btn-new-agent-create");
+  if (!select || !ta) return;
+  if (!IDE_ACTION_HELPERS) {
+    if (err) { err.textContent = "Action helpers not loaded."; err.hidden = false; }
+    return;
+  }
+  const workspace = select.value;
+  const text = (ta.value || "").trim();
+  const action = IDE_ACTION_HELPERS.buildNewAgentAction({
+    targetWorkspacePath: workspace,
+    text: text || null,
+    submittedBy: "pwa",
+    now: new Date(),
+    rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
+  });
+  const allowedCwds = (CONFIG.session && CONFIG.session.allowedCwds) || [];
+  const validation = IDE_ACTION_HELPERS.validateActionInputs(action, allowedCwds);
+  if (!validation.valid) {
+    if (err) { err.textContent = validation.errors.join("; "); err.hidden = false; }
+    return;
+  }
+  if (err) err.hidden = true;
+  if (btn) btn.disabled = true;
+  try {
+    await submitIdeAction(action);
+    setView("ide-tabs");
+  } catch (e) {
+    if (err) { err.textContent = e.message; err.hidden = false; }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Close-tab confirmation modal — wired on render so the payload is fresh
+// -----------------------------------------------------------------------------
+
+function renderCloseConfirmModal(composerId, title) {
+  const titleEl = document.getElementById("close-confirm-title-name");
+  const idEl = document.getElementById("close-confirm-tab-id");
+  const btnConfirm = document.getElementById("btn-close-confirm");
+  if (titleEl) titleEl.textContent = title || "(untitled)";
+  if (idEl) idEl.textContent = composerId || "—";
+  if (btnConfirm) {
+    btnConfirm.onclick = () => handleCloseTabConfirm(composerId);
+  }
+}
+
+async function handleCloseTabConfirm(composerId) {
+  if (!IDE_ACTION_HELPERS) {
+    showToast("Action helpers not loaded.", "error");
+    return;
+  }
+  const action = IDE_ACTION_HELPERS.buildCloseTabAction({
+    targetComposerId: composerId,
+    targetWorkspacePath: activeIdeWorkspacePath,
+    submittedBy: "pwa",
+    now: new Date(),
+    rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
+  });
+  const allowedCwds = (CONFIG.session && CONFIG.session.allowedCwds) || [];
+  const validation = IDE_ACTION_HELPERS.validateActionInputs(action, allowedCwds);
+  if (!validation.valid) {
+    showToast(`Close-tab validation failed: ${validation.errors.join("; ")}`, "error");
+    return;
+  }
+  try {
+    await submitIdeAction(action);
+    // Pop the user back to the IDE-tabs list — the detail view will be
+    // dead once the extension confirms the close anyway, and showing
+    // an empty thread is worse than dropping to the list.
+    setView("ide-tabs");
+  } catch (e) {
+    showToast(`Close-tab failed: ${e.message}`, "error");
+  }
+}
+
+// =============================================================================
 // 8. Bootstrap
 // =============================================================================
 
@@ -961,9 +1370,10 @@ async function bootstrap() {
   // ide-helpers module is sibling; both are loaded in parallel because
   // they have no inter-dependency.
   try {
-    [WRITE_HELPERS, IDE_HELPERS] = await Promise.all([
+    [WRITE_HELPERS, IDE_HELPERS, IDE_ACTION_HELPERS] = await Promise.all([
       import("./write-helpers.mjs"),
       import("./ide-helpers.mjs"),
+      import("./ide-actions-helpers.mjs"),
     ]);
   } catch (err) {
     setStatusBadge(`helpers import error: ${err.message}`, "error");
@@ -1021,6 +1431,27 @@ async function bootstrap() {
       renderIdeTabsList().catch((err) => showIdeTabsError(err.message));
     });
   }
+
+  // M2.2.3 wireup: + New agent toolbar button, compose textarea + Send,
+  // close-confirm modal cancel buttons, new-agent modal form + cancels.
+  const btnNewAgent = document.getElementById("btn-ide-new-agent");
+  if (btnNewAgent) {
+    btnNewAgent.addEventListener("click", () => setView("new-agent"));
+  }
+  wireComposeUi();
+  const newAgentForm = document.getElementById("form-new-agent");
+  if (newAgentForm) newAgentForm.addEventListener("submit", handleNewAgentSubmit);
+  for (const id of ["btn-new-agent-cancel", "btn-new-agent-cancel-bottom"]) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("click", () => setView("ide-tabs"));
+  }
+  const btnCloseCancel = document.getElementById("btn-close-cancel");
+  if (btnCloseCancel) btnCloseCancel.addEventListener("click", () => {
+    // Modal overlays the detail view; restore the detail without losing
+    // scroll position by simply hiding the modal and re-showing the
+    // existing detail view.
+    setView("ide-tab-detail", { composerId: activeIdeTabComposerId });
+  });
 
   setView("list");
   startAutoRefresh();
