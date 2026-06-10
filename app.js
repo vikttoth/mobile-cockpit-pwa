@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-06-10 23:58 CEST f270f68`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-06-10 23:58 CEST f270f68";
+// `2026-06-11 00:25 CEST 903b108`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-06-11 00:25 CEST 903b108";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -101,6 +101,9 @@ let ideListMode = "open";
 
 /** Auto-refresh handle for the ide-tabs view (independent of sessions). */
 let ideRefreshTimerId = null;
+
+/** Faster poll while an IDE tab detail shows waitingOn=agent (mirror lag). */
+let ideDetailFastTimerId = null;
 
 /**
  * Dynamically imported pure helpers for the M2.2.3 write-back actions
@@ -737,6 +740,9 @@ function setView(viewId, payload) {
     activeDetailSessionId = null;
     stopRunningDetailPoll();
   }
+  if (viewId !== "ide-tab-detail") {
+    stopIdeDetailFastPoll();
+  }
   if (viewId === "list" || viewId === "new" || (viewId === "detail" && payload && payload.sessionId)) {
     syncHashForView(viewId, payload);
   }
@@ -1153,6 +1159,8 @@ function renderIdeTabDetail(composerId, options = {}) {
     if (err) err.hidden = true;
   }
 
+  syncIdeDetailFastPoll();
+
   // Wire the Close-tab button to the confirm modal. Idempotent on every
   // re-render — we re-attach because the modal payload (composer ID +
   // title) depends on which tab is open.
@@ -1257,21 +1265,27 @@ function renderIdeTabDetail(composerId, options = {}) {
  * @param {string} text
  * @returns {Promise<void>}
  */
+function revealComposeError(message) {
+  const err = document.getElementById("ide-detail-compose-error");
+  if (err) {
+    err.textContent = message;
+    err.hidden = false;
+    err.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+  showToast(message, "error");
+}
+
 async function sendIdeTabMessage(text) {
   const err = document.getElementById("ide-detail-compose-error");
   if (!activeIdeTabComposerId) {
-    if (err) {
-      err.textContent = "No active IDE tab — re-open the tab from the list.";
-      err.hidden = false;
-    }
-    throw new Error("no active IDE tab");
+    const msg = "No active IDE tab — re-open the tab from the list.";
+    revealComposeError(msg);
+    throw new Error(msg);
   }
   if (!IDE_ACTION_HELPERS) {
-    if (err) {
-      err.textContent = "Action helpers not loaded.";
-      err.hidden = false;
-    }
-    throw new Error("action helpers not loaded");
+    const msg = "Action helpers not loaded.";
+    revealComposeError(msg);
+    throw new Error(msg);
   }
   const trimmed = String(text || "").trim();
   if (!trimmed) {
@@ -1287,10 +1301,7 @@ async function sendIdeTabMessage(text) {
   const validation = IDE_ACTION_HELPERS.validateActionInputs(action, allowedCwds);
   if (!validation.valid) {
     const msg = validation.errors.join("; ");
-    if (err) {
-      err.textContent = msg;
-      err.hidden = false;
-    }
+    revealComposeError(msg);
     throw new Error(msg);
   }
   if (err) err.hidden = true;
@@ -1555,6 +1566,34 @@ function stopRunningDetailPoll() {
   }
 }
 
+function stopIdeDetailFastPoll() {
+  if (ideDetailFastTimerId !== null) {
+    clearInterval(ideDetailFastTimerId);
+    ideDetailFastTimerId = null;
+  }
+}
+
+/** ~5s refresh while agent is thinking — default IDE poll is 20s. */
+function syncIdeDetailFastPoll() {
+  stopIdeDetailFastPoll();
+  if (document.body.dataset.view !== "ide-tab-detail" || !cachedIdeSnapshot || !activeIdeTabComposerId) {
+    return;
+  }
+  if (!IDE_HELPERS) return;
+  const tab = IDE_HELPERS.findIdeTab(cachedIdeSnapshot, activeIdeTabComposerId);
+  if (!tab || tab.waitingOn !== "agent") return;
+  const sec = (CONFIG.pwa && CONFIG.pwa.runningPollIntervalSeconds) || 5;
+  const intervalMs = Math.max(3, sec | 0) * 1000;
+  ideDetailFastTimerId = setInterval(() => {
+    if (document.body.dataset.view !== "ide-tab-detail" || !activeIdeTabComposerId) return;
+    loadIdeTabs()
+      .then(() => {
+        renderIdeTabDetail(activeIdeTabComposerId, { preserveCompose: true });
+      })
+      .catch((err) => console.warn("ide detail fast poll failed:", err));
+  }, intervalMs);
+}
+
 function syncRunningDetailPoll() {
   stopRunningDetailPoll();
   if (document.body.dataset.view !== "detail" || !activeDetailSessionId || !cachedState) return;
@@ -1774,12 +1813,22 @@ async function submitIdeAction(action) {
   if (!IDE_ACTION_HELPERS) {
     throw new Error("ide-actions-helpers not loaded yet (bootstrap order bug)");
   }
-  const prev = await loadIdeActionsFile();
-  const next = IDE_ACTION_HELPERS.mergeAppendAction(prev, action, new Date());
-  await putIdeActionsFile(next);
+  const label = humanizeKind(action.kind);
+  showToast(`${label}…`, "info");
+  try {
+    const prev = await loadIdeActionsFile();
+    const next = IDE_ACTION_HELPERS.mergeAppendAction(prev, action, new Date());
+    await putIdeActionsFile(next);
+  } catch (err) {
+    showToast(`${label} failed: ${err.message}`, "error");
+    throw err;
+  }
   // Fire-and-forget the result poll; UI toast is updated inside.
-  pollIdeActionResult(action).catch((err) => {
-    showToast(`Action ${action.kind} (${action.actionId.slice(0, 8)}) result poll failed: ${err.message}`, "error");
+  pollIdeActionResult(action).catch((pollErr) => {
+    showToast(
+      `${label} (${action.actionId.slice(0, 8)}) result poll failed: ${pollErr.message}`,
+      "error",
+    );
   });
 }
 
@@ -1793,7 +1842,7 @@ async function pollIdeActionResult(action) {
   const intervalMs = Math.max(1, (CONFIG.ideActions.resultPollIntervalSeconds | 0)) * 1000;
   const timeoutMs = Math.max(5, (CONFIG.ideActions.resultTimeoutSeconds | 0)) * 1000;
   const startedAt = Date.now();
-  showToast(`${humanizeKind(action.kind)} queued (${action.actionId.slice(0, 8)})…`, "info");
+  const label = humanizeKind(action.kind);
   while (Date.now() - startedAt < timeoutMs) {
     await new Promise((r) => setTimeout(r, intervalMs));
     let file;
@@ -1810,7 +1859,7 @@ async function pollIdeActionResult(action) {
       continue;
     }
     if (entry.status === "done") {
-      showToast(`${humanizeKind(action.kind)} done.`, "success");
+      showToast(`${label} done.`, "success");
       // Trigger a fresh IDE-tabs render so the user sees the new tab /
       // closed tab. The detail view also auto-refreshes via the IDE
       // refresh timer; we just give it a head start.
@@ -1826,15 +1875,18 @@ async function pollIdeActionResult(action) {
       return;
     }
     if (entry.status === "error") {
-      showToast(`${humanizeKind(action.kind)} failed: ${entry.error || "unknown"}`, "error");
+      showToast(`${label} failed: ${entry.error || "unknown"}`, "error");
       return;
     }
     if (entry.status === "skipped") {
-      showToast(`${humanizeKind(action.kind)} skipped: ${entry.error || "no reason"}`, "info");
+      showToast(`${label} skipped: ${entry.error || "no reason"}`, "info");
       return;
     }
   }
-  showToast(`${humanizeKind(action.kind)} timed out waiting for extension result.`, "error");
+  showToast(
+    `${label} timed out — is Cursor open with the mobile-cockpit extension enabled?`,
+    "error",
+  );
 }
 
 function humanizeKind(kind) {
@@ -1926,6 +1978,12 @@ function wireComposeUi() {
     btn.disabled = len === 0 || len > max;
     if (activeIdeTabComposerId) saveComposeDraft(activeIdeTabComposerId, ta.value);
   });
+  ta.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey) {
+      ev.preventDefault();
+      if (!btn.disabled) handleSendMessageClick();
+    }
+  });
   btn.addEventListener("click", () => handleSendMessageClick());
 }
 
@@ -1933,11 +1991,14 @@ async function handleSendMessageClick() {
   const ta = document.getElementById("ide-detail-compose-text");
   const btn = document.getElementById("btn-ide-send-message");
   if (!ta || !btn) return;
+  const max = IDE_ACTION_HELPERS ? IDE_ACTION_HELPERS.MAX_TEXT_LEN : 20000;
+  const len = ta.value.length;
+  if (len === 0 || len > max) return;
   btn.disabled = true;
   try {
     await sendIdeTabMessage(ta.value);
-  } catch (e) {
-    btn.disabled = ta.value.length > 0;
+  } catch (_e) {
+    btn.disabled = len === 0 || len > max;
   }
 }
 
@@ -2083,9 +2144,9 @@ async function bootstrap() {
       COMPOSE_DRAFT_HELPERS,
       PENDING_QUESTION_HELPERS,
     ] = await Promise.all([
-      import("./write-helpers.mjs?v=f270f68"),
-      import("./ide-helpers.mjs?v=f270f68"),
-      import("./ide-actions-helpers.mjs?v=f270f68"),
+      import("./write-helpers.mjs?v=903b108"),
+      import("./ide-helpers.mjs?v=903b108"),
+      import("./ide-actions-helpers.mjs?v=903b108"),
       import("./refresh-helpers.mjs"),
       import("./compose-draft.mjs"),
       import("./pending-question.mjs"),
