@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-06-10 22:51 CEST f8da15e`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-06-10 22:51 CEST f8da15e";
+// `2026-06-10 23:35 CEST f8da15e`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-06-10 23:35 CEST f8da15e";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -74,6 +74,12 @@ let WRITE_HELPERS = null;
 
 /** Dynamically imported pure helpers for the IDE-tabs view (M2.1). */
 let IDE_HELPERS = null;
+
+/** Compose draft preservation across ~20s IDE-tab auto-refresh. */
+let COMPOSE_DRAFT_HELPERS = null;
+
+/** Per-composerId in-progress message text (survives background re-render). */
+const ideComposeDrafts = new Map();
 
 /** Pure helpers for refresh-signals.json nudge + wait logic. */
 let REFRESH_HELPERS = null;
@@ -452,7 +458,7 @@ async function refreshCurrentView() {
       await writeRefreshNudge("ideTabs");
       await waitForFreshIdeTabs(beforeAt, beforeFp);
       await loadIdeTabs();
-      if (composerId) renderIdeTabDetail(composerId);
+      if (composerId) renderIdeTabDetail(composerId, { preserveCompose: true });
     }
   } catch (err) {
     if (view === "detail") showDetailError(err.message);
@@ -672,6 +678,17 @@ function applyHashRoute() {
 }
 
 function setView(viewId, payload) {
+  const prevView = document.body.dataset.view;
+  if (
+    prevView === "ide-tab-detail" &&
+    viewId !== "ide-tab-detail" &&
+    viewId !== "close-confirm"
+  ) {
+    const taLeave = document.getElementById("ide-detail-compose-text");
+    if (activeIdeTabComposerId && taLeave) {
+      saveComposeDraft(activeIdeTabComposerId, taLeave.value);
+    }
+  }
   document.body.dataset.view = viewId;
   for (const section of document.querySelectorAll(".cockpit-view")) {
     section.hidden = section.dataset.viewId !== viewId;
@@ -1085,7 +1102,7 @@ async function renderIdeTabsList() {
   }
 }
 
-function renderIdeTabDetail(composerId) {
+function renderIdeTabDetail(composerId, options = {}) {
   if (!IDE_HELPERS) {
     showIdeDetailError("ide-helpers module not loaded yet (bootstrap order bug)");
     return;
@@ -1103,12 +1120,32 @@ function renderIdeTabDetail(composerId) {
     return;
   }
 
+  const taBefore = document.getElementById("ide-detail-compose-text");
+  const prevComposer = activeIdeTabComposerId;
+  if (prevComposer && prevComposer !== tab.composerId && taBefore) {
+    saveComposeDraft(prevComposer, taBefore.value);
+  }
+
   // Cache for the send / close handlers; cleared by setView when navigating away.
   activeIdeTabComposerId = tab.composerId;
   activeIdeWorkspacePath = cachedIdeSnapshot.workspacePath || null;
 
-  // Refresh compose UI state (textarea cleared + counter reset + button disabled).
-  resetComposeUi();
+  const draftForTab = ideComposeDrafts.get(tab.composerId) || "";
+  const preserveCompose = COMPOSE_DRAFT_HELPERS
+    ? COMPOSE_DRAFT_HELPERS.shouldPreserveComposeOnRefresh({
+        preserveCompose: options.preserveCompose === true,
+        textareaFocused: taBefore === document.activeElement,
+        textareaValue: taBefore ? taBefore.value : "",
+        draftText: draftForTab,
+      })
+    : options.preserveCompose === true;
+
+  if (!preserveCompose) {
+    resetComposeUi({ clearDraft: true, composerId: tab.composerId });
+  } else {
+    const err = document.getElementById("ide-detail-compose-error");
+    if (err) err.hidden = true;
+  }
 
   // Wire the Close-tab button to the confirm modal. Idempotent on every
   // re-render — we re-attach because the modal payload (composer ID +
@@ -1196,6 +1233,17 @@ function renderIdeTabDetail(composerId) {
 
     threadOl.appendChild(li);
   }
+
+  if (preserveCompose) {
+    const restored =
+      (taBefore && taBefore.value.length > 0 ? taBefore.value : null) ||
+      draftForTab ||
+      "";
+    if (restored) {
+      applyComposeUiFromText(restored);
+      saveComposeDraft(tab.composerId, restored);
+    }
+  }
 }
 
 /**
@@ -1244,6 +1292,7 @@ function renderIdeTabPendingQuestion(tab) {
             counter.dataset.over = len > max ? "true" : "false";
           }
           if (btn) btn.disabled = ta.value.length === 0 || ta.value.length > max;
+          if (activeIdeTabComposerId) saveComposeDraft(activeIdeTabComposerId, ta.value);
         });
         opts.appendChild(optBtn);
       }
@@ -1329,7 +1378,7 @@ function startAutoRefresh() {
           .then(() => {
             const openId = document.getElementById("ide-detail-composer-id");
             if (openId && openId.textContent) {
-              renderIdeTabDetail(openId.textContent);
+              renderIdeTabDetail(openId.textContent, { preserveCompose: true });
             }
           })
           .catch((err) => showIdeDetailError(err.message));
@@ -1598,17 +1647,47 @@ function showToast(message, kind) {
 // Compose UI (per-tab Send) — wired by renderIdeTabDetail()
 // -----------------------------------------------------------------------------
 
-function resetComposeUi() {
+function saveComposeDraft(composerId, text) {
+  if (!COMPOSE_DRAFT_HELPERS || !COMPOSE_DRAFT_HELPERS.isValidComposeDraftKey(composerId)) {
+    return;
+  }
+  const t = typeof text === "string" ? text : "";
+  if (t.length > 0) ideComposeDrafts.set(composerId, t);
+  else ideComposeDrafts.delete(composerId);
+}
+
+function applyComposeUiFromText(text) {
   const ta = document.getElementById("ide-detail-compose-text");
   const btn = document.getElementById("btn-ide-send-message");
   const counter = document.getElementById("ide-detail-compose-counter");
-  const err = document.getElementById("ide-detail-compose-error");
-  if (ta) ta.value = "";
+  const max = IDE_ACTION_HELPERS ? IDE_ACTION_HELPERS.MAX_TEXT_LEN : 20000;
+  const safe = typeof text === "string" ? text : "";
+  const state = COMPOSE_DRAFT_HELPERS
+    ? COMPOSE_DRAFT_HELPERS.composeUiStateFromText(safe, max)
+    : {
+        counterText: `${safe.length} / ${max}`,
+        over: safe.length > max,
+        sendDisabled: safe.length === 0 || safe.length > max,
+      };
+  if (ta) ta.value = safe;
   if (counter) {
-    counter.textContent = `0 / ${IDE_ACTION_HELPERS ? IDE_ACTION_HELPERS.MAX_TEXT_LEN : 20000}`;
-    counter.dataset.over = "false";
+    counter.textContent = state.counterText;
+    counter.dataset.over = state.over ? "true" : "false";
   }
-  if (btn) btn.disabled = true;
+  if (btn) btn.disabled = state.sendDisabled;
+}
+
+function resetComposeUi({ clearDraft = false, composerId = null } = {}) {
+  if (
+    clearDraft &&
+    composerId &&
+    COMPOSE_DRAFT_HELPERS &&
+    COMPOSE_DRAFT_HELPERS.isValidComposeDraftKey(composerId)
+  ) {
+    ideComposeDrafts.delete(composerId);
+  }
+  applyComposeUiFromText("");
+  const err = document.getElementById("ide-detail-compose-error");
   if (err) err.hidden = true;
 }
 
@@ -1623,6 +1702,7 @@ function wireComposeUi() {
     counter.textContent = `${len} / ${max}`;
     counter.dataset.over = len > max ? "true" : "false";
     btn.disabled = len === 0 || len > max;
+    if (activeIdeTabComposerId) saveComposeDraft(activeIdeTabComposerId, ta.value);
   });
   btn.addEventListener("click", () => handleSendMessageClick());
 }
@@ -1657,6 +1737,7 @@ async function handleSendMessageClick() {
   btn.disabled = true;
   try {
     await submitIdeAction(action);
+    if (activeIdeTabComposerId) ideComposeDrafts.delete(activeIdeTabComposerId);
     resetComposeUi();
   } catch (e) {
     if (err) { err.textContent = e.message; err.hidden = false; }
@@ -1798,12 +1879,13 @@ async function bootstrap() {
   // ide-helpers module is sibling; both are loaded in parallel because
   // they have no inter-dependency.
   try {
-    [WRITE_HELPERS, IDE_HELPERS, IDE_ACTION_HELPERS, REFRESH_HELPERS] =
+    [WRITE_HELPERS, IDE_HELPERS, IDE_ACTION_HELPERS, REFRESH_HELPERS, COMPOSE_DRAFT_HELPERS] =
       await Promise.all([
         import("./write-helpers.mjs?v=f8da15e"),
         import("./ide-helpers.mjs?v=f8da15e"),
         import("./ide-actions-helpers.mjs?v=f8da15e"),
         import("./refresh-helpers.mjs"),
+        import("./compose-draft.mjs"),
       ]);
   } catch (err) {
     setStatusBadge(`helpers import error: ${err.message}`, "error");
