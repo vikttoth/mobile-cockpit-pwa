@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-06-10 19:39 CEST a14e5bf in config.json + app.js).
+  script (replaces 2026-06-10 20:48 CEST b3ebfe3 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -115,8 +115,23 @@
         <pre id="detail-prompt-text">…</pre>
       </section>
       <section class="cockpit-detail-output">
-        <h3>Output</h3>
+        <h3 id="detail-output-heading">Output</h3>
         <pre id="detail-output-text">…</pre>
+      </section>
+      <section id="detail-follow-up-panel" class="cockpit-detail-follow-up" hidden>
+        <h3>Follow-up prompt</h3>
+        <p class="cockpit-hint">Continues the same Cursor agent chat (<code>--resume</code>).</p>
+        <form id="follow-up-form" class="cockpit-form">
+          <label>
+            Prompt
+            <textarea id="follow-up-prompt" name="prompt" required maxlength="8000" rows="4"
+                      placeholder="What should the agent do next?"></textarea>
+          </label>
+          <div class="cockpit-form-actions">
+            <button type="submit" id="btn-follow-up-submit" class="cockpit-btn cockpit-btn-primary">Queue follow-up</button>
+            <button type="button" id="btn-follow-up-cancel" class="cockpit-btn">Cancel</button>
+          </div>
+        </form>
       </section>
       <div class="cockpit-detail-actions">
         <!-- Stage A2: app.js#renderDetail() toggles visibility based on status + autoApprove. -->

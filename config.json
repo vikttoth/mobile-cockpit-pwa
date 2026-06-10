@@ -43,6 +43,7 @@
   "pwa": {
     "buildStamp": "__BUILD_STAMP__",
     "pollIntervalSeconds": 30,
+    "runningPollIntervalSeconds": 5,
     "recentSessionsCount": 50,
     "redirectUriDev": "http://localhost:8000/",
     "redirectUriProdDoc": "Set this to the OneDrive-share-link URL of pwa/index.html once Stage B (deploy) runs. For Stage A1 (local dev), only redirectUriDev matters."

@@ -186,6 +186,62 @@ export function mergeUpdateStatus(prevState, sessionId, newStatus, now) {
 }
 
 // =============================================================================
+// mergeQueueFollowUp
+// =============================================================================
+//
+// Re-queue a finished session with a new prompt, preserving the cursor-agent
+// chat id for `--resume`. Clears prior output/errors and sets status back to
+// pending (or approved when autoApprove is true).
+
+export function mergeQueueFollowUp(prevState, sessionId, { prompt, now, autoApprove }) {
+  if (typeof sessionId !== "string" || sessionId.length === 0) {
+    throw new Error("mergeQueueFollowUp: sessionId is required");
+  }
+  if (typeof prompt !== "string" || prompt.trim().length === 0) {
+    throw new Error("mergeQueueFollowUp: prompt is required");
+  }
+  const isoNow = now instanceof Date ? now.toISOString() : new Date(now ?? Date.now()).toISOString();
+  const base = prevState && typeof prevState === "object" ? prevState : { schemaVersion: 1, sessions: [] };
+  const sessions = Array.isArray(base.sessions) ? base.sessions : [];
+  const idx = sessions.findIndex((s) => s && s.sessionId === sessionId);
+  if (idx < 0) {
+    const err = new Error(`session not found: ${sessionId}`);
+    err.code = "SESSION_NOT_FOUND";
+    throw err;
+  }
+  const current = sessions[idx];
+  if (current.status !== "done") {
+    const err = new Error(`follow-up requires status=done (got ${current.status})`);
+    err.code = "INVALID_STATUS";
+    throw err;
+  }
+  const resumeId = current.cursorAgentId || current.agentId;
+  if (!resumeId) {
+    const err = new Error("follow-up requires cursorAgentId on the session");
+    err.code = "NO_AGENT_ID";
+    throw err;
+  }
+  const nextSessions = sessions.map((s, i) =>
+    i === idx
+      ? {
+          ...s,
+          prompt: prompt.trim(),
+          output: "",
+          errorMessage: undefined,
+          errorRetryable: undefined,
+          completedAt: undefined,
+          startedAt: undefined,
+          resumeAgentId: resumeId,
+          cursorAgentId: resumeId,
+          status: autoApprove ? "approved" : "pending",
+          lastUpdated: isoNow,
+        }
+      : s,
+  );
+  return { ...base, schemaVersion: base.schemaVersion || 1, sessions: nextSessions };
+}
+
+// =============================================================================
 // cryptoRandomBytes -- production rng wrapper for the browser
 // =============================================================================
 //

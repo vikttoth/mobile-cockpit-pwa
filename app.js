@@ -12,10 +12,11 @@
 //   - Refresh button + auto-refresh every CONFIG.pwa.pollIntervalSeconds
 //   - setView('list'|'detail'|'new') with back navigation
 //
-// What is NOT wired (deferred to later phases):
-//   - Follow-up button (placeholder; needs Cursor SDK resume on daemon side)
-//   - Push notifications (Phase 2, Power Automate / Teams push)
-//   - Service worker / offline cache (Phase 2)
+// Phase 2 (2026-06-10):
+//   - Faster detail poll while status=running (streaming output from daemon)
+//   - Follow-up / resume on done sessions (mergeQueueFollowUp + daemon --resume)
+//   - Teams push is daemon-side (MC_TEAMS_NOTIFY_WEBHOOK_URL); not in PWA yet
+//   - Service worker / offline cache still deferred
 //
 // Reference order while reading this file:
 //   1. ../design.md §3-§6 — OneDrive Graph schema + ETag conflict resolution
@@ -35,8 +36,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-06-10 19:39 CEST a14e5bf`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-06-10 19:39 CEST a14e5bf";
+// `2026-06-10 20:48 CEST b3ebfe3`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-06-10 20:48 CEST b3ebfe3";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -55,6 +56,12 @@ let cachedStateEtag = null;
 
 /** Auto-refresh handle from setInterval(). */
 let refreshTimerId = null;
+
+/** Faster poll while viewing a running session detail (Phase 2 streaming). */
+let runningDetailTimerId = null;
+
+/** Session id currently open in detail view (for running poll). */
+let activeDetailSessionId = null;
 
 /**
  * Dynamically imported write-helpers module. Populated by bootstrap()
@@ -397,6 +404,41 @@ async function cancelSession(sessionId) {
   return updateSessionStatus(sessionId, "cancelled");
 }
 
+/**
+ * Queue a follow-up on a finished session (resume same cursor-agent chat).
+ * Returns { sessionId, status } on success.
+ */
+async function queueFollowUp(sessionId, prompt) {
+  if (!WRITE_HELPERS) throw new Error("write-helpers module not loaded yet (bootstrap order bug)");
+  const trimmed = typeof prompt === "string" ? prompt.trim() : "";
+  if (!trimmed) throw new Error("Follow-up prompt is required");
+
+  const autoApprove = !!(CONFIG.session && CONFIG.session.autoApprove);
+  setStatusBadge("saving…", "saving");
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { state, etag } = await loadState();
+    const next = WRITE_HELPERS.mergeQueueFollowUp(state, sessionId, {
+      prompt: trimmed,
+      now: new Date(),
+      autoApprove,
+    });
+    try {
+      await putState(next, etag);
+      flashSavedBadge();
+      const row = next.sessions.find((x) => x.sessionId === sessionId);
+      return { sessionId, status: row ? row.status : "pending" };
+    } catch (err) {
+      if (err.code !== "PRECONDITION_FAILED" || attempt > 0) {
+        setStatusBadge(`save failed: ${err.message}`, "error");
+        throw err;
+      }
+    }
+  }
+  setStatusBadge("save failed: retries exhausted", "error");
+  throw new Error("queueFollowUp: retries exhausted");
+}
+
 /** Shared retry skeleton for approve / cancel. NOT exported; consumers go
  *  through the typed wrappers above so the daemon-visible status set stays
  *  centralised in this file. */
@@ -441,7 +483,9 @@ function setView(viewId, payload) {
   if (viewId === "list") {
     renderList().catch((err) => showListError(err.message));
   } else if (viewId === "detail" && payload && payload.sessionId) {
+    activeDetailSessionId = payload.sessionId;
     renderDetail(payload.sessionId);
+    syncRunningDetailPoll();
   } else if (viewId === "new") {
     renderNew();
   } else if (viewId === "ide-tabs") {
@@ -459,6 +503,10 @@ function setView(viewId, payload) {
   // the detail view and intentionally KEEP the cached ID.
   if (viewId !== "ide-tab-detail" && viewId !== "close-confirm") {
     activeIdeTabComposerId = null;
+  }
+  if (viewId !== "detail") {
+    activeDetailSessionId = null;
+    stopRunningDetailPoll();
   }
 }
 
@@ -569,12 +617,20 @@ function renderDetail(sessionId) {
   set("detail-title", s.title || s.prompt || "(untitled)");
   set("detail-status", s.status);
   set("detail-session-id", s.sessionId);
-  set("detail-agent-id", s.cursorAgentId);
+  set("detail-agent-id", s.cursorAgentId || s.agentId);
   set("detail-model", s.model);
   set("detail-created", s.createdAt || s.created);
   set("detail-updated", s.lastUpdated);
   set("detail-prompt-text", s.prompt);
-  set("detail-output-text", s.output);
+  set("detail-output-text", s.output || (s.status === "running" ? "(streaming…)" : ""));
+
+  const outputHeading = document.getElementById("detail-output-heading");
+  if (outputHeading) {
+    outputHeading.textContent = s.status === "running" ? "Output (streaming…)" : "Output";
+  }
+
+  const followUpPanel = document.getElementById("detail-follow-up-panel");
+  if (followUpPanel) followUpPanel.hidden = true;
 
   // Stage A2: action buttons. Approve only when pending AND autoApprove off.
   // Cancel when status is pending / approved / running (NOT done/cancelled/failed).
@@ -600,12 +656,34 @@ function renderDetail(sessionId) {
       : null;
   }
   if (btnFollowUp) {
-    // Follow-up = "send a new prompt that uses Agent.resume(agentId)".
-    // Daemon-side feature; PWA Stage A2 leaves the button hidden until the
-    // daemon wires resume semantics. Surfaced here so we don't lose track.
-    btnFollowUp.hidden = true;
-    btnFollowUp.disabled = true;
+    const agentId = s.cursorAgentId || s.agentId;
+    const showFollowUp = s.status === "done" && !!agentId;
+    btnFollowUp.hidden = !showFollowUp;
+    btnFollowUp.disabled = !showFollowUp;
+    btnFollowUp.onclick = showFollowUp
+      ? () => showFollowUpPanel(s.sessionId)
+      : null;
   }
+
+  syncRunningDetailPoll();
+}
+
+function showFollowUpPanel(sessionId) {
+  const panel = document.getElementById("detail-follow-up-panel");
+  const ta = document.getElementById("follow-up-prompt");
+  if (panel) {
+    panel.hidden = false;
+    panel.dataset.sessionId = sessionId;
+  }
+  if (ta) {
+    ta.value = "";
+    ta.focus();
+  }
+}
+
+function hideFollowUpPanel() {
+  const panel = document.getElementById("detail-follow-up-panel");
+  if (panel) panel.hidden = true;
 }
 
 function renderNew() {
@@ -893,6 +971,30 @@ function flashSavedBadge(holdMs = 2000) {
   }, holdMs);
 }
 
+function stopRunningDetailPoll() {
+  if (runningDetailTimerId !== null) {
+    clearInterval(runningDetailTimerId);
+    runningDetailTimerId = null;
+  }
+}
+
+function syncRunningDetailPoll() {
+  stopRunningDetailPoll();
+  if (document.body.dataset.view !== "detail" || !activeDetailSessionId || !cachedState) return;
+  const s = (cachedState.sessions || []).find((x) => x.sessionId === activeDetailSessionId);
+  if (!s || s.status !== "running") return;
+  const sec = (CONFIG.pwa && CONFIG.pwa.runningPollIntervalSeconds) || 5;
+  const intervalMs = Math.max(3, sec | 0) * 1000;
+  runningDetailTimerId = setInterval(() => {
+    if (document.body.dataset.view !== "detail" || !activeDetailSessionId) return;
+    loadState()
+      .then(() => {
+        renderDetail(activeDetailSessionId);
+      })
+      .catch((err) => showDetailError(err.message));
+  }, intervalMs);
+}
+
 function startAutoRefresh() {
   if (refreshTimerId === null) {
     const intervalMs = Math.max(5, (CONFIG.pwa.pollIntervalSeconds | 0)) * 1000;
@@ -980,6 +1082,31 @@ async function handleCancelClick(sessionId) {
     renderDetail(sessionId);
   } catch (err) {
     showDetailError(err.message);
+  }
+}
+
+async function handleFollowUpSubmit(ev) {
+  ev.preventDefault();
+  clearDetailError();
+  const panel = document.getElementById("detail-follow-up-panel");
+  const sessionId = panel && panel.dataset.sessionId;
+  const ta = document.getElementById("follow-up-prompt");
+  const submitBtn = document.getElementById("btn-follow-up-submit");
+  const prompt = ta ? ta.value : "";
+  if (!sessionId) {
+    showDetailError("No session selected for follow-up");
+    return;
+  }
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    await queueFollowUp(sessionId, prompt);
+    hideFollowUpPanel();
+    await renderList();
+    renderDetail(sessionId);
+  } catch (err) {
+    showDetailError(err.message);
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
   }
 }
 
@@ -1403,6 +1530,10 @@ async function bootstrap() {
   if (btnNewCancel) btnNewCancel.addEventListener("click", () => setView("list"));
   const form = document.getElementById("new-session-form");
   if (form) form.addEventListener("submit", handleNewSubmit);
+  const followUpForm = document.getElementById("follow-up-form");
+  if (followUpForm) followUpForm.addEventListener("submit", handleFollowUpSubmit);
+  const btnFollowUpCancel = document.getElementById("btn-follow-up-cancel");
+  if (btnFollowUpCancel) btnFollowUpCancel.addEventListener("click", hideFollowUpPanel);
   // Back buttons use their `data-target-view` attribute so the IDE-tab
   // detail returns to the IDE-tabs list (not to sessions).
   for (const back of document.querySelectorAll(".cockpit-back-btn")) {
