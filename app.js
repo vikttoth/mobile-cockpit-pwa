@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-06-11 00:25 CEST 903b108`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-06-11 00:25 CEST 903b108";
+// `2026-06-11 01:04 CEST b76f471`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-06-11 01:04 CEST b76f471";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -104,6 +104,9 @@ let ideRefreshTimerId = null;
 
 /** Faster poll while an IDE tab detail shows waitingOn=agent (mirror lag). */
 let ideDetailFastTimerId = null;
+
+/** True while an IDE action is queued / polling — pauses destructive re-renders. */
+let ideActionInFlight = false;
 
 /**
  * Dynamically imported pure helpers for the M2.2.3 write-back actions
@@ -1195,57 +1198,18 @@ function renderIdeTabDetail(composerId, options = {}) {
     set("ide-detail-transcript-size", "—");
   }
 
-  renderIdeTabPendingQuestion(tab);
-
-  const threadOl = document.getElementById("ide-detail-thread");
-  const threadEmpty = document.getElementById("ide-detail-thread-empty");
-  if (!threadOl || !threadEmpty) return;
-  threadOl.innerHTML = "";
-  const thread = Array.isArray(tab.thread) ? tab.thread : [];
-  if (thread.length === 0) {
-    threadEmpty.hidden = false;
-    return;
+  const preservePending = shouldPreservePendingQuestionUi(tab.composerId, tab);
+  if (!preservePending) {
+    renderIdeTabPendingQuestion(tab);
   }
-  threadEmpty.hidden = true;
-  // Most-recent first — `thread` is chronological in the snapshot so we
-  // reverse for the UI. Avoid mutating the source array (cached snapshot).
-  const reversed = [...thread].reverse();
-  for (const raw of reversed) {
-    const entry = IDE_HELPERS.formatThreadEntry(raw);
-    const li = document.createElement("li");
-    li.className = "cockpit-ide-turn";
-    li.dataset.role = entry.role;
 
-    const header = document.createElement("header");
-    const label = document.createElement("span");
-    label.className = "cockpit-ide-turn-label";
-    label.textContent = entry.label;
-    header.appendChild(label);
-    if (entry.tools.length > 0) {
-      const tools = document.createElement("span");
-      tools.className = "cockpit-ide-turn-tools";
-      tools.textContent = entry.tools.length === 1
-        ? `1 tool: ${entry.tools[0]}`
-        : `${entry.tools.length} tools: ${entry.tools.slice(0, 3).join(", ")}${entry.tools.length > 3 ? "…" : ""}`;
-      header.appendChild(tools);
-    }
-    li.appendChild(header);
-
-    if (entry.text.length > 0) {
-      const p = document.createElement("p");
-      p.className = "cockpit-ide-turn-text";
-      // Cap on-screen text per turn so long agent responses stay scannable.
-      const MAX = 1200;
-      p.textContent = entry.text.length > MAX ? entry.text.slice(0, MAX) + "…" : entry.text;
-      li.appendChild(p);
-    } else if (entry.tools.length === 0) {
-      const p = document.createElement("p");
-      p.className = "cockpit-ide-turn-empty";
-      p.textContent = "(no content)";
-      li.appendChild(p);
-    }
-
-    threadOl.appendChild(li);
+  const skipThreadRerender =
+    preserveCompose ||
+    preservePending ||
+    ideActionInFlight ||
+    isActiveElementInsidePendingSection();
+  if (!skipThreadRerender) {
+    renderIdeTabThread(tab);
   }
 
   if (preserveCompose) {
@@ -1306,8 +1270,103 @@ async function sendIdeTabMessage(text) {
   }
   if (err) err.hidden = true;
   await submitIdeAction(action);
+  hidePendingQuestionUi();
   if (activeIdeTabComposerId) ideComposeDrafts.delete(activeIdeTabComposerId);
   resetComposeUi();
+}
+
+function isActiveElementInsidePendingSection() {
+  const pending = document.getElementById("ide-detail-pending");
+  const active = document.activeElement;
+  if (!pending || pending.hidden || !active) return false;
+  return pending.contains(active);
+}
+
+/**
+ * Skip tearing down AskQuestion DOM during background snapshot refresh
+ * (prevents focus theft + broken option taps on mobile).
+ */
+function shouldPreservePendingQuestionUi(composerId, tab) {
+  const pq = tab && tab.pendingQuestion;
+  const questions = pq && Array.isArray(pq.questions) ? pq.questions : [];
+  if (questions.length === 0) return false;
+  const section = document.getElementById("ide-detail-pending");
+  if (!section || section.hidden) return false;
+  const body = document.getElementById("ide-detail-pending-body");
+  if (!body || body.childElementCount === 0) return false;
+
+  const draft = composerId ? idePendingAnswerDrafts.get(composerId) : null;
+  const hasDraft =
+    PENDING_QUESTION_HELPERS &&
+    draft &&
+    PENDING_QUESTION_HELPERS.hasNonEmptyAnswerMap(draft.answers);
+
+  if (COMPOSE_DRAFT_HELPERS) {
+    return COMPOSE_DRAFT_HELPERS.shouldPreservePendingQuestionOnRefresh({
+      actionInFlight: ideActionInFlight,
+      activeElementInPending: isActiveElementInsidePendingSection(),
+      hasDraftAnswers: hasDraft,
+    });
+  }
+  return ideActionInFlight || isActiveElementInsidePendingSection() || hasDraft;
+}
+
+function hidePendingQuestionUi() {
+  const section = document.getElementById("ide-detail-pending");
+  const body = document.getElementById("ide-detail-pending-body");
+  if (section) section.hidden = true;
+  if (body) body.innerHTML = "";
+  if (activeIdeTabComposerId) idePendingAnswerDrafts.delete(activeIdeTabComposerId);
+}
+
+function renderIdeTabThread(tab) {
+  const threadOl = document.getElementById("ide-detail-thread");
+  const threadEmpty = document.getElementById("ide-detail-thread-empty");
+  if (!threadOl || !threadEmpty || !IDE_HELPERS) return;
+  threadOl.innerHTML = "";
+  const thread = Array.isArray(tab.thread) ? tab.thread : [];
+  if (thread.length === 0) {
+    threadEmpty.hidden = false;
+    return;
+  }
+  threadEmpty.hidden = true;
+  const reversed = [...thread].reverse();
+  for (const raw of reversed) {
+    const entry = IDE_HELPERS.formatThreadEntry(raw);
+    const li = document.createElement("li");
+    li.className = "cockpit-ide-turn";
+    li.dataset.role = entry.role;
+
+    const header = document.createElement("header");
+    const label = document.createElement("span");
+    label.className = "cockpit-ide-turn-label";
+    label.textContent = entry.label;
+    header.appendChild(label);
+    if (entry.tools.length > 0) {
+      const tools = document.createElement("span");
+      tools.className = "cockpit-ide-turn-tools";
+      tools.textContent = entry.tools.length === 1
+        ? `1 tool: ${entry.tools[0]}`
+        : `${entry.tools.length} tools: ${entry.tools.slice(0, 3).join(", ")}${entry.tools.length > 3 ? "…" : ""}`;
+      header.appendChild(tools);
+    }
+    li.appendChild(header);
+
+    if (entry.text.length > 0) {
+      const p = document.createElement("p");
+      p.className = "cockpit-ide-turn-text";
+      const MAX = 1200;
+      p.textContent = entry.text.length > MAX ? entry.text.slice(0, MAX) + "…" : entry.text;
+      li.appendChild(p);
+    } else if (entry.tools.length === 0) {
+      const p = document.createElement("p");
+      p.className = "cockpit-ide-turn-empty";
+      p.textContent = "(no content)";
+      li.appendChild(p);
+    }
+
+    threadOl.appendChild(li);
+  }
 }
 
 function syncPendingSubmitButtons(body, questions, answers) {
@@ -1389,6 +1448,13 @@ function renderIdeTabPendingQuestion(tab) {
   }
   section.hidden = false;
   const H = PENDING_QUESTION_HELPERS;
+  if (questions.length > 1) {
+    const bundleHint = document.createElement("p");
+    bundleHint.className = "cockpit-ide-pending-hint cockpit-ide-pending-bundle-hint";
+    bundleHint.textContent =
+      "Answer each question below, then tap Submit all answers.";
+    body.appendChild(bundleHint);
+  }
   const fingerprint = H.pendingQuestionsFingerprint(questions);
   let draft = composerId ? idePendingAnswerDrafts.get(composerId) : null;
   if (!draft || draft.fingerprint !== fingerprint) {
@@ -1471,13 +1537,18 @@ function renderIdeTabPendingQuestion(tab) {
             btn.classList.toggle("cockpit-ide-pending-opt-selected", btn === optBtn);
           }
           onAnswerChange();
+          if (questions.length > 1) {
+            showToast("Selected — tap Submit all answers below.", "info");
+          } else {
+            showToast(`Selected: ${label}`, "info");
+          }
         });
       } else {
         optBtn.addEventListener("click", async () => {
           optBtn.disabled = true;
+          showToast(`Sending: ${label.length > 48 ? label.slice(0, 45) + "…" : label}`, "info");
           try {
             await sendIdeTabMessage(label);
-            if (composerId) idePendingAnswerDrafts.delete(composerId);
           } catch {
             optBtn.disabled = false;
           }
@@ -1814,22 +1885,28 @@ async function submitIdeAction(action) {
     throw new Error("ide-actions-helpers not loaded yet (bootstrap order bug)");
   }
   const label = humanizeKind(action.kind);
+  ideActionInFlight = true;
   showToast(`${label}…`, "info");
   try {
     const prev = await loadIdeActionsFile();
     const next = IDE_ACTION_HELPERS.mergeAppendAction(prev, action, new Date());
     await putIdeActionsFile(next);
   } catch (err) {
+    ideActionInFlight = false;
     showToast(`${label} failed: ${err.message}`, "error");
     throw err;
   }
   // Fire-and-forget the result poll; UI toast is updated inside.
-  pollIdeActionResult(action).catch((pollErr) => {
-    showToast(
-      `${label} (${action.actionId.slice(0, 8)}) result poll failed: ${pollErr.message}`,
-      "error",
-    );
-  });
+  pollIdeActionResult(action)
+    .catch((pollErr) => {
+      showToast(
+        `${label} (${action.actionId.slice(0, 8)}) result poll failed: ${pollErr.message}`,
+        "error",
+      );
+    })
+    .finally(() => {
+      ideActionInFlight = false;
+    });
 }
 
 /**
@@ -2144,9 +2221,9 @@ async function bootstrap() {
       COMPOSE_DRAFT_HELPERS,
       PENDING_QUESTION_HELPERS,
     ] = await Promise.all([
-      import("./write-helpers.mjs?v=903b108"),
-      import("./ide-helpers.mjs?v=903b108"),
-      import("./ide-actions-helpers.mjs?v=903b108"),
+      import("./write-helpers.mjs?v=b76f471"),
+      import("./ide-helpers.mjs?v=b76f471"),
+      import("./ide-actions-helpers.mjs?v=b76f471"),
       import("./refresh-helpers.mjs"),
       import("./compose-draft.mjs"),
       import("./pending-question.mjs"),

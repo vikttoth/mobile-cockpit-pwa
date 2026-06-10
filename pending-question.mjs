@@ -92,3 +92,16 @@ export function pendingQuestionsFingerprint(questions) {
     .map((q) => `${q.id || ""}|${q.prompt}|${(q.options || []).map((o) => o.id).join(",")}`)
     .join(";;");
 }
+
+/**
+ * True when the user has started answering (selected options or typed text).
+ * @param {Record<string, string|string[]>|null|undefined} answersByKey
+ */
+export function hasNonEmptyAnswerMap(answersByKey) {
+  if (!answersByKey || typeof answersByKey !== "object") return false;
+  for (const v of Object.values(answersByKey)) {
+    if (Array.isArray(v) && v.length > 0) return true;
+    if (typeof v === "string" && v.trim().length > 0) return true;
+  }
+  return false;
+}

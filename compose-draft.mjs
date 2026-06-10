@@ -44,3 +44,20 @@ export function composeUiStateFromText(text, maxLen) {
     sendDisabled: len === 0 || over,
   };
 }
+
+/**
+ * Whether the AskQuestion block should survive a background snapshot refresh
+ * without tearing down its DOM (prevents focus loss + broken taps on mobile).
+ *
+ * @param {object} opts
+ * @param {boolean} [opts.actionInFlight]
+ * @param {boolean} [opts.activeElementInPending]
+ * @param {boolean} [opts.hasDraftAnswers]
+ * @param {boolean} [opts.pendingVisible]
+ */
+export function shouldPreservePendingQuestionOnRefresh(opts = {}) {
+  if (opts.actionInFlight === true) return true;
+  if (opts.activeElementInPending === true) return true;
+  if (opts.hasDraftAnswers === true) return true;
+  return false;
+}
