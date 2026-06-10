@@ -23,6 +23,14 @@
     "endpoint": "/me/drive/root:/cursor-cockpit/ide-tabs.json",
     "pollIntervalSeconds": 20
   },
+  "refreshSignals": {
+    "_comment": "Mobile PWA writes ISO timestamps here when the user taps ↻. daemon/poll.mjs and ide-mirror/poll.mjs read this file and run an immediate mirror tick when they see a newer request. relativePath MUST match REFRESH_SIGNALS_RELATIVE_PATH in lib/config.mjs.",
+    "relativePath": "cursor-cockpit/refresh-signals.json",
+    "endpoint": "/me/drive/root:/cursor-cockpit/refresh-signals.json",
+    "waitMaxMs": 15000,
+    "waitPollMs": 500,
+    "waitMinMs": 2000
+  },
   "ideActions": {
     "_comment": "M2.2.3 write-back: the PWA appends actions to ide-actions.json, the Cursor/VS Code extension (flows/mobile-cockpit/extension/) polls and executes them, then writes outcomes to ide-actions-results.json. relativePath + resultsRelativePath MUST match IDE_ACTIONS_RELATIVE_PATH + IDE_ACTIONS_RESULTS_RELATIVE_PATH in lib/config.mjs. resultPollIntervalSeconds controls how often the PWA polls for the extension's result of a just-submitted action (faster than the action poll because the result comes back ~1-5 s after the extension picks the action up).",
     "relativePath": "cursor-cockpit/ide-actions.json",

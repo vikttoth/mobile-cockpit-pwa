@@ -368,6 +368,14 @@ body[data-view="ide-tab-detail"] .cockpit-mode-toggle {
 }
 .cockpit-detail-header .cockpit-back-btn { flex: 1; }
 
+.cockpit-btn-refreshing {
+  opacity: 0.65;
+  animation: cockpit-refresh-spin 0.8s linear infinite;
+}
+@keyframes cockpit-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
 .cockpit-ide-compose {
   margin-top: calc(var(--cp-gap) * 2);
   padding: var(--cp-gap);

@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-06-10 22:16 CEST 9968cd1 in config.json + app.js).
+  script (replaces 2026-06-10 22:27 CEST 780f5b7 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=9968cd1")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=780f5b7")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -100,7 +100,10 @@
 
     <!-- View 2: detail of a single session. -->
     <section id="view-detail" class="cockpit-view" data-view-id="detail" hidden>
-      <button type="button" class="cockpit-back-btn" data-target-view="list" aria-label="Back to list">← Back</button>
+      <div class="cockpit-detail-header">
+        <button type="button" class="cockpit-back-btn" data-target-view="list" aria-label="Back to list">← Back</button>
+        <button type="button" id="btn-detail-refresh" class="cockpit-btn" aria-label="Refresh session">↻</button>
+      </div>
       <h2 id="detail-title">…</h2>
       <dl class="cockpit-detail-meta">
         <dt>Status</dt><dd id="detail-status">…</dd>
@@ -223,6 +226,7 @@
     <section id="view-ide-tab-detail" class="cockpit-view" data-view-id="ide-tab-detail" hidden>
       <div class="cockpit-detail-header">
         <button type="button" class="cockpit-back-btn" data-target-view="ide-tabs" aria-label="Back to IDE tabs">← Back to IDE tabs</button>
+        <button type="button" id="btn-ide-detail-refresh" class="cockpit-btn" aria-label="Refresh IDE tab">↻</button>
         <button type="button" id="btn-ide-close-tab" class="cockpit-btn cockpit-btn-danger" aria-label="Close this IDE tab">✕ Close tab</button>
       </div>
       <h2 id="ide-detail-title">…</h2>
@@ -329,6 +333,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=9968cd1" defer></script>
+  <script src="./app.js?v=780f5b7" defer></script>
 </body>
 </html>

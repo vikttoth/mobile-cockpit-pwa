@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-06-10 22:16 CEST 9968cd1`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-06-10 22:16 CEST 9968cd1";
+// `2026-06-10 22:27 CEST 780f5b7`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-06-10 22:27 CEST 780f5b7";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -74,6 +74,12 @@ let WRITE_HELPERS = null;
 
 /** Dynamically imported pure helpers for the IDE-tabs view (M2.1). */
 let IDE_HELPERS = null;
+
+/** Pure helpers for refresh-signals.json nudge + wait logic. */
+let REFRESH_HELPERS = null;
+
+/** True while a manual ↻ refresh is in flight (prevents double-tap). */
+let refreshInFlight = false;
 
 /** Cached last-known ide-tabs.json snapshot. Refreshed by loadIdeTabs(). */
 let cachedIdeSnapshot = null;
@@ -297,6 +303,156 @@ async function loadIdeTabs() {
   const snapshot = await contentRes.json();
   cachedIdeSnapshot = snapshot;
   return snapshot;
+}
+
+// =============================================================================
+// 2b. Manual refresh (↻) — nudge desktop daemons + wait for fresh OneDrive data
+// =============================================================================
+
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Write a timestamp into cursor-cockpit/refresh-signals.json so
+ * daemon/poll.mjs and ide-mirror/poll.mjs wake early.
+ *
+ * @param {'sessions' | 'ideTabs' | 'both'} scope
+ */
+async function writeRefreshNudge(scope) {
+  const cfg = CONFIG && CONFIG.refreshSignals;
+  if (!cfg || !cfg.endpoint) return;
+  const endpoint = cfg.endpoint;
+  let existing = REFRESH_HELPERS.emptyRefreshSignals();
+  const metaRes = await graphFetch(endpoint);
+  if (metaRes.ok) {
+    const contentRes = await graphFetch(`${endpoint}:/content`);
+    if (contentRes.ok) {
+      try {
+        existing = REFRESH_HELPERS.parseRefreshSignals(await contentRes.json());
+      } catch {
+        /* treat corrupt file as empty */
+      }
+    }
+  } else if (metaRes.status !== 404) {
+    throw new Error(`refresh-signals GET failed: ${metaRes.status}`);
+  }
+  const merged = REFRESH_HELPERS.applyNudge(
+    existing,
+    scope,
+    new Date().toISOString(),
+  );
+  const putRes = await graphFetch(`${endpoint}:/content`, {
+    method: "PUT",
+    body: JSON.stringify(merged, null, 2) + "\n",
+  });
+  if (!putRes.ok) {
+    throw new Error(`refresh-signals PUT failed: ${putRes.status}`);
+  }
+}
+
+/**
+ * Poll state.json until ETag changes or wait budget elapses.
+ * @param {string|null} beforeEtag
+ */
+async function waitForFreshSessions(beforeEtag) {
+  const cfg = CONFIG && CONFIG.refreshSignals;
+  const maxMs = (cfg && cfg.waitMaxMs) || 15000;
+  const pollMs = (cfg && cfg.waitPollMs) || 500;
+  const minMs = (cfg && cfg.waitMinMs) || 2000;
+  const start = Date.now();
+  const deadline = start + maxMs;
+  while (Date.now() < deadline) {
+    const { etag } = await loadState();
+    if (etag !== beforeEtag) return true;
+    if (Date.now() - start >= minMs) return false;
+    await sleepMs(pollMs);
+  }
+  return false;
+}
+
+/**
+ * Poll ide-tabs.json until snapshotAt changes or wait budget elapses.
+ * @param {string|null} beforeSnapshotAt
+ */
+async function waitForFreshIdeTabs(beforeSnapshotAt) {
+  const cfg = CONFIG && CONFIG.refreshSignals;
+  const maxMs = (cfg && cfg.waitMaxMs) || 15000;
+  const pollMs = (cfg && cfg.waitPollMs) || 500;
+  const minMs = (cfg && cfg.waitMinMs) || 2000;
+  const start = Date.now();
+  const deadline = start + maxMs;
+  while (Date.now() < deadline) {
+    await loadIdeTabs();
+    const after = cachedIdeSnapshot && cachedIdeSnapshot.snapshotAt;
+    if (after && after !== beforeSnapshotAt) return true;
+    if (Date.now() - start >= minMs) return false;
+    await sleepMs(pollMs);
+  }
+  return false;
+}
+
+function setRefreshButtonsBusy(busy) {
+  refreshInFlight = busy;
+  for (const id of [
+    "btn-refresh",
+    "btn-detail-refresh",
+    "btn-ide-refresh",
+    "btn-ide-detail-refresh",
+  ]) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.disabled = busy;
+    el.setAttribute("aria-busy", busy ? "true" : "false");
+    el.classList.toggle("cockpit-btn-refreshing", busy);
+  }
+}
+
+/**
+ * User tapped ↻ on the current view — nudge the matching desktop daemon,
+ * wait briefly for a OneDrive write, then re-render the active view.
+ */
+async function refreshCurrentView() {
+  if (refreshInFlight) return;
+  const view = document.body.dataset.view;
+  setRefreshButtonsBusy(true);
+  try {
+    if (view === "list") {
+      const beforeEtag = cachedStateEtag;
+      await writeRefreshNudge("sessions");
+      await waitForFreshSessions(beforeEtag);
+      await renderList();
+    } else if (view === "detail" && activeDetailSessionId) {
+      const beforeEtag = cachedStateEtag;
+      await writeRefreshNudge("sessions");
+      await waitForFreshSessions(beforeEtag);
+      await loadState();
+      renderDetail(activeDetailSessionId);
+    } else if (view === "ide-tabs") {
+      const beforeAt = cachedIdeSnapshot && cachedIdeSnapshot.snapshotAt;
+      await writeRefreshNudge("ideTabs");
+      await waitForFreshIdeTabs(beforeAt);
+      await renderIdeTabsList();
+    } else if (view === "ide-tab-detail") {
+      const composerId =
+        activeIdeTabComposerId ||
+        document.getElementById("ide-detail-composer-id")?.textContent;
+      const beforeAt = cachedIdeSnapshot && cachedIdeSnapshot.snapshotAt;
+      await writeRefreshNudge("ideTabs");
+      await waitForFreshIdeTabs(beforeAt);
+      await loadIdeTabs();
+      if (composerId) renderIdeTabDetail(composerId);
+    }
+  } catch (err) {
+    if (view === "detail") showDetailError(err.message);
+    else if (view === "ide-tabs" || view === "ide-tab-detail") {
+      showIdeTabsError(err.message);
+    } else {
+      showListError(err.message);
+    }
+  } finally {
+    setRefreshButtonsBusy(false);
+  }
 }
 
 // =============================================================================
@@ -1572,11 +1728,13 @@ async function bootstrap() {
   // ide-helpers module is sibling; both are loaded in parallel because
   // they have no inter-dependency.
   try {
-    [WRITE_HELPERS, IDE_HELPERS, IDE_ACTION_HELPERS] = await Promise.all([
-      import("./write-helpers.mjs?v=9968cd1"),
-      import("./ide-helpers.mjs?v=9968cd1"),
-      import("./ide-actions-helpers.mjs?v=9968cd1"),
-    ]);
+    [WRITE_HELPERS, IDE_HELPERS, IDE_ACTION_HELPERS, REFRESH_HELPERS] =
+      await Promise.all([
+        import("./write-helpers.mjs?v=780f5b7"),
+        import("./ide-helpers.mjs?v=780f5b7"),
+        import("./ide-actions-helpers.mjs?v=780f5b7"),
+        import("./refresh-helpers.mjs"),
+      ]);
   } catch (err) {
     setStatusBadge(`helpers import error: ${err.message}`, "error");
     return;
@@ -1601,7 +1759,17 @@ async function bootstrap() {
 
   // Wire navigation + write-path buttons.
   const btnRefresh = document.getElementById("btn-refresh");
-  if (btnRefresh) btnRefresh.addEventListener("click", () => renderList());
+  if (btnRefresh) {
+    btnRefresh.addEventListener("click", () => {
+      refreshCurrentView().catch((err) => showListError(err.message));
+    });
+  }
+  const btnDetailRefresh = document.getElementById("btn-detail-refresh");
+  if (btnDetailRefresh) {
+    btnDetailRefresh.addEventListener("click", () => {
+      refreshCurrentView().catch((err) => showDetailError(err.message));
+    });
+  }
   const btnNewSession = document.getElementById("btn-new-session");
   if (btnNewSession) {
     btnNewSession.addEventListener("click", () => setView("new"));
@@ -1634,7 +1802,13 @@ async function bootstrap() {
   const btnIdeRefresh = document.getElementById("btn-ide-refresh");
   if (btnIdeRefresh) {
     btnIdeRefresh.addEventListener("click", () => {
-      renderIdeTabsList().catch((err) => showIdeTabsError(err.message));
+      refreshCurrentView().catch((err) => showIdeTabsError(err.message));
+    });
+  }
+  const btnIdeDetailRefresh = document.getElementById("btn-ide-detail-refresh");
+  if (btnIdeDetailRefresh) {
+    btnIdeDetailRefresh.addEventListener("click", () => {
+      refreshCurrentView().catch((err) => showIdeDetailError(err.message));
     });
   }
   for (const btn of document.querySelectorAll(".cockpit-ide-list-btn")) {
