@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-06-10 21:47 CEST 9968cd1`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-06-10 21:47 CEST 9968cd1";
+// `2026-06-10 22:16 CEST 9968cd1`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-06-10 22:16 CEST 9968cd1";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -77,6 +77,9 @@ let IDE_HELPERS = null;
 
 /** Cached last-known ide-tabs.json snapshot. Refreshed by loadIdeTabs(). */
 let cachedIdeSnapshot = null;
+
+/** IDE tabs sub-view within the read-only mirror: live open vs chat history. */
+let ideListMode = "open";
 
 /** Auto-refresh handle for the ide-tabs view (independent of sessions). */
 let ideRefreshTimerId = null;
@@ -524,6 +527,7 @@ function setView(viewId, payload) {
   } else if (viewId === "new") {
     renderNew();
   } else if (viewId === "ide-tabs") {
+    syncIdeListModeToggle();
     renderIdeTabsList().catch((err) => showIdeTabsError(err.message));
   } else if (viewId === "ide-tab-detail" && payload && payload.composerId) {
     renderIdeTabDetail(payload.composerId);
@@ -777,6 +781,22 @@ function clearIdeDetailError() {
   if (el) el.hidden = true;
 }
 
+function syncIdeListModeToggle() {
+  for (const btn of document.querySelectorAll(".cockpit-ide-list-btn")) {
+    btn.setAttribute(
+      "aria-current",
+      btn.dataset.ideListMode === ideListMode ? "true" : "false",
+    );
+  }
+}
+
+function setIdeListMode(mode) {
+  if (mode !== "open" && mode !== "history") return;
+  ideListMode = mode;
+  syncIdeListModeToggle();
+  renderIdeTabsList().catch((err) => showIdeTabsError(err.message));
+}
+
 async function renderIdeTabsList() {
   if (!IDE_HELPERS) {
     showIdeTabsError("ide-helpers module not loaded yet (bootstrap order bug)");
@@ -795,20 +815,35 @@ async function renderIdeTabsList() {
     return;
   }
 
-  const snapshot = cachedIdeSnapshot || { tabs: [] };
-  const tabs = Array.isArray(snapshot.tabs) ? snapshot.tabs : [];
-  // Defensive cap; sortIdeTabs also caps, but pulling the limit from config
-  // keeps the two paths consistent. recentSessionsCount is reused as the
-  // "max tabs to show in the list" cap.
+  const snapshot = cachedIdeSnapshot || { openTabs: [], historyTabs: [] };
+  const tabs = IDE_HELPERS.pickIdeTabList(snapshot, ideListMode);
   const cap = (CONFIG.pwa && CONFIG.pwa.recentSessionsCount) || 50;
   const sorted = IDE_HELPERS.sortIdeTabs(tabs, cap);
+
+  const sourceWarn = document.getElementById("ide-tabs-source-warning");
+  if (sourceWarn) {
+    const hint =
+      ideListMode === "open"
+        ? IDE_HELPERS.openTabsSourceHint(snapshot.openTabsSource)
+        : null;
+    if (hint) {
+      sourceWarn.textContent = hint;
+      sourceWarn.hidden = false;
+    } else {
+      sourceWarn.textContent = "";
+      sourceWarn.hidden = true;
+    }
+  }
 
   const bucket = IDE_HELPERS.summarizeWaitingOn(sorted);
   const snapshotAtRel = IDE_HELPERS.relativeIdeTime(snapshot.snapshotAt, Date.now());
   summary.innerHTML = "";
   const total = document.createElement("span");
   total.className = "cockpit-ide-summary-bucket";
-  total.innerHTML = `<strong>${bucket.total}</strong> tab${bucket.total === 1 ? "" : "s"}`;
+  const listLabel = ideListMode === "history" ? "in history" : "open";
+  total.innerHTML =
+    `<strong>${bucket.total}</strong> ${listLabel}` +
+    (bucket.total === 1 ? " tab" : " tabs");
   summary.appendChild(total);
   if (bucket.agent > 0) {
     const b = document.createElement("span");
@@ -836,6 +871,13 @@ async function renderIdeTabsList() {
   ul.innerHTML = "";
   if (sorted.length === 0) {
     empty.hidden = false;
+    if (ideListMode === "history") {
+      empty.textContent =
+        "No recent chat history in the mirror yet. Older conversations appear here after the next poll.";
+    } else {
+      empty.textContent =
+        "No open IDE tabs in the mirror. Open chats in Cursor, ensure the mobile-cockpit extension is active, then refresh.";
+    }
     return;
   }
   empty.hidden = true;
@@ -880,12 +922,12 @@ function renderIdeTabDetail(composerId) {
     return;
   }
   clearIdeDetailError();
-  if (!cachedIdeSnapshot || !Array.isArray(cachedIdeSnapshot.tabs)) {
+  if (!cachedIdeSnapshot) {
     showIdeTabsError("No cached IDE snapshot — refresh the IDE-tabs list first.");
     setView("ide-tabs");
     return;
   }
-  const tab = cachedIdeSnapshot.tabs.find((x) => x.composerId === composerId);
+  const tab = IDE_HELPERS.findIdeTab(cachedIdeSnapshot, composerId);
   if (!tab) {
     showIdeTabsError(`IDE tab not in current snapshot: ${composerId}`);
     setView("ide-tabs");
@@ -1595,6 +1637,13 @@ async function bootstrap() {
       renderIdeTabsList().catch((err) => showIdeTabsError(err.message));
     });
   }
+  for (const btn of document.querySelectorAll(".cockpit-ide-list-btn")) {
+    btn.addEventListener("click", () => {
+      const mode = btn.dataset.ideListMode;
+      if (mode) setIdeListMode(mode);
+    });
+  }
+  syncIdeListModeToggle();
 
   // M2.2.3 wireup: + New agent toolbar button, compose textarea + Send,
   // close-confirm modal cancel buttons, new-agent modal form + cancels.

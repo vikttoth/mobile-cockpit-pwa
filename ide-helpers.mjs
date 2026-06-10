@@ -158,3 +158,56 @@ export function relativeIdeTime(ts, nowMs) {
   const diffDay = Math.round(diffHr / 24);
   return diffDay + " d ago";
 }
+
+/**
+ * Pick the tab array for the IDE list sub-view from a v1 or v2 snapshot.
+ *
+ * @param {object|null|undefined} snapshot
+ * @param {"open"|"history"} [mode="open"]
+ * @returns {Array}
+ */
+export function pickIdeTabList(snapshot, mode = "open") {
+  if (!snapshot || typeof snapshot !== "object") return [];
+  if (mode === "history") {
+    return Array.isArray(snapshot.historyTabs) ? snapshot.historyTabs : [];
+  }
+  if (Array.isArray(snapshot.openTabs)) return snapshot.openTabs;
+  if (Array.isArray(snapshot.tabs)) return snapshot.tabs;
+  return [];
+}
+
+/**
+ * Find one tab by composerId across open, history, and legacy `tabs`.
+ *
+ * @param {object|null|undefined} snapshot
+ * @param {string} composerId
+ * @returns {object|null}
+ */
+export function findIdeTab(snapshot, composerId) {
+  if (!snapshot || typeof composerId !== "string" || composerId.length === 0) {
+    return null;
+  }
+  const want = composerId.toLowerCase();
+  const merged = [
+    ...(Array.isArray(snapshot.openTabs) ? snapshot.openTabs : []),
+    ...(Array.isArray(snapshot.historyTabs) ? snapshot.historyTabs : []),
+    ...(Array.isArray(snapshot.tabs) ? snapshot.tabs : []),
+  ];
+  return (
+    merged.find((t) => t && String(t.composerId).toLowerCase() === want) ?? null
+  );
+}
+
+/**
+ * User-facing hint when open tabs are not sourced from the extension cache.
+ *
+ * @param {string|null|undefined} openTabsSource
+ * @returns {string|null} null when no warning needed
+ */
+export function openTabsSourceHint(openTabsSource) {
+  if (openTabsSource === "extension") return null;
+  return (
+    "Open tabs are estimated from recent transcript activity, not the live IDE tab bar. " +
+    "Install or reload the mobile-cockpit extension in Cursor for exact sync."
+  );
+}

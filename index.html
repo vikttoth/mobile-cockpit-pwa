@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-06-10 21:47 CEST 9968cd1 in config.json + app.js).
+  script (replaces 2026-06-10 22:16 CEST 9968cd1 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -189,6 +189,13 @@
         <button type="button" id="btn-ide-new-agent" class="cockpit-btn cockpit-btn-primary" aria-label="Open new agent in IDE">+ New agent</button>
         <button type="button" id="btn-ide-refresh" class="cockpit-btn" aria-label="Refresh IDE tabs">↻</button>
       </div>
+      <nav class="cockpit-ide-list-toggle" role="tablist" aria-label="IDE tab list">
+        <button type="button" id="btn-ide-list-open" class="cockpit-ide-list-btn"
+                role="tab" data-ide-list-mode="open" aria-current="true">Open</button>
+        <button type="button" id="btn-ide-list-history" class="cockpit-ide-list-btn"
+                role="tab" data-ide-list-mode="history">History</button>
+      </nav>
+      <p id="ide-tabs-source-warning" class="cockpit-hint" hidden role="status"></p>
       <div class="cockpit-ide-summary" id="ide-summary" aria-live="polite">
         <!-- Populated by app.js#renderIdeTabsList():
              tabs total + per-bucket counts (agent/user/none) + snapshotAt -->
@@ -203,8 +210,7 @@
         -->
       </ul>
       <p id="ide-tabs-empty-state" class="cockpit-empty" hidden>
-        No live IDE tabs found. Start a chat in Cursor and wait for the next
-        mirror poll (default 10 s daemon-side, 20 s PWA refresh).
+        No IDE tabs in this list yet.
       </p>
       <p id="ide-tabs-error-state" class="cockpit-error" hidden role="alert"></p>
     </section>
