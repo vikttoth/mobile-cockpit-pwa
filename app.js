@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-06-10 22:27 CEST 780f5b7`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-06-10 22:27 CEST 780f5b7";
+// `2026-06-10 22:51 CEST f8da15e`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-06-10 22:51 CEST f8da15e";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -375,7 +375,7 @@ async function waitForFreshSessions(beforeEtag) {
  * Poll ide-tabs.json until snapshotAt changes or wait budget elapses.
  * @param {string|null} beforeSnapshotAt
  */
-async function waitForFreshIdeTabs(beforeSnapshotAt) {
+async function waitForFreshIdeTabs(beforeSnapshotAt, beforeFingerprint) {
   const cfg = CONFIG && CONFIG.refreshSignals;
   const maxMs = (cfg && cfg.waitMaxMs) || 15000;
   const pollMs = (cfg && cfg.waitPollMs) || 500;
@@ -384,8 +384,17 @@ async function waitForFreshIdeTabs(beforeSnapshotAt) {
   const deadline = start + maxMs;
   while (Date.now() < deadline) {
     await loadIdeTabs();
-    const after = cachedIdeSnapshot && cachedIdeSnapshot.snapshotAt;
-    if (after && after !== beforeSnapshotAt) return true;
+    const snap = cachedIdeSnapshot;
+    const afterAt = snap && snap.snapshotAt;
+    const afterFp = snap && snap.contentFingerprint;
+    if (afterAt && afterAt !== beforeSnapshotAt) return true;
+    if (
+      beforeFingerprint &&
+      afterFp &&
+      afterFp !== beforeFingerprint
+    ) {
+      return true;
+    }
     if (Date.now() - start >= minMs) return false;
     await sleepMs(pollMs);
   }
@@ -430,16 +439,18 @@ async function refreshCurrentView() {
       renderDetail(activeDetailSessionId);
     } else if (view === "ide-tabs") {
       const beforeAt = cachedIdeSnapshot && cachedIdeSnapshot.snapshotAt;
+      const beforeFp = cachedIdeSnapshot && cachedIdeSnapshot.contentFingerprint;
       await writeRefreshNudge("ideTabs");
-      await waitForFreshIdeTabs(beforeAt);
+      await waitForFreshIdeTabs(beforeAt, beforeFp);
       await renderIdeTabsList();
     } else if (view === "ide-tab-detail") {
       const composerId =
         activeIdeTabComposerId ||
         document.getElementById("ide-detail-composer-id")?.textContent;
       const beforeAt = cachedIdeSnapshot && cachedIdeSnapshot.snapshotAt;
+      const beforeFp = cachedIdeSnapshot && cachedIdeSnapshot.contentFingerprint;
       await writeRefreshNudge("ideTabs");
-      await waitForFreshIdeTabs(beforeAt);
+      await waitForFreshIdeTabs(beforeAt, beforeFp);
       await loadIdeTabs();
       if (composerId) renderIdeTabDetail(composerId);
     }
@@ -974,7 +985,9 @@ async function renderIdeTabsList() {
   const snapshot = cachedIdeSnapshot || { openTabs: [], historyTabs: [] };
   const tabs = IDE_HELPERS.pickIdeTabList(snapshot, ideListMode);
   const cap = (CONFIG.pwa && CONFIG.pwa.recentSessionsCount) || 50;
-  const sorted = IDE_HELPERS.sortIdeTabs(tabs, cap);
+  const sorted = IDE_HELPERS.orderIdeTabsForDisplay(tabs, cap, {
+    openTabsSource: ideListMode === "open" ? snapshot.openTabsSource : null,
+  });
 
   const sourceWarn = document.getElementById("ide-tabs-source-warning");
   if (sourceWarn) {
@@ -1131,6 +1144,8 @@ function renderIdeTabDetail(composerId) {
     set("ide-detail-transcript-size", "—");
   }
 
+  renderIdeTabPendingQuestion(tab);
+
   const threadOl = document.getElementById("ide-detail-thread");
   const threadEmpty = document.getElementById("ide-detail-thread-empty");
   if (!threadOl || !threadEmpty) return;
@@ -1180,6 +1195,61 @@ function renderIdeTabDetail(composerId) {
     }
 
     threadOl.appendChild(li);
+  }
+}
+
+/**
+ * Show AskQuestion options at the top of the detail view; tap fills compose.
+ */
+function renderIdeTabPendingQuestion(tab) {
+  const section = document.getElementById("ide-detail-pending");
+  const body = document.getElementById("ide-detail-pending-body");
+  if (!section || !body) return;
+  body.innerHTML = "";
+  const pq = tab && tab.pendingQuestion;
+  const questions = pq && Array.isArray(pq.questions) ? pq.questions : [];
+  if (questions.length === 0) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  const ta = document.getElementById("ide-detail-compose-text");
+  const btn = document.getElementById("btn-ide-send-message");
+  const counter = document.getElementById("ide-detail-compose-counter");
+  const max = IDE_ACTION_HELPERS ? IDE_ACTION_HELPERS.MAX_TEXT_LEN : 20000;
+
+  for (const q of questions) {
+    const block = document.createElement("div");
+    block.className = "cockpit-ide-pending-q";
+    const prompt = document.createElement("p");
+    prompt.className = "cockpit-ide-pending-prompt";
+    prompt.textContent = q.prompt || "Choose an option:";
+    block.appendChild(prompt);
+    if (Array.isArray(q.options) && q.options.length > 0) {
+      const opts = document.createElement("div");
+      opts.className = "cockpit-ide-pending-options";
+      for (const o of q.options) {
+        const optBtn = document.createElement("button");
+        optBtn.type = "button";
+        optBtn.className = "cockpit-btn cockpit-ide-pending-opt";
+        optBtn.textContent = o.label || o.id || "?";
+        optBtn.addEventListener("click", () => {
+          if (!ta) return;
+          ta.value = o.label || o.id || "";
+          ta.dispatchEvent(new Event("input", { bubbles: true }));
+          ta.focus();
+          if (counter) {
+            const len = ta.value.length;
+            counter.textContent = `${len} / ${max}`;
+            counter.dataset.over = len > max ? "true" : "false";
+          }
+          if (btn) btn.disabled = ta.value.length === 0 || ta.value.length > max;
+        });
+        opts.appendChild(optBtn);
+      }
+      block.appendChild(opts);
+    }
+    body.appendChild(block);
   }
 }
 
@@ -1730,9 +1800,9 @@ async function bootstrap() {
   try {
     [WRITE_HELPERS, IDE_HELPERS, IDE_ACTION_HELPERS, REFRESH_HELPERS] =
       await Promise.all([
-        import("./write-helpers.mjs?v=780f5b7"),
-        import("./ide-helpers.mjs?v=780f5b7"),
-        import("./ide-actions-helpers.mjs?v=780f5b7"),
+        import("./write-helpers.mjs?v=f8da15e"),
+        import("./ide-helpers.mjs?v=f8da15e"),
+        import("./ide-actions-helpers.mjs?v=f8da15e"),
         import("./refresh-helpers.mjs"),
       ]);
   } catch (err) {

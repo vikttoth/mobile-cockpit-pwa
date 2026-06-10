@@ -376,8 +376,49 @@ body[data-view="ide-tab-detail"] .cockpit-mode-toggle {
   to { transform: rotate(360deg); }
 }
 
+.cockpit-detail-meta-collapse {
+  margin: var(--cp-gap) 0;
+  font-size: 0.9rem;
+}
+.cockpit-detail-meta-collapse summary {
+  cursor: pointer;
+  color: var(--cp-muted);
+  user-select: none;
+}
+
+.cockpit-ide-pending {
+  margin: var(--cp-gap) 0;
+  padding: var(--cp-gap);
+  border: 2px solid var(--cp-accent, #4a7ba8);
+  border-radius: var(--cp-radius);
+  background: rgba(74, 123, 168, 0.08);
+}
+.cockpit-ide-pending h3 {
+  margin: 0 0 var(--cp-gap);
+  font-size: 1rem;
+  color: var(--cp-accent, #4a7ba8);
+}
+.cockpit-ide-pending-q + .cockpit-ide-pending-q {
+  margin-top: var(--cp-gap);
+}
+.cockpit-ide-pending-prompt {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+.cockpit-ide-pending-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cockpit-ide-pending-opt {
+  text-align: left;
+  white-space: normal;
+  line-height: 1.35;
+}
+
 .cockpit-ide-compose {
-  margin-top: calc(var(--cp-gap) * 2);
+  margin-top: var(--cp-gap);
+  margin-bottom: var(--cp-gap);
   padding: var(--cp-gap);
   border: 1px solid var(--cp-border);
   border-radius: var(--cp-radius);

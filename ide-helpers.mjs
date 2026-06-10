@@ -29,6 +29,25 @@
  * @param {number} limit  Maximum tabs to return (defaults to a safe 100).
  * @returns {Array<object>}
  */
+/**
+ * Order tabs for the PWA list. When the snapshot was built from the
+ * extension open-tab cache, preserve IDE tab-bar order; otherwise fall
+ * back to `sortIdeTabs` (newest activity first).
+ *
+ * @param {Array<object>|null|undefined} tabs
+ * @param {number} limit
+ * @param {{openTabsSource?: string|null}} [opts]
+ * @returns {Array<object>}
+ */
+export function orderIdeTabsForDisplay(tabs, limit, opts = {}) {
+  if (!Array.isArray(tabs) || tabs.length === 0) return [];
+  const cap = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 100;
+  if (opts.openTabsSource === "extension") {
+    return tabs.slice(0, cap);
+  }
+  return sortIdeTabs(tabs, cap);
+}
+
 export function sortIdeTabs(tabs, limit) {
   if (!Array.isArray(tabs)) return [];
   const cap = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 100;

@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-06-10 22:27 CEST 780f5b7 in config.json + app.js).
+  script (replaces 2026-06-10 22:51 CEST f8da15e in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=780f5b7")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=f8da15e")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -230,13 +230,32 @@
         <button type="button" id="btn-ide-close-tab" class="cockpit-btn cockpit-btn-danger" aria-label="Close this IDE tab">✕ Close tab</button>
       </div>
       <h2 id="ide-detail-title">…</h2>
-      <dl class="cockpit-detail-meta">
-        <dt>Waiting on</dt><dd id="ide-detail-waiting">…</dd>
-        <dt>Composer ID</dt><dd id="ide-detail-composer-id">…</dd>
-        <dt>Last activity</dt><dd id="ide-detail-last-activity">…</dd>
-        <dt>Messages</dt><dd id="ide-detail-message-count">…</dd>
-        <dt>Transcript size</dt><dd id="ide-detail-transcript-size">…</dd>
-      </dl>
+      <section id="ide-detail-pending" class="cockpit-ide-pending" hidden aria-label="Agent is waiting for your answer">
+        <h3>Agent is asking</h3>
+        <div id="ide-detail-pending-body" class="cockpit-ide-pending-body"></div>
+      </section>
+      <section class="cockpit-ide-compose" aria-label="Send message to this IDE tab">
+        <h3>Send to this tab</h3>
+        <label for="ide-detail-compose-text" class="cockpit-visually-hidden">Message to send</label>
+        <textarea id="ide-detail-compose-text" class="cockpit-compose-textarea"
+                  rows="4" maxlength="20000"
+                  placeholder="Type a message to inject into this tab and submit…"></textarea>
+        <div class="cockpit-compose-actions">
+          <span id="ide-detail-compose-counter" class="cockpit-compose-counter">0 / 20000</span>
+          <button type="button" id="btn-ide-send-message" class="cockpit-btn cockpit-btn-primary" disabled>Send</button>
+        </div>
+        <p id="ide-detail-compose-error" class="cockpit-error" hidden role="alert"></p>
+      </section>
+      <details class="cockpit-detail-meta-collapse">
+        <summary>Tab details</summary>
+        <dl class="cockpit-detail-meta">
+          <dt>Waiting on</dt><dd id="ide-detail-waiting">…</dd>
+          <dt>Composer ID</dt><dd id="ide-detail-composer-id">…</dd>
+          <dt>Last activity</dt><dd id="ide-detail-last-activity">…</dd>
+          <dt>Messages</dt><dd id="ide-detail-message-count">…</dd>
+          <dt>Transcript size</dt><dd id="ide-detail-transcript-size">…</dd>
+        </dl>
+      </details>
       <section class="cockpit-ide-thread">
         <h3>Thread (most recent first)</h3>
         <ol id="ide-detail-thread" class="cockpit-ide-thread-list" role="list">
@@ -250,18 +269,6 @@
         <p id="ide-detail-thread-empty" class="cockpit-empty" hidden>
           No turns captured yet for this tab.
         </p>
-      </section>
-      <section class="cockpit-ide-compose" aria-label="Send message to this IDE tab">
-        <h3>Send to this tab</h3>
-        <label for="ide-detail-compose-text" class="cockpit-visually-hidden">Message to send</label>
-        <textarea id="ide-detail-compose-text" class="cockpit-compose-textarea"
-                  rows="4" maxlength="20000"
-                  placeholder="Type a message to inject into this tab and submit…"></textarea>
-        <div class="cockpit-compose-actions">
-          <span id="ide-detail-compose-counter" class="cockpit-compose-counter">0 / 20000</span>
-          <button type="button" id="btn-ide-send-message" class="cockpit-btn cockpit-btn-primary" disabled>Send</button>
-        </div>
-        <p id="ide-detail-compose-error" class="cockpit-error" hidden role="alert"></p>
       </section>
       <p id="ide-detail-error-state" class="cockpit-error" hidden role="alert"></p>
     </section>
@@ -333,6 +340,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=780f5b7" defer></script>
+  <script src="./app.js?v=f8da15e" defer></script>
 </body>
 </html>
