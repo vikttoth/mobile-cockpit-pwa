@@ -35,8 +35,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-06-10 18:10 CEST 2a052e7`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-06-10 18:10 CEST 2a052e7";
+// `2026-06-10 19:39 CEST a14e5bf`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-06-10 19:39 CEST a14e5bf";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
