@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-06-10 23:42 CEST f270f68`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-06-10 23:42 CEST f270f68";
+// `2026-06-10 23:58 CEST f270f68`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-06-10 23:58 CEST f270f68";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -77,6 +77,12 @@ let IDE_HELPERS = null;
 
 /** Compose draft preservation across ~20s IDE-tab auto-refresh. */
 let COMPOSE_DRAFT_HELPERS = null;
+
+/** AskQuestion mobile UI helpers (pure). */
+let PENDING_QUESTION_HELPERS = null;
+
+/** In-progress multi-select / bundle answers keyed by composerId. */
+const idePendingAnswerDrafts = new Map();
 
 /** Per-composerId in-progress message text (survives background re-render). */
 const ideComposeDrafts = new Map();
@@ -1247,24 +1253,142 @@ function renderIdeTabDetail(composerId, options = {}) {
 }
 
 /**
- * Show AskQuestion options at the top of the detail view; tap fills compose.
+ * Send a user message into the active IDE tab (shared by compose + AskQuestion UI).
+ * @param {string} text
+ * @returns {Promise<void>}
+ */
+async function sendIdeTabMessage(text) {
+  const err = document.getElementById("ide-detail-compose-error");
+  if (!activeIdeTabComposerId) {
+    if (err) {
+      err.textContent = "No active IDE tab — re-open the tab from the list.";
+      err.hidden = false;
+    }
+    throw new Error("no active IDE tab");
+  }
+  if (!IDE_ACTION_HELPERS) {
+    if (err) {
+      err.textContent = "Action helpers not loaded.";
+      err.hidden = false;
+    }
+    throw new Error("action helpers not loaded");
+  }
+  const trimmed = String(text || "").trim();
+  if (!trimmed) {
+    throw new Error("empty message");
+  }
+  const action = IDE_ACTION_HELPERS.buildSendMessageAction({
+    tabId: activeIdeTabComposerId,
+    text: trimmed,
+    now: new Date(),
+    rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
+  });
+  const allowedCwds = (CONFIG.session && CONFIG.session.allowedCwds) || [];
+  const validation = IDE_ACTION_HELPERS.validateActionInputs(action, allowedCwds);
+  if (!validation.valid) {
+    const msg = validation.errors.join("; ");
+    if (err) {
+      err.textContent = msg;
+      err.hidden = false;
+    }
+    throw new Error(msg);
+  }
+  if (err) err.hidden = true;
+  await submitIdeAction(action);
+  if (activeIdeTabComposerId) ideComposeDrafts.delete(activeIdeTabComposerId);
+  resetComposeUi();
+}
+
+function syncPendingSubmitButtons(body, questions, answers) {
+  if (!PENDING_QUESTION_HELPERS || !body) return;
+  const submitAll = body.querySelector(".cockpit-ide-pending-submit-all");
+  if (submitAll) {
+    submitAll.disabled = !PENDING_QUESTION_HELPERS.allQuestionsAnswered(questions, answers);
+  }
+  for (const block of body.querySelectorAll(".cockpit-ide-pending-q")) {
+    const submitOne = block.querySelector(".cockpit-ide-pending-submit-one");
+    if (!submitOne) continue;
+    const key = submitOne.dataset.questionKey || "";
+    const q = questions.find((item) => PENDING_QUESTION_HELPERS.questionKey(item) === key);
+    if (!q) continue;
+    const v = answers[key];
+    const ok = q.allowMultiple
+      ? Array.isArray(v) && v.length > 0
+      : v != null && String(v).trim() !== "";
+    submitOne.disabled = !ok;
+  }
+}
+
+function appendPendingFreeTextRow(block, q, questions, answers, onAnswerChange) {
+  const H = PENDING_QUESTION_HELPERS;
+  const key = H.questionKey(q);
+  const row = document.createElement("div");
+  row.className = "cockpit-ide-pending-freetext";
+  const input = document.createElement("textarea");
+  input.className = "cockpit-compose-textarea cockpit-ide-pending-freetext-input";
+  input.rows = 2;
+  input.placeholder = "Type your answer…";
+  input.value = typeof answers[key] === "string" ? answers[key] : "";
+  input.addEventListener("input", () => {
+    answers[key] = input.value;
+    onAnswerChange();
+  });
+  row.appendChild(input);
+  const sendBtn = document.createElement("button");
+  sendBtn.type = "button";
+  sendBtn.className = "cockpit-btn cockpit-btn-primary cockpit-ide-pending-submit-one";
+  sendBtn.dataset.questionKey = key;
+  sendBtn.textContent = questions.length > 1 ? "Save answer" : "Send answer";
+  sendBtn.addEventListener("click", async () => {
+    if (questions.length > 1) {
+      onAnswerChange();
+      input.focus();
+      return;
+    }
+    const text = H.formatAnswersForSend([q], answers);
+    if (!text) return;
+    sendBtn.disabled = true;
+    try {
+      await sendIdeTabMessage(text);
+      if (activeIdeTabComposerId) idePendingAnswerDrafts.delete(activeIdeTabComposerId);
+    } catch {
+      sendBtn.disabled = false;
+      onAnswerChange();
+    }
+  });
+  row.appendChild(sendBtn);
+  block.appendChild(row);
+}
+
+/**
+ * Show AskQuestion at the top: tap options, multi-select, or free-text + send.
  */
 function renderIdeTabPendingQuestion(tab) {
   const section = document.getElementById("ide-detail-pending");
   const body = document.getElementById("ide-detail-pending-body");
-  if (!section || !body) return;
+  if (!section || !body || !PENDING_QUESTION_HELPERS) return;
   body.innerHTML = "";
+  const composerId = tab && tab.composerId;
   const pq = tab && tab.pendingQuestion;
   const questions = pq && Array.isArray(pq.questions) ? pq.questions : [];
   if (questions.length === 0) {
     section.hidden = true;
+    if (composerId) idePendingAnswerDrafts.delete(composerId);
     return;
   }
   section.hidden = false;
-  const ta = document.getElementById("ide-detail-compose-text");
-  const btn = document.getElementById("btn-ide-send-message");
-  const counter = document.getElementById("ide-detail-compose-counter");
-  const max = IDE_ACTION_HELPERS ? IDE_ACTION_HELPERS.MAX_TEXT_LEN : 20000;
+  const H = PENDING_QUESTION_HELPERS;
+  const fingerprint = H.pendingQuestionsFingerprint(questions);
+  let draft = composerId ? idePendingAnswerDrafts.get(composerId) : null;
+  if (!draft || draft.fingerprint !== fingerprint) {
+    draft = { fingerprint, answers: {} };
+    if (composerId) idePendingAnswerDrafts.set(composerId, draft);
+  }
+  const answers = draft.answers;
+  const multiBundle =
+    questions.length > 1 || questions.some((q) => q.allowMultiple);
+
+  const onAnswerChange = () => syncPendingSubmitButtons(body, questions, answers);
 
   for (const q of questions) {
     const block = document.createElement("div");
@@ -1273,33 +1397,131 @@ function renderIdeTabPendingQuestion(tab) {
     prompt.className = "cockpit-ide-pending-prompt";
     prompt.textContent = q.prompt || "Choose an option:";
     block.appendChild(prompt);
-    if (Array.isArray(q.options) && q.options.length > 0) {
-      const opts = document.createElement("div");
-      opts.className = "cockpit-ide-pending-options";
-      for (const o of q.options) {
-        const optBtn = document.createElement("button");
-        optBtn.type = "button";
-        optBtn.className = "cockpit-btn cockpit-ide-pending-opt";
-        optBtn.textContent = o.label || o.id || "?";
-        optBtn.addEventListener("click", () => {
-          if (!ta) return;
-          ta.value = o.label || o.id || "";
-          ta.dispatchEvent(new Event("input", { bubbles: true }));
-          ta.focus();
-          if (counter) {
-            const len = ta.value.length;
-            counter.textContent = `${len} / ${max}`;
-            counter.dataset.over = len > max ? "true" : "false";
-          }
-          if (btn) btn.disabled = ta.value.length === 0 || ta.value.length > max;
-          if (activeIdeTabComposerId) saveComposeDraft(activeIdeTabComposerId, ta.value);
-        });
-        opts.appendChild(optBtn);
-      }
-      block.appendChild(opts);
+
+    if (q.allowMultiple) {
+      const hint = document.createElement("p");
+      hint.className = "cockpit-ide-pending-hint";
+      hint.textContent = "Select one or more, then submit.";
+      block.appendChild(hint);
     }
+
+    if (H.showInlineFreeTextInput(q)) {
+      appendPendingFreeTextRow(block, q, questions, answers, onAnswerChange);
+      body.appendChild(block);
+      continue;
+    }
+
+    const key = H.questionKey(q);
+    const opts = document.createElement("div");
+    opts.className = "cockpit-ide-pending-options";
+
+    for (const o of q.options || []) {
+      if (H.isFreeTextEscapeOption(o)) {
+        const escapeBtn = document.createElement("button");
+        escapeBtn.type = "button";
+        escapeBtn.className = "cockpit-btn cockpit-ide-pending-opt cockpit-ide-pending-opt-escape";
+        escapeBtn.textContent = o.label || o.id || "Other…";
+        escapeBtn.addEventListener("click", () => {
+          opts.hidden = true;
+          const existing = block.querySelector(".cockpit-ide-pending-freetext");
+          if (existing) existing.remove();
+          appendPendingFreeTextRow(block, q, questions, answers, onAnswerChange);
+          const input = block.querySelector(".cockpit-ide-pending-freetext-input");
+          if (input) input.focus();
+        });
+        opts.appendChild(escapeBtn);
+        continue;
+      }
+
+      const optBtn = document.createElement("button");
+      optBtn.type = "button";
+      optBtn.className = "cockpit-btn cockpit-ide-pending-opt";
+      const label = o.label || o.id || "?";
+      optBtn.textContent = label;
+
+      if (q.allowMultiple) {
+        optBtn.addEventListener("click", () => {
+          const cur = Array.isArray(answers[key]) ? answers[key] : [];
+          const idx = cur.indexOf(label);
+          if (idx >= 0) {
+            cur.splice(idx, 1);
+            optBtn.classList.remove("cockpit-ide-pending-opt-selected");
+          } else {
+            cur.push(label);
+            optBtn.classList.add("cockpit-ide-pending-opt-selected");
+          }
+          answers[key] = cur;
+          onAnswerChange();
+        });
+      } else if (multiBundle) {
+        optBtn.addEventListener("click", () => {
+          answers[key] = label;
+          for (const btn of opts.querySelectorAll(".cockpit-ide-pending-opt")) {
+            btn.classList.toggle("cockpit-ide-pending-opt-selected", btn === optBtn);
+          }
+          onAnswerChange();
+        });
+      } else {
+        optBtn.addEventListener("click", async () => {
+          optBtn.disabled = true;
+          try {
+            await sendIdeTabMessage(label);
+            if (composerId) idePendingAnswerDrafts.delete(composerId);
+          } catch {
+            optBtn.disabled = false;
+          }
+        });
+      }
+      opts.appendChild(optBtn);
+    }
+
+    if ((q.options || []).length > 0) block.appendChild(opts);
+
+    if (questions.length === 1 && q.allowMultiple) {
+      const submitOne = document.createElement("button");
+      submitOne.type = "button";
+      submitOne.className = "cockpit-btn cockpit-btn-primary cockpit-ide-pending-submit-one";
+      submitOne.dataset.questionKey = key;
+      submitOne.textContent = "Submit answer";
+      submitOne.addEventListener("click", async () => {
+        const text = H.formatAnswersForSend(questions, answers);
+        if (!text) return;
+        submitOne.disabled = true;
+        try {
+          await sendIdeTabMessage(text);
+          if (composerId) idePendingAnswerDrafts.delete(composerId);
+        } catch {
+          submitOne.disabled = false;
+          onAnswerChange();
+        }
+      });
+      block.appendChild(submitOne);
+    }
+
     body.appendChild(block);
   }
+
+  if (questions.length > 1) {
+    const submitAll = document.createElement("button");
+    submitAll.type = "button";
+    submitAll.className = "cockpit-btn cockpit-btn-primary cockpit-ide-pending-submit-all";
+    submitAll.textContent = "Submit all answers";
+    submitAll.addEventListener("click", async () => {
+      const text = H.formatAnswersForSend(questions, answers);
+      if (!text) return;
+      submitAll.disabled = true;
+      try {
+        await sendIdeTabMessage(text);
+        if (composerId) idePendingAnswerDrafts.delete(composerId);
+      } catch {
+        submitAll.disabled = false;
+        onAnswerChange();
+      }
+    });
+    body.appendChild(submitAll);
+  }
+
+  onAnswerChange();
 }
 
 // =============================================================================
@@ -1710,38 +1932,12 @@ function wireComposeUi() {
 async function handleSendMessageClick() {
   const ta = document.getElementById("ide-detail-compose-text");
   const btn = document.getElementById("btn-ide-send-message");
-  const err = document.getElementById("ide-detail-compose-error");
   if (!ta || !btn) return;
-  if (!activeIdeTabComposerId) {
-    if (err) { err.textContent = "No active IDE tab — re-open the tab from the list."; err.hidden = false; }
-    return;
-  }
-  if (!IDE_ACTION_HELPERS) {
-    if (err) { err.textContent = "Action helpers not loaded."; err.hidden = false; }
-    return;
-  }
-  const text = ta.value;
-  const action = IDE_ACTION_HELPERS.buildSendMessageAction({
-    tabId: activeIdeTabComposerId,
-    text,
-    now: new Date(),
-    rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
-  });
-  const allowedCwds = (CONFIG.session && CONFIG.session.allowedCwds) || [];
-  const validation = IDE_ACTION_HELPERS.validateActionInputs(action, allowedCwds);
-  if (!validation.valid) {
-    if (err) { err.textContent = validation.errors.join("; "); err.hidden = false; }
-    return;
-  }
-  if (err) err.hidden = true;
   btn.disabled = true;
   try {
-    await submitIdeAction(action);
-    if (activeIdeTabComposerId) ideComposeDrafts.delete(activeIdeTabComposerId);
-    resetComposeUi();
+    await sendIdeTabMessage(ta.value);
   } catch (e) {
-    if (err) { err.textContent = e.message; err.hidden = false; }
-    btn.disabled = false;
+    btn.disabled = ta.value.length > 0;
   }
 }
 
@@ -1879,14 +2075,21 @@ async function bootstrap() {
   // ide-helpers module is sibling; both are loaded in parallel because
   // they have no inter-dependency.
   try {
-    [WRITE_HELPERS, IDE_HELPERS, IDE_ACTION_HELPERS, REFRESH_HELPERS, COMPOSE_DRAFT_HELPERS] =
-      await Promise.all([
-        import("./write-helpers.mjs?v=f270f68"),
-        import("./ide-helpers.mjs?v=f270f68"),
-        import("./ide-actions-helpers.mjs?v=f270f68"),
-        import("./refresh-helpers.mjs"),
-        import("./compose-draft.mjs"),
-      ]);
+    [
+      WRITE_HELPERS,
+      IDE_HELPERS,
+      IDE_ACTION_HELPERS,
+      REFRESH_HELPERS,
+      COMPOSE_DRAFT_HELPERS,
+      PENDING_QUESTION_HELPERS,
+    ] = await Promise.all([
+      import("./write-helpers.mjs?v=f270f68"),
+      import("./ide-helpers.mjs?v=f270f68"),
+      import("./ide-actions-helpers.mjs?v=f270f68"),
+      import("./refresh-helpers.mjs"),
+      import("./compose-draft.mjs"),
+      import("./pending-question.mjs"),
+    ]);
   } catch (err) {
     setStatusBadge(`helpers import error: ${err.message}`, "error");
     return;

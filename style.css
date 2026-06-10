@@ -415,6 +415,34 @@ body[data-view="ide-tab-detail"] .cockpit-mode-toggle {
   white-space: normal;
   line-height: 1.35;
 }
+.cockpit-ide-pending-opt-selected {
+  border-color: var(--cp-accent, #4a7ba8);
+  background: rgba(74, 123, 168, 0.15);
+}
+.cockpit-ide-pending-opt-escape {
+  font-style: italic;
+}
+.cockpit-ide-pending-hint {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: var(--cp-muted);
+}
+.cockpit-ide-pending-freetext {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cockpit-ide-pending-freetext-input {
+  min-height: 3.5rem;
+}
+.cockpit-ide-pending-submit-one,
+.cockpit-ide-pending-submit-all {
+  margin-top: 10px;
+  width: 100%;
+}
+.cockpit-ide-pending-submit-all {
+  margin-top: var(--cp-gap);
+}
 
 .cockpit-ide-compose {
   margin-top: var(--cp-gap);
