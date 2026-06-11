@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IDE send browser smoke</title>
+</head>
+<body>
+  <div id="results" data-status="pending"></div>
+  <script type="module">
+    import * as H from "../ide-actions-helpers.mjs";
+
+    const results = document.getElementById("results");
+    const checks = [];
+    const stubRng = (n) => new Uint8Array([0xab, 0xcd, 0xef, 0x12].slice(0, n));
+    const FIXED = 1733832000000;
+
+    function ok(name) {
+      checks.push({ name, pass: true });
+    }
+    function fail(name, detail) {
+      checks.push({ name, pass: false, detail: detail || "" });
+    }
+
+    try {
+      const withNum = H.buildSendMessageAction({
+        tabId: "composer-smoke",
+        text: "hello",
+        now: FIXED,
+        rngFn: stubRng,
+      });
+      const withDate = H.buildSendMessageAction({
+        tabId: "composer-smoke",
+        text: "hello",
+        now: new Date(FIXED),
+        rngFn: stubRng,
+      });
+      if (withNum.actionId === withDate.actionId) ok("send-message-date-coercion");
+      else fail("send-message-date-coercion", "actionId mismatch");
+
+      const interrupt = H.buildSendMessageAction({
+        tabId: "composer-smoke",
+        text: "stop",
+        now: FIXED,
+        rngFn: stubRng,
+        sendMode: "interrupt",
+      });
+      if (interrupt.sendMode === "interrupt") ok("send-mode-interrupt-field");
+      else fail("send-mode-interrupt-field");
+
+      const badMode = H.validateActionInputs(
+        { ...withNum, sendMode: "bogus" },
+        [],
+      );
+      if (!badMode.valid) ok("reject-invalid-send-mode");
+      else fail("reject-invalid-send-mode");
+
+      const newAgent = H.buildNewAgentAction({
+        workspace: "/home/vikttoth/gitrepos/management_automation",
+        now: new Date(FIXED),
+        rngFn: stubRng,
+      });
+      if (newAgent.createdAt === new Date(FIXED).toISOString()) ok("new-agent-date-coercion");
+      else fail("new-agent-date-coercion");
+
+      const closeTab = H.buildCloseTabAction({
+        tabId: "tab-smoke",
+        now: new Date(FIXED),
+        rngFn: stubRng,
+      });
+      if (closeTab.tabId === "tab-smoke") ok("close-tab-date-coercion");
+      else fail("close-tab-date-coercion");
+
+      const merged = H.mergeAppendAction(null, withNum, FIXED);
+      if (merged.actions.length === 1) ok("merge-append-action");
+      else fail("merge-append-action");
+    } catch (e) {
+      results.dataset.status = "error";
+      results.dataset.error = e && e.message ? e.message : String(e);
+      results.dataset.checks = JSON.stringify(checks);
+      throw e;
+    }
+
+    const allPass = checks.every((c) => c.pass);
+    results.dataset.status = allPass ? "pass" : "fail";
+    results.dataset.checks = JSON.stringify(checks.map((c) => c.name + (c.pass ? ":ok" : ":fail")));
+  </script>
+</body>
+</html>

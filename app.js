@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-06-11 17:24 CEST e73662b`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-06-11 17:24 CEST e73662b";
+// `2026-06-11 21:14 CEST a8bd968`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-06-11 21:14 CEST a8bd968";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -107,6 +107,18 @@ let ideDetailFastTimerId = null;
 
 /** True while an IDE action is queued / polling — pauses destructive re-renders. */
 let ideActionInFlight = false;
+
+/** True while a compose send/stop is uploading to OneDrive (disables input). */
+let composeSubmitting = false;
+
+/** Serializes ide-actions.json PUTs so concurrent sends do not clobber each other. */
+let ideActionPutChain = Promise.resolve();
+
+/** Poll handle for outbound queue UI refresh on the IDE tab detail view. */
+let outboundPollTimerId = null;
+
+/** actionIds with an active result-poll loop (for outbound queue bookkeeping). */
+const trackedOutboundActionIds = new Set();
 
 /**
  * Dynamically imported pure helpers for the M2.2.3 write-back actions
@@ -763,6 +775,10 @@ function setView(viewId, payload) {
   }
   if (viewId !== "ide-tab-detail") {
     stopIdeDetailFastPoll();
+    stopOutboundQueuePoll();
+  } else {
+    startOutboundQueuePoll();
+    refreshOutboundQueueUi().catch((e) => console.warn("outbound queue initial refresh:", e));
   }
   if (viewId === "list" || viewId === "new" || (viewId === "detail" && payload && payload.sessionId)) {
     syncHashForView(viewId, payload);
@@ -1239,7 +1255,11 @@ function renderIdeTabDetail(composerId, options = {}) {
       applyComposeUiFromText(restored);
       saveComposeDraft(tab.composerId, restored);
     }
+  } else {
+    syncComposeButtonsDisabled();
   }
+
+  refreshOutboundQueueUi().catch((e) => console.warn("outbound queue refresh:", e));
 }
 
 /**
@@ -1257,24 +1277,6 @@ function revealComposeError(message) {
   showToast(message, "error");
 }
 
-const IDE_SEND_MODE_KEY = "mc-ide-send-mode";
-
-function getIdeSendMode() {
-  try {
-    return localStorage.getItem(IDE_SEND_MODE_KEY) === "interrupt" ? "interrupt" : "queue";
-  } catch {
-    return "queue";
-  }
-}
-
-function setIdeSendMode(mode) {
-  try {
-    localStorage.setItem(IDE_SEND_MODE_KEY, mode === "interrupt" ? "interrupt" : "queue");
-  } catch {
-    /* ignore quota / private mode */
-  }
-}
-
 /** Surface send/action failures in toast + compose error (when relevant). */
 function reportSendFailure(err) {
   const msg = err && err.message ? err.message : String(err);
@@ -1285,7 +1287,7 @@ function reportSendFailure(err) {
   revealComposeError(msg);
 }
 
-async function sendIdeTabMessage(text) {
+async function sendIdeTabMessage(text, sendMode = "queue") {
   const err = document.getElementById("ide-detail-compose-error");
   if (!activeIdeTabComposerId) {
     const msg = "No active IDE tab — re-open the tab from the list.";
@@ -1301,11 +1303,12 @@ async function sendIdeTabMessage(text) {
   if (!trimmed) {
     throw new Error("empty message");
   }
+  const mode = sendMode === "interrupt" ? "interrupt" : "queue";
   const action = IDE_ACTION_HELPERS.buildSendMessageAction({
     tabId: activeIdeTabComposerId,
     text: trimmed,
     now: Date.now(),
-    sendMode: getIdeSendMode(),
+    sendMode: mode,
     rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
   });
   const allowedCwds = (CONFIG.session && CONFIG.session.allowedCwds) || [];
@@ -1316,10 +1319,17 @@ async function sendIdeTabMessage(text) {
     throw new Error(msg);
   }
   if (err) err.hidden = true;
-  await submitIdeAction(action);
-  hidePendingQuestionUi();
-  if (activeIdeTabComposerId) ideComposeDrafts.delete(activeIdeTabComposerId);
-  resetComposeUi();
+  setComposeSubmitting(true);
+  refreshOutboundQueueUi().catch((e) => console.warn("outbound queue:", e));
+  try {
+    await submitIdeAction(action);
+    hidePendingQuestionUi();
+    if (activeIdeTabComposerId) ideComposeDrafts.delete(activeIdeTabComposerId);
+    resetComposeUi();
+  } finally {
+    setComposeSubmitting(false);
+    refreshOutboundQueueUi().catch((e) => console.warn("outbound queue:", e));
+  }
 }
 
 function isActiveElementInsidePendingSection() {
@@ -1927,31 +1937,241 @@ async function loadIdeActionsResultsFile() {
 }
 
 /**
- * Submit an action: append + PUT. On success, kicks off the result
- * polling loop in the background and returns immediately so the caller
- * can update the UI optimistically.
+ * Serialize ide-actions.json mutations (append / remove / patch) so rapid
+ * mobile taps cannot interleave GET+PUT and drop actions.
+ */
+async function enqueueIdeActionPut(mutatorFn) {
+  const run = async () => {
+    const prev = await loadIdeActionsFile();
+    const next = mutatorFn(prev);
+    await putIdeActionsFile(next);
+    return next;
+  };
+  const p = ideActionPutChain.then(run, run);
+  ideActionPutChain = p.catch((e) => console.warn("ideActionPut chain:", e));
+  return p;
+}
+
+function setComposeSubmitting(busy) {
+  composeSubmitting = !!busy;
+  const status = document.getElementById("ide-detail-compose-status");
+  const ta = document.getElementById("ide-detail-compose-text");
+  if (status) {
+    if (busy) {
+      status.textContent = "Uploading to OneDrive…";
+      status.hidden = false;
+      status.dataset.busy = "true";
+    } else {
+      status.textContent = "";
+      status.hidden = true;
+      status.dataset.busy = "false";
+    }
+  }
+  if (ta) ta.disabled = busy;
+  syncComposeButtonsDisabled();
+}
+
+function syncComposeButtonsDisabled() {
+  const ta = document.getElementById("ide-detail-compose-text");
+  const btnQueue = document.getElementById("btn-ide-send-queue");
+  const btnInterrupt = document.getElementById("btn-ide-send-interrupt");
+  const btnStop = document.getElementById("btn-ide-stop-agent");
+  const max = IDE_ACTION_HELPERS ? IDE_ACTION_HELPERS.MAX_TEXT_LEN : 20000;
+  const len = ta ? ta.value.length : 0;
+  const textOk = len > 0 && len <= max;
+  const busy = composeSubmitting;
+  const hasTab = !!activeIdeTabComposerId;
+  if (btnQueue) btnQueue.disabled = busy || !textOk || !hasTab;
+  if (btnInterrupt) btnInterrupt.disabled = busy || !textOk || !hasTab;
+  if (btnStop) btnStop.disabled = busy || !hasTab;
+}
+
+function truncateOutboundPreview(text, maxLen = 120) {
+  const t = String(text || "").trim();
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, maxLen)}…`;
+}
+
+function outboundPhaseLabel(phase, action) {
+  if (phase === "sending") return "Uploading";
+  if (phase === "delivering") return "Delivering";
+  if (action && action.sendMode === "interrupt") return "Queued (interrupt)";
+  return "Queued";
+}
+
+async function cancelOutboundAction(actionId) {
+  try {
+    await enqueueIdeActionPut((prev) =>
+      IDE_ACTION_HELPERS.removeActionById(prev, actionId, Date.now()),
+    );
+    trackedOutboundActionIds.delete(actionId);
+    showToast("Removed from queue.", "info");
+    await refreshOutboundQueueUi();
+  } catch (e) {
+    showToast(`Cancel failed: ${e.message}`, "error");
+  }
+}
+
+async function promoteOutboundToInterrupt(actionId) {
+  try {
+    await enqueueIdeActionPut((prev) =>
+      IDE_ACTION_HELPERS.patchActionById(prev, actionId, { sendMode: "interrupt" }, Date.now()),
+    );
+    showToast("Marked for interrupt delivery.", "info");
+    await refreshOutboundQueueUi();
+  } catch (e) {
+    showToast(`Interrupt upgrade failed: ${e.message}`, "error");
+  }
+}
+
+async function refreshOutboundQueueUi() {
+  const section = document.getElementById("ide-detail-outbound");
+  const list = document.getElementById("ide-detail-outbound-list");
+  if (!section || !list || !activeIdeTabComposerId || !IDE_ACTION_HELPERS) return;
+
+  let actionFile = null;
+  let resultsFile = null;
+  try {
+    [actionFile, resultsFile] = await Promise.all([
+      loadIdeActionsFile(),
+      loadIdeActionsResultsFile(),
+    ]);
+  } catch (e) {
+    console.warn("outbound queue refresh failed:", e);
+    return;
+  }
+
+  const outstanding = IDE_ACTION_HELPERS.listOutstandingForTab(
+    actionFile,
+    resultsFile,
+    activeIdeTabComposerId,
+  );
+
+  list.innerHTML = "";
+  const showSection = outstanding.length > 0 || composeSubmitting;
+  section.hidden = !showSection;
+
+  if (composeSubmitting) {
+    const li = document.createElement("li");
+    li.className = "cockpit-outbound-item";
+    li.dataset.phase = "sending";
+    const meta = document.createElement("div");
+    meta.className = "cockpit-outbound-meta";
+    const badge = document.createElement("span");
+    badge.className = "cockpit-outbound-badge";
+    badge.dataset.phase = "sending";
+    badge.textContent = "Uploading";
+    meta.appendChild(badge);
+    const where = document.createElement("span");
+    where.textContent = "OneDrive";
+    meta.appendChild(where);
+    li.appendChild(meta);
+    const text = document.createElement("p");
+    text.className = "cockpit-outbound-text";
+    text.textContent = "Uploading command…";
+    li.appendChild(text);
+    list.appendChild(li);
+  }
+
+  for (const { action, result, phase } of outstanding) {
+    const li = document.createElement("li");
+    li.className = "cockpit-outbound-item";
+    li.dataset.phase = phase;
+    li.dataset.actionId = action.actionId;
+
+    const meta = document.createElement("div");
+    meta.className = "cockpit-outbound-meta";
+    const badge = document.createElement("span");
+    badge.className = "cockpit-outbound-badge";
+    badge.dataset.phase = phase;
+    badge.textContent = outboundPhaseLabel(phase, action);
+    meta.appendChild(badge);
+    const kind = document.createElement("span");
+    kind.textContent = humanizeKind(action.kind);
+    meta.appendChild(kind);
+    li.appendChild(meta);
+
+    const text = document.createElement("p");
+    text.className = "cockpit-outbound-text";
+    if (action.kind === "send_message") {
+      text.textContent = truncateOutboundPreview(action.text);
+    } else if (action.kind === "stop_agent") {
+      text.textContent = "(stop agent)";
+    } else {
+      text.textContent = action.kind;
+    }
+    li.appendChild(text);
+
+    if (!result && phase === "queued") {
+      const actions = document.createElement("div");
+      actions.className = "cockpit-outbound-actions";
+
+      const btnCancel = document.createElement("button");
+      btnCancel.type = "button";
+      btnCancel.className = "cockpit-btn";
+      btnCancel.textContent = "Remove";
+      btnCancel.addEventListener("click", () => cancelOutboundAction(action.actionId));
+      actions.appendChild(btnCancel);
+
+      if (action.kind === "send_message" && action.sendMode !== "interrupt") {
+        const btnPromote = document.createElement("button");
+        btnPromote.type = "button";
+        btnPromote.className = "cockpit-btn cockpit-btn-warn";
+        btnPromote.textContent = "Send now";
+        btnPromote.addEventListener("click", () => promoteOutboundToInterrupt(action.actionId));
+        actions.appendChild(btnPromote);
+      }
+
+      li.appendChild(actions);
+    }
+
+    list.appendChild(li);
+  }
+}
+
+function startOutboundQueuePoll() {
+  stopOutboundQueuePoll();
+  const sec =
+    (CONFIG.ideActions && CONFIG.ideActions.resultPollIntervalSeconds) || 5;
+  const intervalMs = Math.max(3, sec | 0) * 1000;
+  outboundPollTimerId = setInterval(() => {
+    if (document.body.dataset.view !== "ide-tab-detail") return;
+    refreshOutboundQueueUi().catch((e) => console.warn("outbound poll:", e));
+  }, intervalMs);
+}
+
+function stopOutboundQueuePoll() {
+  if (outboundPollTimerId !== null) {
+    clearInterval(outboundPollTimerId);
+    outboundPollTimerId = null;
+  }
+}
+
+/**
+ * Submit an action: append + PUT (serialized). Success means the command
+ * reached OneDrive — extension delivery is tracked via outbound queue + poll.
  */
 async function submitIdeAction(action) {
   if (!IDE_ACTION_HELPERS) {
     throw new Error("ide-actions-helpers not loaded yet (bootstrap order bug)");
   }
   const label = humanizeKind(action.kind);
-  ideActionInFlight = true;
-  showToast(`Queuing ${label.toLowerCase()}…`, "info");
+  showToast(`Uploading ${label.toLowerCase()}…`, "info");
   try {
-    const prev = await loadIdeActionsFile();
-    const next = IDE_ACTION_HELPERS.mergeAppendAction(prev, action, Date.now());
-    await putIdeActionsFile(next);
+    await enqueueIdeActionPut((prev) =>
+      IDE_ACTION_HELPERS.mergeAppendAction(prev, action, Date.now()),
+    );
     showToast(
-      `${label} queued — Cursor extension will run it shortly.`,
-      "success",
+      `${label} uploaded — waiting for Cursor on your laptop…`,
+      "info",
     );
   } catch (err) {
-    ideActionInFlight = false;
-    showToast(`${label} failed: ${err.message}`, "error");
+    showToast(`${label} upload failed: ${err.message}`, "error");
     throw err;
   }
-  // Fire-and-forget the result poll; UI toast is updated inside.
+  trackedOutboundActionIds.add(action.actionId);
+  ideActionInFlight = true;
+  refreshOutboundQueueUi().catch((e) => console.warn("outbound queue:", e));
   pollIdeActionResult(action)
     .catch((pollErr) => {
       showToast(
@@ -1960,7 +2180,9 @@ async function submitIdeAction(action) {
       );
     })
     .finally(() => {
+      trackedOutboundActionIds.delete(action.actionId);
       ideActionInFlight = false;
+      refreshOutboundQueueUi().catch((e) => console.warn("outbound queue:", e));
     });
 }
 
@@ -2026,6 +2248,7 @@ function humanizeKind(kind) {
     case "send_message": return "Send message";
     case "new_agent":    return "New agent";
     case "close_tab":    return "Close tab";
+    case "stop_agent":   return "Stop agent";
     default:             return kind;
   }
 }
@@ -2064,7 +2287,6 @@ function saveComposeDraft(composerId, text) {
 
 function applyComposeUiFromText(text) {
   const ta = document.getElementById("ide-detail-compose-text");
-  const btn = document.getElementById("btn-ide-send-message");
   const counter = document.getElementById("ide-detail-compose-counter");
   const max = IDE_ACTION_HELPERS ? IDE_ACTION_HELPERS.MAX_TEXT_LEN : 20000;
   const safe = typeof text === "string" ? text : "";
@@ -2080,7 +2302,7 @@ function applyComposeUiFromText(text) {
     counter.textContent = state.counterText;
     counter.dataset.over = state.over ? "true" : "false";
   }
-  if (btn) btn.disabled = state.sendDisabled;
+  syncComposeButtonsDisabled();
 }
 
 function resetComposeUi({ clearDraft = false, composerId = null } = {}) {
@@ -2097,54 +2319,80 @@ function resetComposeUi({ clearDraft = false, composerId = null } = {}) {
   if (err) err.hidden = true;
 }
 
-function wireIdeSendModeUi() {
-  const field = document.getElementById("ide-send-mode-field");
-  if (!field) return;
-  const saved = getIdeSendMode();
-  for (const r of field.querySelectorAll('input[name="ideSendMode"]')) {
-    if (r.value === saved) r.checked = true;
-    r.addEventListener("change", () => {
-      if (r.checked) setIdeSendMode(r.value);
-    });
-  }
-}
-
 function wireComposeUi() {
   const ta = document.getElementById("ide-detail-compose-text");
-  const btn = document.getElementById("btn-ide-send-message");
+  const btnQueue = document.getElementById("btn-ide-send-queue");
+  const btnInterrupt = document.getElementById("btn-ide-send-interrupt");
+  const btnStop = document.getElementById("btn-ide-stop-agent");
   const counter = document.getElementById("ide-detail-compose-counter");
-  if (!ta || !btn || !counter) return;
-  wireIdeSendModeUi();
+  if (!ta || !btnQueue || !btnInterrupt || !counter) return;
   const max = IDE_ACTION_HELPERS ? IDE_ACTION_HELPERS.MAX_TEXT_LEN : 20000;
   ta.addEventListener("input", () => {
     const len = ta.value.length;
     counter.textContent = `${len} / ${max}`;
     counter.dataset.over = len > max ? "true" : "false";
-    btn.disabled = len === 0 || len > max;
+    syncComposeButtonsDisabled();
     if (activeIdeTabComposerId) saveComposeDraft(activeIdeTabComposerId, ta.value);
   });
   ta.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && !ev.shiftKey) {
       ev.preventDefault();
-      if (!btn.disabled) handleSendMessageClick();
+      if (!btnQueue.disabled) handleSendQueueClick();
     }
   });
-  btn.addEventListener("click", () => handleSendMessageClick());
+  btnQueue.addEventListener("click", () => handleSendQueueClick());
+  btnInterrupt.addEventListener("click", () => handleSendInterruptClick());
+  if (btnStop) btnStop.addEventListener("click", () => handleStopAgentClick());
 }
 
-async function handleSendMessageClick() {
+async function handleSendQueueClick() {
   const ta = document.getElementById("ide-detail-compose-text");
-  const btn = document.getElementById("btn-ide-send-message");
-  if (!ta || !btn) return;
-  const max = IDE_ACTION_HELPERS ? IDE_ACTION_HELPERS.MAX_TEXT_LEN : 20000;
-  const len = ta.value.length;
-  if (len === 0 || len > max) return;
-  btn.disabled = true;
+  const btnQueue = document.getElementById("btn-ide-send-queue");
+  if (!ta || !btnQueue || btnQueue.disabled) return;
   try {
-    await sendIdeTabMessage(ta.value);
+    await sendIdeTabMessage(ta.value, "queue");
   } catch (e) {
-    btn.disabled = len === 0 || len > max;
     reportSendFailure(e);
+  }
+}
+
+async function handleSendInterruptClick() {
+  const ta = document.getElementById("ide-detail-compose-text");
+  const btnInterrupt = document.getElementById("btn-ide-send-interrupt");
+  if (!ta || !btnInterrupt || btnInterrupt.disabled) return;
+  try {
+    await sendIdeTabMessage(ta.value, "interrupt");
+  } catch (e) {
+    reportSendFailure(e);
+  }
+}
+
+async function handleStopAgentClick() {
+  const btnStop = document.getElementById("btn-ide-stop-agent");
+  if (!activeIdeTabComposerId || !IDE_ACTION_HELPERS || (btnStop && btnStop.disabled)) {
+    return;
+  }
+  const action = IDE_ACTION_HELPERS.buildStopAgentAction({
+    tabId: activeIdeTabComposerId,
+    now: Date.now(),
+    rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
+  });
+  const allowedCwds = (CONFIG.session && CONFIG.session.allowedCwds) || [];
+  const validation = IDE_ACTION_HELPERS.validateActionInputs(action, allowedCwds);
+  if (!validation.valid) {
+    showToast(validation.errors.join("; "), "error");
+    return;
+  }
+  setComposeSubmitting(true);
+  refreshOutboundQueueUi().catch((e) => console.warn("outbound queue:", e));
+  try {
+    await submitIdeAction(action);
+    showToast("Stop agent requested.", "info");
+  } catch (e) {
+    showToast(`Stop failed: ${e.message}`, "error");
+  } finally {
+    setComposeSubmitting(false);
+    refreshOutboundQueueUi().catch((e) => console.warn("outbound queue:", e));
   }
 }
 
@@ -2294,9 +2542,9 @@ async function bootstrap() {
       COMPOSE_DRAFT_HELPERS,
       PENDING_QUESTION_HELPERS,
     ] = await Promise.all([
-      import("./write-helpers.mjs?v=e73662b"),
-      import("./ide-helpers.mjs?v=e73662b"),
-      import("./ide-actions-helpers.mjs?v=e73662b"),
+      import("./write-helpers.mjs?v=a8bd968"),
+      import("./ide-helpers.mjs?v=a8bd968"),
+      import("./ide-actions-helpers.mjs?v=a8bd968"),
       import("./refresh-helpers.mjs"),
       import("./compose-draft.mjs"),
       import("./pending-question.mjs"),

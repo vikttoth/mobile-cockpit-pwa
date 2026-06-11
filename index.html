@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-06-11 17:24 CEST e73662b in config.json + app.js).
+  script (replaces 2026-06-11 21:14 CEST a8bd968 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=e73662b")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=a8bd968")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -234,27 +234,24 @@
         <h3>Agent is asking</h3>
         <div id="ide-detail-pending-body" class="cockpit-ide-pending-body"></div>
       </section>
+      <section id="ide-detail-outbound" class="cockpit-ide-outbound" hidden aria-label="Outbound commands for this tab">
+        <h3>Outbound queue</h3>
+        <p id="ide-detail-outbound-hint" class="cockpit-hint">Commands waiting for the Cursor extension on your laptop.</p>
+        <ul id="ide-detail-outbound-list" class="cockpit-outbound-list" role="list"></ul>
+      </section>
       <section class="cockpit-ide-compose" aria-label="Send message to this IDE tab">
         <h3>Send to this tab</h3>
-        <fieldset id="ide-send-mode-field" class="cockpit-ide-send-mode" aria-label="When the agent is busy">
-          <legend class="cockpit-ide-send-mode-legend">While agent is running</legend>
-          <label class="cockpit-ide-send-mode-opt">
-            <input type="radio" name="ideSendMode" value="queue" checked>
-            Queue — send when the composer accepts input (default)
-          </label>
-          <label class="cockpit-ide-send-mode-opt">
-            <input type="radio" name="ideSendMode" value="interrupt">
-            Interrupt — try to stop generation first, then send
-          </label>
-        </fieldset>
         <label for="ide-detail-compose-text" class="cockpit-visually-hidden">Message to send</label>
         <textarea id="ide-detail-compose-text" class="cockpit-compose-textarea"
                   rows="4" maxlength="20000"
                   placeholder="Type a message to inject into this tab and submit…"></textarea>
         <div class="cockpit-compose-actions">
           <span id="ide-detail-compose-counter" class="cockpit-compose-counter">0 / 20000</span>
-          <button type="button" id="btn-ide-send-message" class="cockpit-btn cockpit-btn-primary" disabled>Send</button>
+          <button type="button" id="btn-ide-send-queue" class="cockpit-btn cockpit-btn-primary" disabled title="Queue when the agent is busy">Send (queue)</button>
+          <button type="button" id="btn-ide-send-interrupt" class="cockpit-btn cockpit-btn-warn" disabled title="Stop generation first, then send">Send now</button>
+          <button type="button" id="btn-ide-stop-agent" class="cockpit-btn cockpit-btn-danger" title="Stop the running agent on this tab">Stop agent</button>
         </div>
+        <p id="ide-detail-compose-status" class="cockpit-compose-status" hidden role="status"></p>
         <p id="ide-detail-compose-error" class="cockpit-error" hidden role="alert"></p>
       </section>
       <details class="cockpit-detail-meta-collapse">
@@ -351,6 +348,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=e73662b" defer></script>
+  <script src="./app.js?v=a8bd968" defer></script>
 </body>
 </html>

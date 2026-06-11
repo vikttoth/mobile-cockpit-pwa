@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IDE send mode UI smoke</title>
+</head>
+<body>
+  <fieldset id="ide-send-mode-field" aria-label="When the agent is busy">
+    <legend>While agent is running</legend>
+    <label>
+      <input type="radio" name="ideSendMode" value="queue" checked />
+      Queue message
+    </label>
+    <label>
+      <input type="radio" name="ideSendMode" value="interrupt" />
+      Interrupt and send
+    </label>
+  </fieldset>
+  <div id="results" data-status="pending"></div>
+  <script>
+    const IDE_SEND_MODE_KEY = "mc-ide-send-mode";
+
+    function getIdeSendMode() {
+      try {
+        return localStorage.getItem(IDE_SEND_MODE_KEY) === "interrupt" ? "interrupt" : "queue";
+      } catch {
+        return "queue";
+      }
+    }
+
+    function setIdeSendMode(mode) {
+      try {
+        localStorage.setItem(IDE_SEND_MODE_KEY, mode === "interrupt" ? "interrupt" : "queue");
+      } catch {
+        /* ignore */
+      }
+    }
+
+    function wireIdeSendModeUi() {
+      const field = document.getElementById("ide-send-mode-field");
+      if (!field) return;
+      const saved = getIdeSendMode();
+      for (const r of field.querySelectorAll('input[name="ideSendMode"]')) {
+        if (r.value === saved) r.checked = true;
+        r.addEventListener("change", () => {
+          if (r.checked) setIdeSendMode(r.value);
+        });
+      }
+    }
+
+    wireIdeSendModeUi();
+    document.getElementById("results").dataset.status = "ready";
+  </script>
+</body>
+</html>

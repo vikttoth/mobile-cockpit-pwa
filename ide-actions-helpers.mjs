@@ -27,7 +27,12 @@
 // `tests/flows/mobile-cockpit/pwa-config-coherence.sh` enforces this.
 // =============================================================================
 
-export const SUPPORTED_KINDS = Object.freeze(["send_message", "new_agent", "close_tab"]);
+export const SUPPORTED_KINDS = Object.freeze([
+  "send_message",
+  "new_agent",
+  "close_tab",
+  "stop_agent",
+]);
 
 /** Hard cap on `text` field (matches extension validate.ts -- 20 000 chars). */
 export const MAX_TEXT_LEN = 20_000;
@@ -147,6 +152,129 @@ export function buildCloseTabAction(opts) {
   };
 }
 
+export function buildStopAgentAction(opts) {
+  if (!opts || typeof opts !== "object") {
+    throw new Error("buildStopAgentAction(opts): opts is required");
+  }
+  const { tabId, now, rngFn } = opts;
+  if (typeof tabId !== "string") throw new Error("buildStopAgentAction: tabId must be a string");
+  const ms = coerceNowMs(now);
+  return {
+    actionId: generateActionId(ms, rngFn),
+    createdAt: new Date(ms).toISOString(),
+    kind: "stop_agent",
+    status: "pending",
+    tabId: tabId,
+  };
+}
+
+// =============================================================================
+// Tab id matching (mirror extension/src/lib/tab-id.ts)
+// =============================================================================
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function bareComposerId(tabId) {
+  const t = typeof tabId === "string" ? tabId.trim() : tabId == null ? "" : String(tabId).trim();
+  if (!t) return "";
+  if (t.startsWith("composer:")) return t.slice("composer:".length);
+  return t;
+}
+
+export function tabIdsMatch(a, b) {
+  const ba = bareComposerId(a).toLowerCase();
+  const bb = bareComposerId(b).toLowerCase();
+  if (!ba || !bb) return false;
+  if (UUID_RE.test(ba) && UUID_RE.test(bb)) return ba === bb;
+  return ba === bb;
+}
+
+const TERMINAL_RESULT_STATUS = new Set(["done", "error", "skipped"]);
+
+export function isTerminalResult(result) {
+  return result && TERMINAL_RESULT_STATUS.has(result.status);
+}
+
+/**
+ * Actions for `tabId` not yet finished per `resultsFile` (extension outcome).
+ * @returns {Array<{action: object, result: object|null, phase: string}>}
+ */
+export function listOutstandingForTab(actionFile, resultsFile, tabId) {
+  if (!actionFile || typeof actionFile !== "object") return [];
+  const actions = Array.isArray(actionFile.actions) ? actionFile.actions : [];
+  const out = [];
+  for (const action of actions) {
+    if (!action || typeof action !== "object") continue;
+    if (action.kind !== "send_message" && action.kind !== "stop_agent") continue;
+    if (!tabIdsMatch(action.tabId, tabId)) continue;
+    const result = findResultForAction(resultsFile, action.actionId);
+    if (isTerminalResult(result)) continue;
+    const phase = result ? "delivering" : "queued";
+    out.push({ action, result, phase });
+  }
+  out.sort((a, b) => {
+    const ta = a.action.createdAt || "";
+    const tb = b.action.createdAt || "";
+    return ta < tb ? -1 : ta > tb ? 1 : 0;
+  });
+  return out;
+}
+
+export function removeActionById(prevFile, actionId, now) {
+  if (!actionId || typeof actionId !== "string") {
+    throw new Error("removeActionById: actionId is required");
+  }
+  const isoNow = now instanceof Date ? now.toISOString() : new Date(now ?? Date.now()).toISOString();
+  const base =
+    prevFile && typeof prevFile === "object"
+      ? prevFile
+      : { schemaVersion: 1, snapshotAt: isoNow, actions: [] };
+  const actions = Array.isArray(base.actions) ? [...base.actions] : [];
+  const next = actions.filter((a) => !(a && a.actionId === actionId));
+  if (next.length === actions.length) {
+    const err = new Error(`action not found: ${actionId}`);
+    err.code = "NOT_FOUND";
+    throw err;
+  }
+  return {
+    schemaVersion: base.schemaVersion || 1,
+    snapshotAt: isoNow,
+    actions: next,
+  };
+}
+
+export function patchActionById(prevFile, actionId, patch, now) {
+  if (!actionId || typeof actionId !== "string") {
+    throw new Error("patchActionById: actionId is required");
+  }
+  if (!patch || typeof patch !== "object") {
+    throw new Error("patchActionById: patch is required");
+  }
+  const isoNow = now instanceof Date ? now.toISOString() : new Date(now ?? Date.now()).toISOString();
+  const base =
+    prevFile && typeof prevFile === "object"
+      ? prevFile
+      : { schemaVersion: 1, snapshotAt: isoNow, actions: [] };
+  const actions = Array.isArray(base.actions) ? [...base.actions] : [];
+  let found = false;
+  const nextActions = actions.map((a) => {
+    if (!a || a.actionId !== actionId) return a;
+    found = true;
+    return { ...a, ...patch };
+  });
+  if (!found) {
+    const err = new Error(`action not found: ${actionId}`);
+    err.code = "NOT_FOUND";
+    throw err;
+  }
+  return {
+    schemaVersion: base.schemaVersion || 1,
+    snapshotAt: isoNow,
+    actions: nextActions,
+  };
+}
+
 // =============================================================================
 // validateActionInputs
 // =============================================================================
@@ -226,9 +354,9 @@ export function validateActionInputs(action, allowedCwds) {
       if (action.model !== undefined && action.model !== null && typeof action.model !== "string") {
         errors.push("new_agent: model must be a string when provided");
       }
-    } else if (action.kind === "close_tab") {
+    } else if (action.kind === "close_tab" || action.kind === "stop_agent") {
       if (typeof action.tabId !== "string" || action.tabId.length === 0) {
-        errors.push("close_tab: tabId is required");
+        errors.push(`${action.kind}: tabId is required`);
       }
     }
   }
