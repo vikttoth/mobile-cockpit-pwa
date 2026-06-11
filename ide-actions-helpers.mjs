@@ -56,14 +56,19 @@ export const ACTION_ID_CHAR_RE = /^[A-Za-z0-9_-]+$/;
 // production caller passes `cryptoRandomBytes` from write-helpers.mjs;
 // tests inject a deterministic stub.
 
+/** Coerce epoch-ms from number or Date (defensive — callers should pass Date.now()). */
+export function coerceNowMs(now) {
+  if (now instanceof Date) return now.getTime();
+  if (typeof now === "number" && Number.isFinite(now)) return now;
+  throw new Error("coerceNowMs(now): `now` must be a finite number (ms epoch) or Date");
+}
+
 export function generateActionId(now, rngFn) {
-  if (typeof now !== "number" || !Number.isFinite(now)) {
-    throw new Error("generateActionId(now, rngFn): `now` must be a finite number (ms epoch)");
-  }
+  const ms = coerceNowMs(now);
   if (typeof rngFn !== "function") {
     throw new Error("generateActionId(now, rngFn): `rngFn` must be a function returning a Uint8Array");
   }
-  const t = Math.floor(now).toString(36).padStart(8, "0");
+  const t = Math.floor(ms).toString(36).padStart(8, "0");
   const bytes = rngFn(4);
   let hex = "";
   for (let i = 0; i < bytes.length; i++) {
@@ -91,17 +96,22 @@ export function buildSendMessageAction(opts) {
   if (!opts || typeof opts !== "object") {
     throw new Error("buildSendMessageAction(opts): opts is required");
   }
-  const { tabId, text, now, rngFn } = opts;
+  const { tabId, text, now, rngFn, sendMode } = opts;
   if (typeof tabId !== "string") throw new Error("buildSendMessageAction: tabId must be a string");
   if (typeof text !== "string") throw new Error("buildSendMessageAction: text must be a string");
-  return {
-    actionId: generateActionId(now, rngFn),
-    createdAt: new Date(now).toISOString(),
+  const ms = coerceNowMs(now);
+  const action = {
+    actionId: generateActionId(ms, rngFn),
+    createdAt: new Date(ms).toISOString(),
     kind: "send_message",
     status: "pending",
     tabId: tabId,
     text: text,
   };
+  if (sendMode === "interrupt") {
+    action.sendMode = "interrupt";
+  }
+  return action;
 }
 
 export function buildNewAgentAction(opts) {
@@ -192,6 +202,11 @@ export function validateActionInputs(action, allowedCwds) {
         errors.push("send_message: text is required and must not be empty");
       } else if (action.text.length > MAX_TEXT_LEN) {
         errors.push(`send_message: text is too long (${action.text.length} chars; max ${MAX_TEXT_LEN})`);
+      }
+      if (action.sendMode !== undefined && action.sendMode !== null) {
+        if (action.sendMode !== "queue" && action.sendMode !== "interrupt") {
+          errors.push('send_message: sendMode must be "queue" or "interrupt"');
+        }
       }
     } else if (action.kind === "new_agent") {
       if (typeof action.workspace !== "string" || action.workspace.length === 0) {

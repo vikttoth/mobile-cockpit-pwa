@@ -35,4 +35,4 @@ git add -A && git commit -m 'publish: <reason>' && git push
 
 ## Build stamp
 
-`2026-06-11 01:04 CEST b76f471`
+`2026-06-11 17:24 CEST e73662b`

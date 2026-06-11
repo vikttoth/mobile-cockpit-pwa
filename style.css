@@ -444,6 +444,32 @@ body[data-view="ide-tab-detail"] .cockpit-mode-toggle {
   margin-top: var(--cp-gap);
 }
 
+.cockpit-ide-send-mode {
+  margin: 0 0 var(--cp-gap);
+  padding: 10px 12px;
+  border: 1px solid var(--cp-border, #ccc);
+  border-radius: var(--cp-radius);
+  font-size: 0.85rem;
+}
+.cockpit-ide-send-mode-legend {
+  padding: 0 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--cp-muted);
+}
+.cockpit-ide-send-mode-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 6px 0 0;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.cockpit-ide-send-mode-opt input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
 .cockpit-ide-compose {
   margin-top: var(--cp-gap);
   margin-bottom: var(--cp-gap);

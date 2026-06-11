@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-06-11 01:04 CEST b76f471`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-06-11 01:04 CEST b76f471";
+// `2026-06-11 17:24 CEST e73662b`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-06-11 17:24 CEST e73662b";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -207,15 +207,33 @@ async function getAccessToken() {
 // 2. Graph helpers (read + write)
 // =============================================================================
 
-async function graphFetch(path, init = {}) {
+async function graphFetch(path, init = {}, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? 45000;
   const token = await getAccessToken();
   const headers = new Headers(init.headers || {});
   headers.set("Authorization", `Bearer ${token}`);
   if (init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const res = await fetch(`${CONFIG.graph.base}${path}`, { ...init, headers });
-  return res;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${CONFIG.graph.base}${path}`, {
+      ...init,
+      headers,
+      signal: controller.signal,
+    });
+    return res;
+  } catch (e) {
+    if (e && e.name === "AbortError") {
+      throw new Error(
+        `Graph request timed out after ${Math.round(timeoutMs / 1000)}s — check network/VPN`,
+      );
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -1239,6 +1257,34 @@ function revealComposeError(message) {
   showToast(message, "error");
 }
 
+const IDE_SEND_MODE_KEY = "mc-ide-send-mode";
+
+function getIdeSendMode() {
+  try {
+    return localStorage.getItem(IDE_SEND_MODE_KEY) === "interrupt" ? "interrupt" : "queue";
+  } catch {
+    return "queue";
+  }
+}
+
+function setIdeSendMode(mode) {
+  try {
+    localStorage.setItem(IDE_SEND_MODE_KEY, mode === "interrupt" ? "interrupt" : "queue");
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+/** Surface send/action failures in toast + compose error (when relevant). */
+function reportSendFailure(err) {
+  const msg = err && err.message ? err.message : String(err);
+  if (msg === "empty message") {
+    showToast("Type a message first.", "error");
+    return;
+  }
+  revealComposeError(msg);
+}
+
 async function sendIdeTabMessage(text) {
   const err = document.getElementById("ide-detail-compose-error");
   if (!activeIdeTabComposerId) {
@@ -1258,7 +1304,8 @@ async function sendIdeTabMessage(text) {
   const action = IDE_ACTION_HELPERS.buildSendMessageAction({
     tabId: activeIdeTabComposerId,
     text: trimmed,
-    now: new Date(),
+    now: Date.now(),
+    sendMode: getIdeSendMode(),
     rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
   });
   const allowedCwds = (CONFIG.session && CONFIG.session.allowedCwds) || [];
@@ -1421,9 +1468,10 @@ function appendPendingFreeTextRow(block, q, questions, answers, onAnswerChange) 
     try {
       await sendIdeTabMessage(text);
       if (activeIdeTabComposerId) idePendingAnswerDrafts.delete(activeIdeTabComposerId);
-    } catch {
+    } catch (e) {
       sendBtn.disabled = false;
       onAnswerChange();
+      reportSendFailure(e);
     }
   });
   row.appendChild(sendBtn);
@@ -1549,8 +1597,9 @@ function renderIdeTabPendingQuestion(tab) {
           showToast(`Sending: ${label.length > 48 ? label.slice(0, 45) + "…" : label}`, "info");
           try {
             await sendIdeTabMessage(label);
-          } catch {
+          } catch (e) {
             optBtn.disabled = false;
+            reportSendFailure(e);
           }
         });
       }
@@ -1572,9 +1621,10 @@ function renderIdeTabPendingQuestion(tab) {
         try {
           await sendIdeTabMessage(text);
           if (composerId) idePendingAnswerDrafts.delete(composerId);
-        } catch {
+        } catch (e) {
           submitOne.disabled = false;
           onAnswerChange();
+          reportSendFailure(e);
         }
       });
       block.appendChild(submitOne);
@@ -1595,9 +1645,10 @@ function renderIdeTabPendingQuestion(tab) {
       try {
         await sendIdeTabMessage(text);
         if (composerId) idePendingAnswerDrafts.delete(composerId);
-      } catch {
+      } catch (e) {
         submitAll.disabled = false;
         onAnswerChange();
+        reportSendFailure(e);
       }
     });
     body.appendChild(submitAll);
@@ -1886,11 +1937,15 @@ async function submitIdeAction(action) {
   }
   const label = humanizeKind(action.kind);
   ideActionInFlight = true;
-  showToast(`${label}…`, "info");
+  showToast(`Queuing ${label.toLowerCase()}…`, "info");
   try {
     const prev = await loadIdeActionsFile();
-    const next = IDE_ACTION_HELPERS.mergeAppendAction(prev, action, new Date());
+    const next = IDE_ACTION_HELPERS.mergeAppendAction(prev, action, Date.now());
     await putIdeActionsFile(next);
+    showToast(
+      `${label} queued — Cursor extension will run it shortly.`,
+      "success",
+    );
   } catch (err) {
     ideActionInFlight = false;
     showToast(`${label} failed: ${err.message}`, "error");
@@ -2042,11 +2097,24 @@ function resetComposeUi({ clearDraft = false, composerId = null } = {}) {
   if (err) err.hidden = true;
 }
 
+function wireIdeSendModeUi() {
+  const field = document.getElementById("ide-send-mode-field");
+  if (!field) return;
+  const saved = getIdeSendMode();
+  for (const r of field.querySelectorAll('input[name="ideSendMode"]')) {
+    if (r.value === saved) r.checked = true;
+    r.addEventListener("change", () => {
+      if (r.checked) setIdeSendMode(r.value);
+    });
+  }
+}
+
 function wireComposeUi() {
   const ta = document.getElementById("ide-detail-compose-text");
   const btn = document.getElementById("btn-ide-send-message");
   const counter = document.getElementById("ide-detail-compose-counter");
   if (!ta || !btn || !counter) return;
+  wireIdeSendModeUi();
   const max = IDE_ACTION_HELPERS ? IDE_ACTION_HELPERS.MAX_TEXT_LEN : 20000;
   ta.addEventListener("input", () => {
     const len = ta.value.length;
@@ -2074,8 +2142,9 @@ async function handleSendMessageClick() {
   btn.disabled = true;
   try {
     await sendIdeTabMessage(ta.value);
-  } catch (_e) {
+  } catch (e) {
     btn.disabled = len === 0 || len > max;
+    reportSendFailure(e);
   }
 }
 
@@ -2118,25 +2187,29 @@ async function handleNewAgentSubmit(ev) {
   }
   const workspace = select.value;
   const text = (ta.value || "").trim();
-  const action = IDE_ACTION_HELPERS.buildNewAgentAction({
-    workspace,
-    text: text || null,
-    now: new Date(),
-    rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
-  });
-  const allowedCwds = (CONFIG.session && CONFIG.session.allowedCwds) || [];
-  const validation = IDE_ACTION_HELPERS.validateActionInputs(action, allowedCwds);
-  if (!validation.valid) {
-    if (err) { err.textContent = validation.errors.join("; "); err.hidden = false; }
-    return;
-  }
-  if (err) err.hidden = true;
   if (btn) btn.disabled = true;
   try {
+    const action = IDE_ACTION_HELPERS.buildNewAgentAction({
+      workspace,
+      text: text || null,
+      now: Date.now(),
+      rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
+    });
+    const allowedCwds = (CONFIG.session && CONFIG.session.allowedCwds) || [];
+    const validation = IDE_ACTION_HELPERS.validateActionInputs(action, allowedCwds);
+    if (!validation.valid) {
+      const msg = validation.errors.join("; ");
+      if (err) { err.textContent = msg; err.hidden = false; }
+      showToast(msg, "error");
+      return;
+    }
+    if (err) err.hidden = true;
     await submitIdeAction(action);
     setView("ide-tabs");
   } catch (e) {
-    if (err) { err.textContent = e.message; err.hidden = false; }
+    const msg = e && e.message ? e.message : String(e);
+    if (err) { err.textContent = msg; err.hidden = false; }
+    showToast(msg, "error");
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -2164,7 +2237,7 @@ async function handleCloseTabConfirm(composerId) {
   }
   const action = IDE_ACTION_HELPERS.buildCloseTabAction({
     tabId: composerId,
-    now: new Date(),
+    now: Date.now(),
     rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
   });
   const allowedCwds = (CONFIG.session && CONFIG.session.allowedCwds) || [];
@@ -2221,9 +2294,9 @@ async function bootstrap() {
       COMPOSE_DRAFT_HELPERS,
       PENDING_QUESTION_HELPERS,
     ] = await Promise.all([
-      import("./write-helpers.mjs?v=b76f471"),
-      import("./ide-helpers.mjs?v=b76f471"),
-      import("./ide-actions-helpers.mjs?v=b76f471"),
+      import("./write-helpers.mjs?v=e73662b"),
+      import("./ide-helpers.mjs?v=e73662b"),
+      import("./ide-actions-helpers.mjs?v=e73662b"),
       import("./refresh-helpers.mjs"),
       import("./compose-draft.mjs"),
       import("./pending-question.mjs"),

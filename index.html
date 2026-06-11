@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-06-11 01:04 CEST b76f471 in config.json + app.js).
+  script (replaces 2026-06-11 17:24 CEST e73662b in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=b76f471")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=e73662b")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -236,6 +236,17 @@
       </section>
       <section class="cockpit-ide-compose" aria-label="Send message to this IDE tab">
         <h3>Send to this tab</h3>
+        <fieldset id="ide-send-mode-field" class="cockpit-ide-send-mode" aria-label="When the agent is busy">
+          <legend class="cockpit-ide-send-mode-legend">While agent is running</legend>
+          <label class="cockpit-ide-send-mode-opt">
+            <input type="radio" name="ideSendMode" value="queue" checked>
+            Queue — send when the composer accepts input (default)
+          </label>
+          <label class="cockpit-ide-send-mode-opt">
+            <input type="radio" name="ideSendMode" value="interrupt">
+            Interrupt — try to stop generation first, then send
+          </label>
+        </fieldset>
         <label for="ide-detail-compose-text" class="cockpit-visually-hidden">Message to send</label>
         <textarea id="ide-detail-compose-text" class="cockpit-compose-textarea"
                   rows="4" maxlength="20000"
@@ -340,6 +351,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=b76f471" defer></script>
+  <script src="./app.js?v=e73662b" defer></script>
 </body>
 </html>
