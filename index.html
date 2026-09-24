@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-24 21:14 CEST d8bd171 in config.json + app.js).
+  script (replaces 2026-09-24 22:51 CEST e4f2c31 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=d8bd171")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=e4f2c31")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -347,12 +347,8 @@
         <button type="button" id="btn-v2-detail-refresh" class="cockpit-btn" aria-label="Refresh session">↻</button>
       </div>
       <h2 id="v2-detail-title">…</h2>
-      <p id="v2-detail-parent-row" class="cockpit-hint" hidden>
-        Sub-agent of <a href="#" id="v2-detail-parent-link">…</a>
-      </p>
       <dl class="cockpit-detail-meta">
         <dt>Status</dt><dd id="v2-detail-status">…</dd>
-        <dt>Owner</dt><dd id="v2-detail-owner">…</dd>
         <dt>Chat id</dt><dd id="v2-detail-chat-id">…</dd>
       </dl>
       <div class="v2-detail-controls">
@@ -369,25 +365,8 @@
             <option value="ask">ask</option>
           </select>
         </label>
-        <button type="button" id="btn-v2-take-over" class="cockpit-btn" hidden>Take over</button>
-        <button type="button" id="btn-v2-hand-back" class="cockpit-btn" hidden>Hand back</button>
         <button type="button" id="btn-v2-stop" class="cockpit-btn cockpit-btn-warning" hidden>Stop</button>
       </div>
-      <!-- AC-025 (SPEC.md S-010): while another host holds the lease, this
-           note explains why the composer/model/mode below are disabled. -->
-      <p id="v2-detail-lease-note" class="cockpit-hint" hidden></p>
-
-      <section class="v2-subagents-section">
-        <div class="v2-subagents-header">
-          <h3>Sub-agents</h3>
-          <button type="button" id="btn-v2-start-subagent" class="cockpit-btn">+ Start sub-agent</button>
-        </div>
-        <p class="cockpit-hint">A sub-agent is an independent chat session delegated from this one -- same as this app spawning a background helper task.</p>
-        <ul id="v2-subagents-list" class="cockpit-session-list" role="list">
-          <!-- Populated by app.js#renderV2SubAgents(). -->
-        </ul>
-        <p id="v2-subagents-empty" class="cockpit-empty" hidden>No sub-agents yet.</p>
-      </section>
 
       <div id="v2-messages" class="v2-messages" role="log" aria-live="polite">
         <!-- Populated by app.js#renderV2Messages(). -->
@@ -412,7 +391,6 @@
     <section id="view-v2-new" class="cockpit-view" data-view-id="v2-new" hidden>
       <button type="button" class="cockpit-back-btn" data-target-view="v2-list" aria-label="Back to chat list">← Back</button>
       <h2>New chat</h2>
-      <p id="v2-new-parent-note" class="cockpit-hint" hidden></p>
       <p class="cockpit-warning" role="note">
         Do not include salary, talent, performance, standby, leave, or any
         customer code / data in prompts. mobile-cockpit logs prompts and
@@ -466,6 +444,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=d8bd171" defer></script>
+  <script src="./app.js?v=e4f2c31" defer></script>
 </body>
 </html>

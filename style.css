@@ -814,19 +814,6 @@ body[data-view="ide-tab-detail"] .cockpit-mode-toggle {
   color: var(--cp-fg);
 }
 
-.v2-subagents-section {
-  margin: var(--cp-gap) 0;
-  padding: var(--cp-gap);
-  border: 1px solid var(--cp-border);
-  border-radius: var(--cp-radius);
-}
-.v2-subagents-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-}
-
 .v2-composer {
   display: flex;
   flex-direction: column;

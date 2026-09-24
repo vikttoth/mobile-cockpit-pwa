@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-24 21:14 CEST d8bd171`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-24 21:14 CEST d8bd171";
+// `2026-09-24 22:51 CEST e4f2c31`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-24 22:51 CEST e4f2c31";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -125,13 +125,6 @@ let v2DetailTimerId = null;
 
 /** Auto-refresh handle for the v2 list view (independent of v1's refreshTimerId). */
 let v2RefreshTimerId = null;
-
-/** This host's identity for v2 lease take-over/hand-back (mirrors local-ui's
- *  OWN_HOST -- "laptop" there, "phone" here, since this is the mobile PWA). */
-const V2_OWN_HOST = "phone";
-
-/** Prefill carried from a "+ Start sub-agent" tap into the next v2-new render. */
-let pendingV2NewPrefill = null;
 
 /** Dynamically imported pure scrollback helpers (already existed, unwired
  *  until now) -- orderMessagesForDisplay / formatSessionMessage / AC-019. */
@@ -531,34 +524,9 @@ async function v2SetMode(id, mode) {
   return v2WriteRecordWithRetry(id, (record) => V2_MODEL.setMode(record, { mode, now: Date.now() }));
 }
 
-async function v2TakeOverLease(id) {
-  return v2WriteRecordAndMirrorIndex(id, (record) =>
-    V2_MODEL.takeOverLease(record, { owner: V2_OWN_HOST, now: Date.now() }),
-  );
-}
-
-async function v2HandBackLease(id) {
-  return v2WriteRecordAndMirrorIndex(id, (record) => V2_MODEL.handBackLease(record, { now: Date.now() }));
-}
-
-/**
- * S-011/AC-026's counterpart: keep a lease WE hold alive while its detail
- * view stays open, so `daemon/lib/v2-action-tick.mjs`'s expiry sweep (wired
- * 2026-09-24) doesn't reclaim it out from under an actively-used session.
- * Deliberately swallows LEASE_OWNER_MISMATCH/NO_ACTIVE_LEASE -- both mean
- * "we don't actually hold this lease (any more)", which `syncV2DetailPoll`
- * below already re-derives from the next record read; a failed heartbeat
- * renewal is not itself an error the user needs to see.
- */
-async function v2RenewLeaseHeartbeat(id) {
-  try {
-    return await v2WriteRecordWithRetry(id, (record) =>
-      V2_MODEL.renewLeaseHeartbeat(record, { owner: V2_OWN_HOST, now: Date.now() }),
-    );
-  } catch (_err) {
-    return null;
-  }
-}
+// v2TakeOverLease/v2HandBackLease/v2RenewLeaseHeartbeat were removed
+// 2026-09-24 along with the whole lease feature -- see
+// lib/transcript-model.mjs's note for why.
 
 // =============================================================================
 // 2b. Manual refresh (↻) — nudge desktop daemons + wait for fresh OneDrive data
@@ -1609,25 +1577,17 @@ async function renderV2List() {
   }
 }
 
-/**
- * S-010/AC-025: "while a session is leased to a host, only that host shall
- * write turns; the other shall show the owner and offer only take over."
- * This is the UI-level half of that (SPEC.md's own framing -- server-side
- * write rejection on every route is a separate, larger, still-open task);
- * disables every control that would otherwise let this host interfere with
- * whoever actually holds the lease, leaving Take Over as the one live
- * escape hatch. A record leased to "daemon" (nobody) or to THIS host is
- * fully interactive, same as before this existed.
- */
+// applyV2LeaseGating was removed 2026-09-24 along with the whole lease
+// feature -- see lib/transcript-model.mjs's note for why.
+
 /**
  * Viktor's ask (2026-09-24 evening): while an action is in flight, show a
  * working indicator and keep the next action from firing until it's clear
- * what state the session is actually in. Disables the same control set
- * `applyV2LeaseGating` gates, plus Take Over/Hand Back; every caller
- * re-syncs via a fresh `renderV2Detail` in its own `finally` block (success
- * OR error), which re-derives the CORRECT disabled state from the real
- * record afterward -- this function only owns the "busy right now" span,
- * never the after-the-fact state.
+ * what state the session is actually in. Every caller re-syncs via a fresh
+ * `renderV2Detail` in its own `finally` block (success OR error), which
+ * re-derives the CORRECT disabled state from the real record afterward --
+ * this function only owns the "busy right now" span, never the
+ * after-the-fact state.
  */
 function setV2Busy(busy) {
   const note = document.getElementById("v2-detail-busy");
@@ -1639,29 +1599,11 @@ function setV2Busy(busy) {
     "v2-composer-text",
     "btn-v2-composer-send",
     "btn-v2-stop",
-    "btn-v2-take-over",
-    "btn-v2-hand-back",
   ];
   for (const id of ids) {
     const el = document.getElementById(id);
     if (el) el.disabled = busy;
   }
-}
-
-function applyV2LeaseGating(record) {
-  const leasedByOther = Boolean(record.owner) && record.owner !== "daemon" && record.owner !== V2_OWN_HOST;
-  const note = document.getElementById("v2-detail-lease-note");
-  if (note) {
-    note.hidden = !leasedByOther;
-    if (leasedByOther) note.textContent = `Controlled from ${record.owner} right now — Take over to intervene.`;
-  }
-  const gatedIds = ["v2-detail-model-input", "v2-detail-mode-select", "v2-composer-mode", "v2-composer-text", "btn-v2-composer-send"];
-  for (const id of gatedIds) {
-    const el = document.getElementById(id);
-    if (el) el.disabled = leasedByOther;
-  }
-  const btnStop = document.getElementById("btn-v2-stop");
-  if (btnStop && leasedByOther) btnStop.hidden = true;
 }
 
 async function renderV2Detail(sessionId) {
@@ -1685,25 +1627,9 @@ async function renderV2Detail(sessionId) {
     const el = document.getElementById(id);
     if (el) el.textContent = text == null ? "—" : String(text);
   };
-  set("v2-detail-title", record.parentId ? `↳ sub-agent (${record.id})` : record.id);
+  set("v2-detail-title", record.id);
   set("v2-detail-status", record.status);
-  set("v2-detail-owner", record.owner);
   set("v2-detail-chat-id", record.chatId || "(provisioning…)");
-
-  const parentRow = document.getElementById("v2-detail-parent-row");
-  const parentLink = document.getElementById("v2-detail-parent-link");
-  if (parentRow && parentLink) {
-    if (record.parentId) {
-      parentRow.hidden = false;
-      parentLink.textContent = record.parentId;
-      parentLink.onclick = (ev) => {
-        ev.preventDefault();
-        setView("v2-detail", { sessionId: record.parentId });
-      };
-    } else {
-      parentRow.hidden = true;
-    }
-  }
 
   populateModelSelect("v2-detail-model-input");
   const modelInput = document.getElementById("v2-detail-model-input");
@@ -1717,27 +1643,7 @@ async function renderV2Detail(sessionId) {
     btnStop.hidden = !stoppable;
     btnStop.onclick = stoppable ? () => handleV2StopClick(record.id) : null;
   }
-  const btnTakeOver = document.getElementById("btn-v2-take-over");
-  const btnHandBack = document.getElementById("btn-v2-hand-back");
-  if (btnTakeOver && btnHandBack) {
-    const ownedByMe = record.owner === V2_OWN_HOST;
-    btnTakeOver.hidden = ownedByMe;
-    btnTakeOver.onclick = ownedByMe ? null : () => handleV2TakeOverClick(record.id);
-    btnHandBack.hidden = !ownedByMe;
-    btnHandBack.onclick = ownedByMe ? () => handleV2HandBackClick(record.id) : null;
-  }
-  applyV2LeaseGating(record);
-
   renderV2Messages(record);
-  renderV2SubAgents(record.id);
-
-  const btnStartSubAgent = document.getElementById("btn-v2-start-subagent");
-  if (btnStartSubAgent) {
-    btnStartSubAgent.onclick = () => {
-      pendingV2NewPrefill = { parentId: record.id, cwd: record.cwd };
-      setView("v2-new");
-    };
-  }
 
   syncV2DetailPoll();
 }
@@ -1800,33 +1706,10 @@ function renderV2Messages(record) {
   }
 }
 
-/** Sub-agent wiring (2026-09-24): children are just ordinary v2 sessions
- *  tagged with parentId -- derived here from the light index, not stored
- *  as a childIds[] on the parent (nothing to keep in sync). */
-function renderV2SubAgents(parentId) {
-  const section = document.getElementById("v2-subagents-list");
-  if (!section) return;
-  section.innerHTML = "";
-  const all = (cachedV2Index && cachedV2Index.sessions) || [];
-  const children = all.filter((s) => s && s.parentId === parentId);
-  for (const child of children) {
-    const li = document.createElement("li");
-    li.className = "cockpit-session-row";
-    li.tabIndex = 0;
-    li.addEventListener("click", () => setView("v2-detail", { sessionId: child.id }));
-    const title = document.createElement("span");
-    title.className = "cockpit-row-title";
-    title.textContent = child.title || "(untitled)";
-    li.appendChild(title);
-    const status = document.createElement("span");
-    status.className = `cockpit-row-status ${statusClass(child.status)}`;
-    status.textContent = child.status || "unknown";
-    li.appendChild(status);
-    section.appendChild(li);
-  }
-  const empty = document.getElementById("v2-subagents-empty");
-  if (empty) empty.hidden = children.length > 0;
-}
+// renderV2SubAgents was removed 2026-09-24: cursor-agent's own native
+// local subagents (https://cursor.com/docs/subagents) make mobile-cockpit's
+// separate, sequential-only "+ Start sub-agent" mechanism pointless -- see
+// SPEC.md's dated note.
 
 function renderV2New() {
   clearV2NewError();
@@ -1835,8 +1718,6 @@ function renderV2New() {
   const modelInput = document.getElementById("v2-new-model");
   const modeSelect = document.getElementById("v2-new-mode");
   const messageInput = document.getElementById("v2-new-message");
-  const parentNote = document.getElementById("v2-new-parent-note");
-  const form = document.getElementById("v2-new-session-form");
 
   if (idInput) idInput.value = `mcv2-${Date.now().toString(36)}`;
   populateModelSelect("v2-new-model");
@@ -1844,19 +1725,6 @@ function renderV2New() {
   if (modeSelect) modeSelect.value = "agent";
   if (messageInput) messageInput.value = "";
   populateV2CwdSelect();
-
-  const prefill = pendingV2NewPrefill;
-  pendingV2NewPrefill = null;
-  if (form) form.dataset.parentId = (prefill && prefill.parentId) || "";
-  if (parentNote) {
-    if (prefill && prefill.parentId) {
-      parentNote.hidden = false;
-      parentNote.textContent = `Starting as a sub-agent of ${prefill.parentId}.`;
-    } else {
-      parentNote.hidden = true;
-    }
-  }
-  if (cwdSelect && prefill && prefill.cwd) cwdSelect.value = prefill.cwd;
 }
 
 function populateV2CwdSelect() {
@@ -1979,13 +1847,11 @@ function syncV2DetailPoll() {
       .then(([{ record }]) => {
         if (!record) return; // deleted elsewhere -- next manual nav will bounce to the list
         renderV2Messages(record);
-        renderV2SubAgents(id);
         const set = (elId, text) => {
           const el = document.getElementById(elId);
           if (el) el.textContent = text == null ? "—" : String(text);
         };
         set("v2-detail-status", record.status);
-        set("v2-detail-owner", record.owner);
         set("v2-detail-chat-id", record.chatId || "(provisioning…)");
         const btnStop = document.getElementById("btn-v2-stop");
         if (btnStop) {
@@ -1993,14 +1859,7 @@ function syncV2DetailPoll() {
           btnStop.hidden = !stoppable;
           btnStop.onclick = stoppable ? () => handleV2StopClick(id) : null;
         }
-        applyV2LeaseGating(record);
-        const ownedByMe = record.owner === V2_OWN_HOST;
-        // Keep the lease alive for as long as its detail view stays open and
-        // we hold it (S-011/AC-026's counterpart to the daemon's new expiry
-        // sweep) -- best-effort, errors already swallowed inside the helper.
-        if (ownedByMe) v2RenewLeaseHeartbeat(id);
         const stillChanging =
-          ownedByMe ||
           record.status === "running" ||
           !record.chatId ||
           (Array.isArray(record.queue) && record.queue.length > 0);
@@ -2149,7 +2008,6 @@ async function handleV2NewSubmit(ev) {
   const modelEl = document.getElementById("v2-new-model");
   const modeEl = document.getElementById("v2-new-mode");
   const messageEl = document.getElementById("v2-new-message");
-  const form = document.getElementById("v2-new-session-form");
   const submitBtn = document.getElementById("btn-v2-new-submit");
   const id = idEl ? idEl.value.trim() : "";
   if (!id) {
@@ -2163,7 +2021,7 @@ async function handleV2NewSubmit(ev) {
       cwd: cwdEl ? cwdEl.value : "",
       model: modelEl ? modelEl.value.trim() : "",
       mode: modeEl ? modeEl.value : "",
-      parentId: (form && form.dataset.parentId) || null,
+      parentId: null,
       firstMessage: messageEl ? messageEl.value : "",
     });
     setLastUsedModel(modelEl ? modelEl.value.trim() : "");
@@ -2212,31 +2070,6 @@ async function handleV2StopClick(id) {
   }
 }
 
-async function handleV2TakeOverClick(id) {
-  clearV2DetailError();
-  setV2Busy(true);
-  try {
-    await v2TakeOverLease(id);
-  } catch (err) {
-    showV2DetailError(err.message);
-  } finally {
-    await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
-    setV2Busy(false);
-  }
-}
-
-async function handleV2HandBackClick(id) {
-  clearV2DetailError();
-  setV2Busy(true);
-  try {
-    await v2HandBackLease(id);
-  } catch (err) {
-    showV2DetailError(err.message);
-  } finally {
-    await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
-    setV2Busy(false);
-  }
-}
 
 async function handleV2ModelChange() {
   const id = activeV2DetailSessionId;
@@ -2303,8 +2136,8 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS] = await Promise.all([
-      import("./write-helpers.mjs?v=d8bd171"),
-      import("./ide-helpers.mjs?v=d8bd171"),
+      import("./write-helpers.mjs?v=e4f2c31"),
+      import("./ide-helpers.mjs?v=e4f2c31"),
       import("./refresh-helpers.mjs"),
       import("./transcript-model.mjs"),
       import("./scrollback-helpers.mjs"),
@@ -2412,10 +2245,7 @@ async function bootstrap() {
   }
   const btnV2NewSession = document.getElementById("btn-v2-new-session");
   if (btnV2NewSession) {
-    btnV2NewSession.addEventListener("click", () => {
-      pendingV2NewPrefill = null;
-      setView("v2-new");
-    });
+    btnV2NewSession.addEventListener("click", () => setView("v2-new"));
   }
   const btnV2NewCancel = document.getElementById("btn-v2-new-cancel");
   if (btnV2NewCancel) btnV2NewCancel.addEventListener("click", () => setView("v2-list"));
