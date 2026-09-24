@@ -200,6 +200,48 @@ body[data-view="ide-tab-detail"] .cockpit-mode-toggle {
   display: none;
 }
 
+/* ----------------------------------------------------------------------------
+   App info view (#info) — standing Cursor cost / stack copy (2026-06-12)
+   ---------------------------------------------------------------------------- */
+
+.cockpit-app-info-title {
+  margin: 0 0 var(--cp-gap);
+  font-size: 1.15rem;
+}
+.cockpit-app-info-block {
+  margin-bottom: calc(var(--cp-gap) * 1.25);
+  padding: var(--cp-gap);
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+}
+.cockpit-app-info-block h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+.cockpit-app-info-block p {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+}
+.cockpit-app-info-block p:last-child {
+  margin-bottom: 0;
+}
+.cockpit-app-info-links ul {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+.cockpit-app-info-links li {
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+.cockpit-app-info-foot {
+  font-size: 0.85rem;
+  margin-top: var(--cp-gap);
+}
+.cockpit-app-info-foot.muted,
+.muted {
+  color: var(--cp-muted);
+}
+
 .cockpit-ide-list-toggle {
   display: flex;
   gap: 0;
@@ -683,4 +725,132 @@ body[data-view="ide-tab-detail"] .cockpit-mode-toggle {
 @keyframes cockpit-toast-in {
   from { opacity: 0; transform: translate(-50%, 8px); }
   to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ----------------------------------------------------------------------------
+   v2 (chat-model) view -- mobile follow-along, 2026-09-24.
+   ---------------------------------------------------------------------------- */
+
+.v2-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: var(--cp-gap) 0;
+}
+.v2-message {
+  max-width: 82%;
+  padding: 8px 12px;
+  border-radius: var(--cp-radius);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.v2-message-role-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cp-muted);
+  margin-bottom: 3px;
+}
+.v2-role-user {
+  align-self: flex-end;
+  background: var(--cp-accent);
+  color: #fff;
+}
+.v2-role-user .v2-message-role-label { color: rgba(255,255,255,0.75); }
+.v2-role-assistant {
+  align-self: flex-start;
+  background: rgba(127,127,127,0.12);
+}
+.v2-role-system,
+.v2-role-unknown {
+  align-self: center;
+  background: transparent;
+  border: 1px dashed var(--cp-border);
+  color: var(--cp-muted);
+  font-size: 0.85rem;
+}
+.v2-message-streaming {
+  opacity: 0.75;
+  font-style: italic;
+}
+
+.v2-queue-panel {
+  margin-top: 4px;
+  padding: 8px 12px;
+  border: 1px dashed var(--cp-border);
+  border-radius: var(--cp-radius);
+}
+.v2-queue-title {
+  font-size: 0.8rem;
+  color: var(--cp-muted);
+  margin-bottom: 4px;
+}
+.v2-queue-item {
+  font-size: 0.9rem;
+  padding: 2px 0;
+  opacity: 0.85;
+}
+
+.v2-detail-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+  margin: var(--cp-gap) 0;
+}
+.v2-inline-control {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.8rem;
+  gap: 2px;
+}
+.v2-inline-control input,
+.v2-inline-control select {
+  padding: 6px 8px;
+  border-radius: var(--cp-radius);
+  border: 1px solid var(--cp-border);
+  background: var(--cp-bg);
+  color: var(--cp-fg);
+}
+
+.v2-subagents-section {
+  margin: var(--cp-gap) 0;
+  padding: var(--cp-gap);
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+}
+.v2-subagents-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.v2-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: sticky;
+  bottom: 0;
+  padding: 8px 0;
+  background: var(--cp-bg);
+}
+.v2-composer-mode-select {
+  padding: 6px 8px;
+  border-radius: var(--cp-radius);
+  border: 1px solid var(--cp-border);
+  background: var(--cp-bg);
+  color: var(--cp-fg);
+  align-self: flex-start;
+}
+.v2-composer-text {
+  width: 100%;
+  padding: 8px;
+  border-radius: var(--cp-radius);
+  border: 1px solid var(--cp-border);
+  background: var(--cp-bg);
+  color: var(--cp-fg);
+  font-family: inherit;
+  resize: vertical;
 }

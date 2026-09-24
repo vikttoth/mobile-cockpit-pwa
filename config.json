@@ -17,11 +17,21 @@
     "relativePath": "cursor-cockpit/state.json",
     "endpoint": "/me/drive/root:/cursor-cockpit/state.json"
   },
+  "sessionsIndex": {
+    "_comment": "v2 session model (mobile follow-along, 2026-09-24). relativePath MUST match SESSIONS_INDEX_RELATIVE_PATH in lib/config.mjs. Coherence enforced by pwa-config-coherence.sh.",
+    "relativePath": "cursor-cockpit/sessions.json",
+    "endpoint": "/me/drive/root:/cursor-cockpit/sessions.json"
+  },
+  "sessionsDir": {
+    "_comment": "v2 per-session records live under this folder as <id>.json -- mirrors SESSIONS_DIR_RELATIVE_PATH + sessionRecordRelativePath(id) in lib/config.mjs.",
+    "relativePath": "cursor-cockpit/sessions",
+    "endpoint": "/me/drive/root:/cursor-cockpit/sessions"
+  },
   "ideTabs": {
     "_comment": "M2.1 read-only mirror of live Cursor IDE chat tabs, written by flows/mobile-cockpit/ide-mirror/poll.mjs. PWA fetches GET-only; ETag tracking is not required here. The relativePath MUST match IDE_TABS_RELATIVE_PATH in ide-mirror/poll.mjs (which derives from ONEDRIVE.folderName + 'ide-tabs.json'). pollIntervalSeconds is independent of pwa.pollIntervalSeconds so the lighter read-only path can refresh faster than the sessions list.",
     "relativePath": "cursor-cockpit/ide-tabs.json",
     "endpoint": "/me/drive/root:/cursor-cockpit/ide-tabs.json",
-    "pollIntervalSeconds": 20
+    "pollIntervalSeconds": 4
   },
   "refreshSignals": {
     "_comment": "Mobile PWA writes ISO timestamps here when the user taps ↻. daemon/poll.mjs and ide-mirror/poll.mjs read this file and run an immediate mirror tick when they see a newer request. relativePath MUST match REFRESH_SIGNALS_RELATIVE_PATH in lib/config.mjs.",
@@ -30,15 +40,6 @@
     "waitMaxMs": 15000,
     "waitPollMs": 500,
     "waitMinMs": 2000
-  },
-  "ideActions": {
-    "_comment": "M2.2.3 write-back: the PWA appends actions to ide-actions.json, the Cursor/VS Code extension (flows/mobile-cockpit/extension/) polls and executes them, then writes outcomes to ide-actions-results.json. relativePath + resultsRelativePath MUST match IDE_ACTIONS_RELATIVE_PATH + IDE_ACTIONS_RESULTS_RELATIVE_PATH in lib/config.mjs. resultPollIntervalSeconds controls how often the PWA polls for the extension's result of a just-submitted action (faster than the action poll because the result comes back ~1-5 s after the extension picks the action up).",
-    "relativePath": "cursor-cockpit/ide-actions.json",
-    "endpoint": "/me/drive/root:/cursor-cockpit/ide-actions.json",
-    "resultsRelativePath": "cursor-cockpit/ide-actions-results.json",
-    "resultsEndpoint": "/me/drive/root:/cursor-cockpit/ide-actions-results.json",
-    "resultPollIntervalSeconds": 3,
-    "resultTimeoutSeconds": 60
   },
   "session": {
     "_comment": "Mirrors ALLOWED_CWDS + AUTO_APPROVE_DEFAULT from lib/config.mjs (design.md §7 L2 + L3). Coherence enforced by pwa-config-coherence.sh.",

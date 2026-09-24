@@ -246,14 +246,20 @@ export function mergeQueueFollowUp(prevState, sessionId, { prompt, now, autoAppr
 // =============================================================================
 //
 // MSAL OAuth redirects use fragments like #code=... or #error=... — never
-// treat those as app routes. Only #list, #new, #detail/<id> are ours.
+// treat those as app routes. Ours: #list, #new, #info (App tab), #detail/<id>.
 
 const MSAL_OAUTH_FRAGMENT_RE =
   /^(code|error|error_description|state|client_info|session_state)=/i;
 
 /**
  * Parse a location hash string (e.g. "#detail/<sessionId>") into a route, or null if not ours.
- * @returns {{ view: 'list'|'new'|'detail', sessionId?: string } | null}
+ *
+ * Mobile follow-along (2026-09-24): `v2-list`/`v2-new`/`v2-detail/<id>` are
+ * the v2 (chat-model) counterparts of `list`/`new`/`detail` -- a separate
+ * mode alongside v1 Sessions / IDE tabs / App, not a replacement, since v1
+ * stays live and unchanged (see SPEC.md).
+ *
+ * @returns {{ view: 'list'|'new'|'detail'|'app-info'|'v2-list'|'v2-new'|'v2-detail', sessionId?: string } | null}
  */
 export function parseLocationHash(hash) {
   if (hash == null || hash === "" || hash === "#") {
@@ -264,10 +270,18 @@ export function parseLocationHash(hash) {
   if (MSAL_OAUTH_FRAGMENT_RE.test(raw)) return null;
   if (raw === "list") return { view: "list" };
   if (raw === "new") return { view: "new" };
+  if (raw === "info" || raw === "app-info") return { view: "app-info" };
+  if (raw === "v2-list") return { view: "v2-list" };
+  if (raw === "v2-new") return { view: "v2-new" };
   const detailMatch = /^detail\/([^/?#]+)$/.exec(raw);
   if (detailMatch) {
     const sessionId = decodeURIComponent(detailMatch[1]);
     if (sessionId) return { view: "detail", sessionId };
+  }
+  const v2DetailMatch = /^v2-detail\/([^/?#]+)$/.exec(raw);
+  if (v2DetailMatch) {
+    const sessionId = decodeURIComponent(v2DetailMatch[1]);
+    if (sessionId) return { view: "v2-detail", sessionId };
   }
   return null;
 }
@@ -279,8 +293,14 @@ export function parseLocationHash(hash) {
 export function formatViewHash(viewId, payload) {
   if (viewId === "list") return "list";
   if (viewId === "new") return "new";
+  if (viewId === "app-info") return "info";
+  if (viewId === "v2-list") return "v2-list";
+  if (viewId === "v2-new") return "v2-new";
   if (viewId === "detail" && payload && payload.sessionId) {
     return `detail/${encodeURIComponent(payload.sessionId)}`;
+  }
+  if (viewId === "v2-detail" && payload && payload.sessionId) {
+    return `v2-detail/${encodeURIComponent(payload.sessionId)}`;
   }
   return null;
 }

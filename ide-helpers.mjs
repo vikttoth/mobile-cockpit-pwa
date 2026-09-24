@@ -115,6 +115,31 @@ export function waitingOnLabel(waitingOn) {
 }
 
 /**
+ * True for brand-new IDE tabs mirrored without a transcript file yet.
+ *
+ * @param {object|null|undefined} tab
+ * @returns {boolean}
+ */
+export function isEmptyIdeTab(tab) {
+  if (!tab || typeof tab !== "object") return false;
+  if (tab.openStub === true) return true;
+  const title = typeof tab.title === "string" ? tab.title.trim() : "";
+  const count = typeof tab.messageCount === "number" ? tab.messageCount : 0;
+  return count === 0 && title === "New Agent";
+}
+
+/**
+ * List-row / confirm-modal status for an IDE tab.
+ *
+ * @param {object|null|undefined} tab
+ * @returns {string}
+ */
+export function ideTabStatusLabel(tab) {
+  if (isEmptyIdeTab(tab)) return "Empty tab";
+  return waitingOnLabel(tab && tab.waitingOn);
+}
+
+/**
  * Normalize a snapshot thread-entry into a renderable shape for the PWA.
  *
  * The mirror daemon's `tailThread()` has ALREADY flattened each turn into
@@ -226,7 +251,7 @@ export function findIdeTab(snapshot, composerId) {
 export function openTabsSourceHint(openTabsSource) {
   if (openTabsSource === "extension") return null;
   return (
-    "Open tabs are estimated from recent transcript activity, not the live IDE tab bar. " +
-    "Install or reload the mobile-cockpit extension in Cursor for exact sync."
+    "Open tabs are estimated from recent transcript activity, not the live IDE tab bar " +
+    "(v2 has no in-IDE extension to read that from directly)."
   );
 }

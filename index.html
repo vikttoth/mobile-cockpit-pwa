@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-06-11 21:14 CEST a8bd968 in config.json + app.js).
+  script (replaces 2026-09-24 15:06 CEST ed90a82 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=a8bd968")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=ed90a82")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -63,17 +63,23 @@
   <!--
     Top-level mode toggle: switch between read-write Sessions (mobile-spawned)
     and read-only IDE tabs (mirror of live Cursor IDE chat tabs). app.js wires
-    the buttons to setView('list') / setView('ide-tabs') and updates the
-    aria-current attribute. The toggle is hidden in detail / new / ide-tab
-    detail views (app.js#setView toggles `body[data-view]` and CSS hides
-    .cockpit-mode-toggle when body[data-view] is anything except "list" or
-    "ide-tabs").
+    the buttons to setView('list') / setView('ide-tabs') / setView('app-info')
+    and updates the aria-current attribute. The toggle is hidden in detail /
+    new / ide-tab detail views (app.js#setView toggles `body[data-view]` and
+    CSS hides .cockpit-mode-toggle when body[data-view] is anything except
+    "list", "ide-tabs", or "app-info").
   -->
   <nav class="cockpit-mode-toggle" role="tablist" aria-label="View mode">
     <button type="button" id="btn-mode-sessions" class="cockpit-mode-btn"
             role="tab" data-target-view="list" aria-current="true">Sessions</button>
     <button type="button" id="btn-mode-ide-tabs" class="cockpit-mode-btn"
             role="tab" data-target-view="ide-tabs">IDE tabs</button>
+    <button type="button" id="btn-mode-v2" class="cockpit-mode-btn"
+            role="tab" data-target-view="v2-list"
+            title="Mobile follow-along: chat-model sessions with live streaming, queue/force, model switch, sub-agents">Chat</button>
+    <button type="button" id="btn-mode-app-info" class="cockpit-mode-btn"
+            role="tab" data-target-view="app-info"
+            title="Android app — Cursor costs, API usage, stack">App</button>
   </nav>
 
   <main>
@@ -96,6 +102,58 @@
         No sessions yet. Tap <strong>+ New session</strong> to create one.
       </p>
       <p id="list-error-state" class="cockpit-error" hidden role="alert"></p>
+    </section>
+
+    <!--
+      View 1b: standing cost + stack notice (mobile / Android first-class).
+      Static copy + official links — amounts change; cursor.com is canonical.
+      Deep link: #info (see write-helpers formatViewHash / parseLocationHash).
+    -->
+    <section id="view-app-info" class="cockpit-view cockpit-app-info" data-view-id="app-info" hidden>
+      <h2 class="cockpit-app-info-title">App — costs &amp; stack</h2>
+      <p class="cockpit-hint" role="note">
+        Cursor lists current plan prices on the web. This screen is a permanent reminder of <strong>what consumes your quota</strong> when you use mobile-cockpit sessions from Android / Edge mobile.
+      </p>
+
+      <article class="cockpit-app-info-block" lang="hu">
+        <h3>HU — Állandó költség tájékoztatás</h3>
+        <p>
+          A <strong>Sessions</strong> nézetben indított / jóváhagyott futások a laptopodon futó
+          <strong>cursor-agent</strong> CLI-n keresztül mennek a Cursor felhő API-jára
+          (<code>CURSOR_API_KEY</code>, lásd <code>daemon/setup-cursor-api-key.ps1</code>).
+          A díj a <strong>Cursor előfizetésed + modell / API-használat</strong> szerint alakul — konkrét összegekért mindig a Cursor honlap a mérvadó.
+        </p>
+        <p>
+          A promptok és kimenetek <strong>OneDrive-on</strong> landolnak (<code>cursor-cockpit/state.json</code>).
+          Ne küldj ide titkos / Nokia üzleti adatot (bér, ügyelet, ügyfél kód, stb.).
+        </p>
+      </article>
+
+      <article class="cockpit-app-info-block" lang="en">
+        <h3>EN — Standing cost notice</h3>
+        <p>
+          <strong>Sessions</strong> you create or approve here are executed on your laptop by the
+          <strong>cursor-agent</strong> CLI against Cursor&rsquo;s cloud API (<code>CURSOR_API_KEY</code>).
+          Billing follows your <strong>Cursor subscription and model / API usage</strong> — see the official pricing page for numbers.
+        </p>
+        <p>
+          Prompts and outputs are mirrored to <strong>OneDrive</strong> (<code>cursor-cockpit/state.json</code>).
+          Do not put salary, standby, customer code, or other sensitive Nokia data in prompts.
+        </p>
+      </article>
+
+      <section class="cockpit-app-info-links" aria-label="Official Cursor links">
+        <h3>Official links</h3>
+        <ul>
+          <li><a href="https://cursor.com/pricing" target="_blank" rel="noopener noreferrer">cursor.com/pricing</a> — current plans</li>
+          <li><a href="https://cursor.com/dashboard" target="_blank" rel="noopener noreferrer">cursor.com/dashboard</a> — account</li>
+          <li><a href="https://cursor.com/dashboard/integrations" target="_blank" rel="noopener noreferrer">cursor.com/dashboard/integrations</a> — API keys</li>
+        </ul>
+      </section>
+
+      <p class="cockpit-app-info-foot muted">
+        IDE tab titles may show <em>Android app for …</em> when the chat was opened from Cursor&rsquo;s Android client — same cloud usage rules apply.
+      </p>
     </section>
 
     <!-- View 2: detail of a single session. -->
@@ -181,15 +239,14 @@
     </section>
 
     <!--
-      View 4: IDE tabs list (M2.1, read-only).
+      View 4: IDE tabs list (read-only mirror, v2).
       Mirror of live Cursor IDE chat tabs from cursor-cockpit/ide-tabs.json
-      (written by flows/mobile-cockpit/ide-mirror/poll.mjs). No write-path
-      surface in M2.1; controls (open new / send message / close) land in M2.2.
+      (written by flows/mobile-cockpit/ide-mirror/poll.mjs). Read-only by
+      design (AC-022, SPEC.md) — v1's write-back path (open new / send
+      message / close via a VS Code extension) was removed in v2.
     -->
     <section id="view-ide-tabs" class="cockpit-view" data-view-id="ide-tabs" hidden>
       <div class="cockpit-ide-toolbar">
-        <span class="cockpit-ide-write-back" aria-label="Write-back indicator">M2.2.3</span>
-        <button type="button" id="btn-ide-new-agent" class="cockpit-btn cockpit-btn-primary" aria-label="Open new agent in IDE">+ New agent</button>
         <button type="button" id="btn-ide-refresh" class="cockpit-btn" aria-label="Refresh IDE tabs">↻</button>
       </div>
       <nav class="cockpit-ide-list-toggle" role="tablist" aria-label="IDE tab list">
@@ -227,33 +284,8 @@
       <div class="cockpit-detail-header">
         <button type="button" class="cockpit-back-btn" data-target-view="ide-tabs" aria-label="Back to IDE tabs">← Back to IDE tabs</button>
         <button type="button" id="btn-ide-detail-refresh" class="cockpit-btn" aria-label="Refresh IDE tab">↻</button>
-        <button type="button" id="btn-ide-close-tab" class="cockpit-btn cockpit-btn-danger" aria-label="Close this IDE tab">✕ Close tab</button>
       </div>
       <h2 id="ide-detail-title">…</h2>
-      <section id="ide-detail-pending" class="cockpit-ide-pending" hidden aria-label="Agent is waiting for your answer">
-        <h3>Agent is asking</h3>
-        <div id="ide-detail-pending-body" class="cockpit-ide-pending-body"></div>
-      </section>
-      <section id="ide-detail-outbound" class="cockpit-ide-outbound" hidden aria-label="Outbound commands for this tab">
-        <h3>Outbound queue</h3>
-        <p id="ide-detail-outbound-hint" class="cockpit-hint">Commands waiting for the Cursor extension on your laptop.</p>
-        <ul id="ide-detail-outbound-list" class="cockpit-outbound-list" role="list"></ul>
-      </section>
-      <section class="cockpit-ide-compose" aria-label="Send message to this IDE tab">
-        <h3>Send to this tab</h3>
-        <label for="ide-detail-compose-text" class="cockpit-visually-hidden">Message to send</label>
-        <textarea id="ide-detail-compose-text" class="cockpit-compose-textarea"
-                  rows="4" maxlength="20000"
-                  placeholder="Type a message to inject into this tab and submit…"></textarea>
-        <div class="cockpit-compose-actions">
-          <span id="ide-detail-compose-counter" class="cockpit-compose-counter">0 / 20000</span>
-          <button type="button" id="btn-ide-send-queue" class="cockpit-btn cockpit-btn-primary" disabled title="Queue when the agent is busy">Send (queue)</button>
-          <button type="button" id="btn-ide-send-interrupt" class="cockpit-btn cockpit-btn-warn" disabled title="Stop generation first, then send">Send now</button>
-          <button type="button" id="btn-ide-stop-agent" class="cockpit-btn cockpit-btn-danger" title="Stop the running agent on this tab">Stop agent</button>
-        </div>
-        <p id="ide-detail-compose-status" class="cockpit-compose-status" hidden role="status"></p>
-        <p id="ide-detail-compose-error" class="cockpit-error" hidden role="alert"></p>
-      </section>
       <details class="cockpit-detail-meta-collapse">
         <summary>Tab details</summary>
         <dl class="cockpit-detail-meta">
@@ -282,61 +314,139 @@
     </section>
 
     <!--
-      View 6: + New agent modal (M2.2.3). Hidden by default; shown when
-      the user clicks the toolbar button on view-ide-tabs. Submits a
-      new_agent action; on success, switches back to view-ide-tabs +
-      shows a toast linking to the polled result.
+      View 6: v2 (chat-model) session list (mobile follow-along, 2026-09-24).
+      Reads cursor-cockpit/sessions.json -- a SEPARATE mode alongside v1
+      Sessions, not a replacement (v1 stays live and unchanged). See
+      SPEC.md's "Mobile PWA v2 groundwork" + "Mobile follow-along" sections.
     -->
-    <section id="view-new-agent" class="cockpit-view cockpit-modal" data-view-id="new-agent" role="dialog" aria-modal="true" aria-labelledby="new-agent-title" hidden>
-      <div class="cockpit-modal-inner">
-        <header class="cockpit-modal-header">
-          <h2 id="new-agent-title">Open a new agent</h2>
-          <button type="button" id="btn-new-agent-cancel" class="cockpit-btn" aria-label="Cancel">✕</button>
-        </header>
-        <form id="form-new-agent" class="cockpit-modal-body">
-          <label for="new-agent-workspace">Workspace</label>
-          <select id="new-agent-workspace" name="workspace" required>
-            <!-- Populated by app.js from CONFIG.session.allowedCwds at boot. -->
+    <section id="view-v2-list" class="cockpit-view" data-view-id="v2-list" hidden>
+      <div class="cockpit-list-toolbar">
+        <button type="button" id="btn-v2-new-session" class="cockpit-btn cockpit-btn-primary">+ New chat</button>
+        <button type="button" id="btn-v2-refresh" class="cockpit-btn" aria-label="Refresh v2 session list">↻</button>
+      </div>
+      <ul id="v2-session-list" class="cockpit-session-list" role="list">
+        <!-- Populated by app.js#renderV2List(). -->
+      </ul>
+      <p id="v2-list-empty-state" class="cockpit-empty" hidden>
+        No chat sessions yet. Tap <strong>+ New chat</strong> to start one.
+      </p>
+      <p id="v2-list-error-state" class="cockpit-error" hidden role="alert"></p>
+    </section>
+
+    <!--
+      View 7: v2 session detail -- the actual chat. Renders messages[]
+      oldest-to-newest (AC-019, pwa/scrollback-helpers.mjs), a live
+      "typing…" bubble while a turn is running (record.streaming), a
+      composer with Queue/Force send modes, Stop, model/mode switches,
+      lease take-over/hand-back, and a Sub-agents section (delegated
+      parallel tasks -- see SPEC.md).
+    -->
+    <section id="view-v2-detail" class="cockpit-view" data-view-id="v2-detail" hidden>
+      <div class="cockpit-detail-header">
+        <button type="button" class="cockpit-back-btn" data-target-view="v2-list" aria-label="Back to chat list">← Back</button>
+        <button type="button" id="btn-v2-detail-refresh" class="cockpit-btn" aria-label="Refresh session">↻</button>
+      </div>
+      <h2 id="v2-detail-title">…</h2>
+      <p id="v2-detail-parent-row" class="cockpit-hint" hidden>
+        Sub-agent of <a href="#" id="v2-detail-parent-link">…</a>
+      </p>
+      <dl class="cockpit-detail-meta">
+        <dt>Status</dt><dd id="v2-detail-status">…</dd>
+        <dt>Owner</dt><dd id="v2-detail-owner">…</dd>
+        <dt>Chat id</dt><dd id="v2-detail-chat-id">…</dd>
+      </dl>
+      <div class="v2-detail-controls">
+        <label class="v2-inline-control">
+          Model
+          <input type="text" id="v2-detail-model-input" maxlength="80" autocomplete="off" placeholder="daemon default" />
+        </label>
+        <label class="v2-inline-control">
+          Mode
+          <select id="v2-detail-mode-select">
+            <option value="agent">agent</option>
+            <option value="plan">plan</option>
+            <option value="ask">ask</option>
           </select>
-          <label for="new-agent-text">Initial message (optional)</label>
-          <textarea id="new-agent-text" name="text" rows="3" maxlength="20000"
-                    placeholder="Optional first prompt to pre-fill + submit in the new tab."></textarea>
-          <p id="new-agent-error" class="cockpit-error" hidden role="alert"></p>
-          <div class="cockpit-modal-actions">
-            <button type="button" id="btn-new-agent-cancel-bottom" class="cockpit-btn">Cancel</button>
-            <button type="submit" id="btn-new-agent-create" class="cockpit-btn cockpit-btn-primary">Create</button>
-          </div>
-        </form>
+        </label>
+        <button type="button" id="btn-v2-take-over" class="cockpit-btn" hidden>Take over</button>
+        <button type="button" id="btn-v2-hand-back" class="cockpit-btn" hidden>Hand back</button>
+        <button type="button" id="btn-v2-stop" class="cockpit-btn cockpit-btn-warning" hidden>Stop</button>
       </div>
-    </section>
 
-    <!--
-      View 7: Close-tab confirmation modal (M2.2.3). Shown before the
-      destructive close_tab action is submitted. Per personal-kb.mdc
-      "Side-effect szabály" — destructive operations must surface
-      explicit user approval.
-    -->
-    <section id="view-close-confirm" class="cockpit-view cockpit-modal" data-view-id="close-confirm" role="dialog" aria-modal="true" aria-labelledby="close-confirm-title" hidden>
-      <div class="cockpit-modal-inner">
-        <header class="cockpit-modal-header">
-          <h2 id="close-confirm-title">Close IDE tab?</h2>
-        </header>
-        <div class="cockpit-modal-body">
-          <p>This will close the chat tab <strong id="close-confirm-title-name">…</strong> in the IDE. Unsaved scratch may be lost.</p>
-          <p class="cockpit-empty">Composer ID: <code id="close-confirm-tab-id">…</code></p>
-          <div class="cockpit-modal-actions">
-            <button type="button" id="btn-close-cancel" class="cockpit-btn">Cancel</button>
-            <button type="button" id="btn-close-confirm" class="cockpit-btn cockpit-btn-danger">Close tab</button>
-          </div>
+      <section class="v2-subagents-section">
+        <div class="v2-subagents-header">
+          <h3>Sub-agents</h3>
+          <button type="button" id="btn-v2-start-subagent" class="cockpit-btn">+ Start sub-agent</button>
         </div>
+        <p class="cockpit-hint">A sub-agent is an independent chat session delegated from this one -- same as this app spawning a background helper task.</p>
+        <ul id="v2-subagents-list" class="cockpit-session-list" role="list">
+          <!-- Populated by app.js#renderV2SubAgents(). -->
+        </ul>
+        <p id="v2-subagents-empty" class="cockpit-empty" hidden>No sub-agents yet.</p>
+      </section>
+
+      <div id="v2-messages" class="v2-messages" role="log" aria-live="polite">
+        <!-- Populated by app.js#renderV2Messages(). -->
       </div>
+
+      <div class="v2-composer">
+        <select id="v2-composer-mode" class="v2-composer-mode-select">
+          <option value="queue" selected>Queue (append, run next)</option>
+          <option value="force">Force (interrupt current turn, send now)</option>
+        </select>
+        <textarea id="v2-composer-text" class="v2-composer-text" rows="3" placeholder="Message"></textarea>
+        <button type="button" id="btn-v2-composer-send" class="cockpit-btn cockpit-btn-primary">Send</button>
+      </div>
+      <p id="v2-detail-error-state" class="cockpit-error" hidden role="alert"></p>
     </section>
 
-    <!--
-      Toast container for action-result notifications (M2.2.3).
-      app.js#showToast(message, kind) appends transient banners here.
-    -->
-    <aside id="cockpit-toast-container" class="cockpit-toast-container" aria-live="polite"></aside>
+    <!-- View 8: v2 new-session composer (mobile follow-along, 2026-09-24). -->
+    <section id="view-v2-new" class="cockpit-view" data-view-id="v2-new" hidden>
+      <button type="button" class="cockpit-back-btn" data-target-view="v2-list" aria-label="Back to chat list">← Back</button>
+      <h2>New chat</h2>
+      <p id="v2-new-parent-note" class="cockpit-hint" hidden></p>
+      <p class="cockpit-warning" role="note">
+        Do not include salary, talent, performance, standby, leave, or any
+        customer code / data in prompts. mobile-cockpit logs prompts and
+        outputs to OneDrive (cursor-cockpit/sessions/&lt;id&gt;.json).
+      </p>
+      <form id="v2-new-session-form" class="cockpit-form">
+        <label>
+          Session id
+          <input type="text" id="v2-new-id" name="id" maxlength="80" autocomplete="off" required />
+        </label>
+        <label>
+          Model (optional)
+          <input type="text" id="v2-new-model" name="model" maxlength="80" autocomplete="off"
+                 placeholder="composer-2.5 (leave blank for daemon default)" />
+        </label>
+        <label>
+          Mode
+          <select id="v2-new-mode" name="mode">
+            <option value="agent" selected>agent</option>
+            <option value="plan">plan</option>
+            <option value="ask">ask</option>
+          </select>
+        </label>
+        <label>
+          Working directory
+          <select id="v2-new-cwd" name="cwd" required>
+            <option value="" selected>(daemon default)</option>
+          </select>
+        </label>
+        <label>
+          First message (optional)
+          <textarea id="v2-new-message" name="message" maxlength="8000" rows="4"
+                    placeholder="Leave blank to create an empty chat and send later."></textarea>
+        </label>
+        <div class="cockpit-form-actions">
+          <button type="submit" id="btn-v2-new-submit" class="cockpit-btn cockpit-btn-primary">Create</button>
+          <button type="button" id="btn-v2-new-cancel" class="cockpit-btn">Cancel</button>
+        </div>
+      </form>
+      <p id="v2-new-error-state" class="cockpit-error" hidden role="alert"></p>
+    </section>
+
   </main>
 
   <footer class="cockpit-footer">
@@ -348,6 +458,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=a8bd968" defer></script>
+  <script src="./app.js?v=ed90a82" defer></script>
 </body>
 </html>

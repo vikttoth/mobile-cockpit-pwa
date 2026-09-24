@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-06-11 21:14 CEST a8bd968`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-06-11 21:14 CEST a8bd968";
+// `2026-09-24 15:06 CEST ed90a82`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-24 15:06 CEST ed90a82";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -75,18 +75,6 @@ let WRITE_HELPERS = null;
 /** Dynamically imported pure helpers for the IDE-tabs view (M2.1). */
 let IDE_HELPERS = null;
 
-/** Compose draft preservation across ~20s IDE-tab auto-refresh. */
-let COMPOSE_DRAFT_HELPERS = null;
-
-/** AskQuestion mobile UI helpers (pure). */
-let PENDING_QUESTION_HELPERS = null;
-
-/** In-progress multi-select / bundle answers keyed by composerId. */
-const idePendingAnswerDrafts = new Map();
-
-/** Per-composerId in-progress message text (survives background re-render). */
-const ideComposeDrafts = new Map();
-
 /** Pure helpers for refresh-signals.json nudge + wait logic. */
 let REFRESH_HELPERS = null;
 
@@ -105,45 +93,58 @@ let ideRefreshTimerId = null;
 /** Faster poll while an IDE tab detail shows waitingOn=agent (mirror lag). */
 let ideDetailFastTimerId = null;
 
-/** True while an IDE action is queued / polling — pauses destructive re-renders. */
-let ideActionInFlight = false;
-
-/** True while a compose send/stop is uploading to OneDrive (disables input). */
-let composeSubmitting = false;
-
-/** Serializes ide-actions.json PUTs so concurrent sends do not clobber each other. */
-let ideActionPutChain = Promise.resolve();
-
-/** Poll handle for outbound queue UI refresh on the IDE tab detail view. */
-let outboundPollTimerId = null;
-
-/** actionIds with an active result-poll loop (for outbound queue bookkeeping). */
-const trackedOutboundActionIds = new Set();
-
 /**
- * Dynamically imported pure helpers for the M2.2.3 write-back actions
- * (`pwa/ide-actions-helpers.mjs`). Populated by bootstrap() before any
- * action button is wired.
- */
-let IDE_ACTION_HELPERS = null;
-
-/**
- * Composer ID currently shown in `view-ide-tab-detail`. Cached so the
- * "Close tab" confirmation modal and the "Send" button handler know
- * which tab to target without re-parsing the DOM. Cleared when leaving
- * the detail view.
+ * Composer ID currently shown in `view-ide-tab-detail`. Cleared when
+ * leaving the detail view.
  */
 let activeIdeTabComposerId = null;
 
-/**
- * Active workspace path that the extension is currently bound to (read
- * from `cachedIdeSnapshot.workspacePath`). Every M2.2.3 action carries
- * the workspace so the extension can refuse cross-workspace targeting.
- */
-let activeIdeWorkspacePath = null;
-
 /** When true, setView skips hash sync (hashchange handler is driving navigation). */
 let suppressHashSync = false;
+
+// -----------------------------------------------------------------------------
+// Mobile follow-along (2026-09-24): v2 (chat-model) state -- a separate mode
+// alongside v1 Sessions / IDE tabs / App, not a replacement. See SPEC.md's
+// "Mobile PWA v2 groundwork" section.
+// -----------------------------------------------------------------------------
+
+/** Dynamically imported pure v2 model helpers -- ./transcript-model.mjs, a
+ *  byte-for-byte mirror of lib/transcript-model.mjs (see
+ *  pwa-transcript-model-coherence.sh). Populated by bootstrap(). */
+let V2_MODEL = null;
+
+/** Cached last-known v2 sessions.json index. */
+let cachedV2Index = null;
+let cachedV2IndexEtag = null;
+
+/** Session id currently open in v2 detail view (for the fast poll + composer). */
+let activeV2DetailSessionId = null;
+
+/** Faster poll while viewing a v2 session detail (mirrors runningDetailTimerId). */
+let v2DetailTimerId = null;
+
+/** Auto-refresh handle for the v2 list view (independent of v1's refreshTimerId). */
+let v2RefreshTimerId = null;
+
+/** This host's identity for v2 lease take-over/hand-back (mirrors local-ui's
+ *  OWN_HOST -- "laptop" there, "phone" here, since this is the mobile PWA). */
+const V2_OWN_HOST = "phone";
+
+/** Prefill carried from a "+ Start sub-agent" tap into the next v2-new render. */
+let pendingV2NewPrefill = null;
+
+/** Dynamically imported pure scrollback helpers (already existed, unwired
+ *  until now) -- orderMessagesForDisplay / formatSessionMessage / AC-019. */
+let SCROLLBACK_HELPERS = null;
+
+function orderMessagesForDisplay(messages) {
+  return SCROLLBACK_HELPERS ? SCROLLBACK_HELPERS.orderMessagesForDisplay(messages) : [];
+}
+function formatSessionMessage(message) {
+  return SCROLLBACK_HELPERS
+    ? SCROLLBACK_HELPERS.formatSessionMessage(message)
+    : { role: "unknown", label: "System", text: "", ts: null };
+}
 
 // =============================================================================
 // 1. Auth — MSAL.js v4 PKCE flow
@@ -354,6 +355,193 @@ async function loadIdeTabs() {
 }
 
 // =============================================================================
+// 2c. v2 Graph helpers — generic JSON read/write (mobile follow-along, 2026-09-24)
+// =============================================================================
+//
+// Generalizes loadState/putState's exact pattern (two-call metadata+content
+// read, If-Match write, 412 -> PRECONDITION_FAILED) to an arbitrary Graph
+// endpoint, so sessions.json (the light index) and sessions/<id>.json (each
+// full record) can share one retry/error shape instead of duplicating it.
+// loadState/putState above are UNTOUCHED -- v1 is unaffected by this.
+
+async function loadJson(endpoint) {
+  const meta = await graphFetch(`${endpoint}`);
+  if (meta.status === 404) return { json: null, etag: null };
+  if (!meta.ok) {
+    throw new Error(`Graph driveItem GET failed: ${meta.status} ${meta.statusText}`);
+  }
+  const metaJson = await meta.json();
+  const etag = metaJson.eTag || metaJson["@odata.etag"] || null;
+  const contentRes = await graphFetch(`${endpoint}:/content`);
+  if (!contentRes.ok) {
+    throw new Error(`Graph content GET failed: ${contentRes.status} ${contentRes.statusText}`);
+  }
+  const json = await contentRes.json();
+  return { json, etag };
+}
+
+async function putJson(endpoint, json, etagOrNull) {
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (etagOrNull) headers.set("If-Match", etagOrNull);
+  const body = JSON.stringify(json, null, 2) + "\n";
+  const res = await graphFetch(`${endpoint}:/content`, { method: "PUT", body, headers });
+  if (res.status === 412) {
+    const err = new Error("changed since last read (412)");
+    err.code = "PRECONDITION_FAILED";
+    err.status = 412;
+    throw err;
+  }
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "");
+    throw new Error(`putJson: PUT failed ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
+  }
+  return res.json().catch(() => null);
+}
+
+/** Mirrors lib/config.mjs#sessionRecordRelativePath(id), endpoint-shaped. */
+function v2RecordEndpoint(id) {
+  return `${CONFIG.sessionsDir.endpoint}/${id}.json`;
+}
+
+async function loadV2Index() {
+  const { json, etag } = await loadJson(CONFIG.sessionsIndex.endpoint);
+  cachedV2Index = json && Array.isArray(json.sessions) ? json : { schemaVersion: 1, sessions: [] };
+  cachedV2IndexEtag = etag;
+  return { index: cachedV2Index, etag };
+}
+
+async function putV2Index(indexObj, etagOrNull) {
+  return putJson(CONFIG.sessionsIndex.endpoint, indexObj, etagOrNull);
+}
+
+async function loadV2Record(id) {
+  return loadJson(v2RecordEndpoint(id)).then(({ json, etag }) => ({ record: json, etag }));
+}
+
+async function putV2Record(id, recordObj, etagOrNull) {
+  return putJson(v2RecordEndpoint(id), recordObj, etagOrNull);
+}
+
+// =============================================================================
+// 2d. v2 write actions — read-modify-write against sessions.json / sessions/<id>.json
+// =============================================================================
+//
+// Mirrors lib/session-store.mjs's exact shape, using the SAME pure transforms
+// (V2_MODEL == pwa/transcript-model.mjs, the byte-for-byte browser mirror of
+// lib/transcript-model.mjs) -- this IS the browser-side session-store.
+
+async function v2WriteRecordWithRetry(id, transformFn) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { record, etag } = await loadV2Record(id);
+    if (!record) {
+      const err = new Error(`v2 session not found: ${id}`);
+      err.code = "SESSION_NOT_FOUND";
+      throw err;
+    }
+    const next = transformFn(record);
+    try {
+      await putV2Record(id, next, etag);
+      return next;
+    } catch (err) {
+      if (err.code !== "PRECONDITION_FAILED" || attempt > 0) throw err;
+    }
+  }
+  throw new Error(`v2WriteRecordWithRetry(${id}): retries exhausted`);
+}
+
+/** Same as v2WriteRecordWithRetry, but for intents that ALSO change a field
+ *  in buildIndexEntry's shape (owner, archived, chatId, parentId, status,
+ *  title) -- mirrors lib/session-store.mjs#writeRecordAndMirrorIndex. */
+async function v2WriteRecordAndMirrorIndex(id, transformFn) {
+  const next = await v2WriteRecordWithRetry(id, transformFn);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { index, etag } = await loadV2Index();
+    const nextIndex = V2_MODEL.upsertIndexEntry(index, V2_MODEL.buildIndexEntry(next));
+    try {
+      await putV2Index(nextIndex, etag);
+      return next;
+    } catch (err) {
+      if (err.code !== "PRECONDITION_FAILED" || attempt > 0) throw err;
+    }
+  }
+  throw new Error(`v2WriteRecordAndMirrorIndex(${id}): index retries exhausted`);
+}
+
+/**
+ * Create a brand-new v2 session directly against Graph. `chatId` starts
+ * null -- AC-001's real mint needs `cursor-agent create-chat`, which only
+ * the daemon's machine can run; `daemon/lib/v2-action-tick.mjs`'s
+ * provisioning step fills it in within one `--v2-tick` cycle (see SPEC.md's
+ * "Mobile PWA v2 groundwork"). `parentId` is the sub-agent wiring: set when
+ * this session is a delegated parallel task started from an existing
+ * session's detail view.
+ */
+async function v2CreateSession({ id, cwd, model, mode, parentId, firstMessage }) {
+  const now = Date.now();
+  const record = V2_MODEL.buildSessionRecord({
+    id,
+    chatId: null,
+    model: model || null,
+    mode: mode || null,
+    cwd: cwd || null,
+    worktree: null,
+    parentId: parentId || null,
+    now,
+  });
+  // Fresh id -- no retry needed, mirrors session-store.mjs#createSession.
+  await putV2Record(id, record, null);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { index, etag } = await loadV2Index();
+    const nextIndex = V2_MODEL.upsertIndexEntry(index, V2_MODEL.buildIndexEntry(record));
+    try {
+      await putV2Index(nextIndex, etag);
+      break;
+    } catch (err) {
+      if (err.code !== "PRECONDITION_FAILED" || attempt > 0) throw err;
+    }
+  }
+  if (typeof firstMessage === "string" && firstMessage.trim()) {
+    // Nothing is running yet -- Queue is the correct primitive here
+    // (Force's "kill the in-flight turn" has nothing to kill on a
+    // brand-new session).
+    await v2WriteRecordWithRetry(id, (r) =>
+      V2_MODEL.enqueueMessage(r, { text: firstMessage.trim(), now: Date.now() }),
+    );
+  }
+  return record;
+}
+
+async function v2EnqueueMessage(id, text) {
+  return v2WriteRecordWithRetry(id, (record) => V2_MODEL.enqueueMessage(record, { text, now: Date.now() }));
+}
+
+async function v2RequestForce(id, text) {
+  return v2WriteRecordWithRetry(id, (record) => V2_MODEL.requestForce(record, { text, now: Date.now() }));
+}
+
+async function v2RequestStop(id) {
+  return v2WriteRecordWithRetry(id, (record) => V2_MODEL.requestStop(record, { now: Date.now() }));
+}
+
+async function v2SetModel(id, model) {
+  return v2WriteRecordWithRetry(id, (record) => V2_MODEL.setModel(record, { model, now: Date.now() }));
+}
+
+async function v2SetMode(id, mode) {
+  return v2WriteRecordWithRetry(id, (record) => V2_MODEL.setMode(record, { mode, now: Date.now() }));
+}
+
+async function v2TakeOverLease(id) {
+  return v2WriteRecordAndMirrorIndex(id, (record) =>
+    V2_MODEL.takeOverLease(record, { owner: V2_OWN_HOST, now: Date.now() }),
+  );
+}
+
+async function v2HandBackLease(id) {
+  return v2WriteRecordAndMirrorIndex(id, (record) => V2_MODEL.handBackLease(record, { now: Date.now() }));
+}
+
+// =============================================================================
 // 2b. Manual refresh (↻) — nudge desktop daemons + wait for fresh OneDrive data
 // =============================================================================
 
@@ -501,6 +689,8 @@ async function refreshCurrentView() {
       await waitForFreshIdeTabs(beforeAt, beforeFp);
       await loadIdeTabs();
       if (composerId) renderIdeTabDetail(composerId, { preserveCompose: true });
+    } else if (view === "app-info") {
+      // Static help view — nothing to refresh.
     }
   } catch (err) {
     if (view === "detail") showDetailError(err.message);
@@ -711,8 +901,13 @@ function applyHashRoute() {
   try {
     if (route.view === "list") setView("list");
     else if (route.view === "new") setView("new");
+    else if (route.view === "app-info") setView("app-info");
     else if (route.view === "detail" && route.sessionId) {
       setView("detail", { sessionId: route.sessionId });
+    } else if (route.view === "v2-list") setView("v2-list");
+    else if (route.view === "v2-new") setView("v2-new");
+    else if (route.view === "v2-detail" && route.sessionId) {
+      setView("v2-detail", { sessionId: route.sessionId });
     }
   } finally {
     suppressHashSync = false;
@@ -720,17 +915,6 @@ function applyHashRoute() {
 }
 
 function setView(viewId, payload) {
-  const prevView = document.body.dataset.view;
-  if (
-    prevView === "ide-tab-detail" &&
-    viewId !== "ide-tab-detail" &&
-    viewId !== "close-confirm"
-  ) {
-    const taLeave = document.getElementById("ide-detail-compose-text");
-    if (activeIdeTabComposerId && taLeave) {
-      saveComposeDraft(activeIdeTabComposerId, taLeave.value);
-    }
-  }
   document.body.dataset.view = viewId;
   for (const section of document.querySelectorAll(".cockpit-view")) {
     section.hidden = section.dataset.viewId !== viewId;
@@ -755,18 +939,22 @@ function setView(viewId, payload) {
   } else if (viewId === "ide-tabs") {
     syncIdeListModeToggle();
     renderIdeTabsList().catch((err) => showIdeTabsError(err.message));
+  } else if (viewId === "app-info") {
+    // Static copy in index.html — no network render.
   } else if (viewId === "ide-tab-detail" && payload && payload.composerId) {
     renderIdeTabDetail(payload.composerId);
-  } else if (viewId === "new-agent") {
-    renderNewAgentModal();
-  } else if (viewId === "close-confirm" && payload && payload.composerId) {
-    renderCloseConfirmModal(payload.composerId, payload.title || "");
+  } else if (viewId === "v2-list") {
+    renderV2List().catch((err) => showV2ListError(err.message));
+  } else if (viewId === "v2-detail" && payload && payload.sessionId) {
+    activeV2DetailSessionId = payload.sessionId;
+    renderV2Detail(payload.sessionId).catch((err) => showV2DetailError(err.message));
+  } else if (viewId === "v2-new") {
+    renderV2New();
   }
   // Drop the cached composer ID when navigating away from the IDE detail
-  // view so a stale value can't accidentally target the wrong tab on a
-  // later send/close click. The close-confirm + new-agent modals overlay
-  // the detail view and intentionally KEEP the cached ID.
-  if (viewId !== "ide-tab-detail" && viewId !== "close-confirm") {
+  // view so a stale value can't accidentally target the wrong tab on the
+  // next render.
+  if (viewId !== "ide-tab-detail") {
     activeIdeTabComposerId = null;
   }
   if (viewId !== "detail") {
@@ -775,12 +963,20 @@ function setView(viewId, payload) {
   }
   if (viewId !== "ide-tab-detail") {
     stopIdeDetailFastPoll();
-    stopOutboundQueuePoll();
-  } else {
-    startOutboundQueuePoll();
-    refreshOutboundQueueUi().catch((e) => console.warn("outbound queue initial refresh:", e));
   }
-  if (viewId === "list" || viewId === "new" || (viewId === "detail" && payload && payload.sessionId)) {
+  if (viewId !== "v2-detail") {
+    activeV2DetailSessionId = null;
+    stopV2DetailPoll();
+  }
+  if (
+    viewId === "list" ||
+    viewId === "new" ||
+    viewId === "app-info" ||
+    viewId === "v2-list" ||
+    viewId === "v2-new" ||
+    (viewId === "detail" && payload && payload.sessionId) ||
+    (viewId === "v2-detail" && payload && payload.sessionId)
+  ) {
     syncHashForView(viewId, payload);
   }
 }
@@ -1137,8 +1333,10 @@ async function renderIdeTabsList() {
 
     const status = document.createElement("span");
     status.className = "cockpit-row-status";
-    status.dataset.waitingOn = t.waitingOn || "none";
-    status.textContent = IDE_HELPERS.waitingOnLabel(t.waitingOn);
+    const emptyTab = IDE_HELPERS.isEmptyIdeTab(t);
+    status.dataset.waitingOn = emptyTab ? "none" : (t.waitingOn || "none");
+    if (emptyTab) status.dataset.emptyTab = "true";
+    status.textContent = IDE_HELPERS.ideTabStatusLabel(t);
     li.appendChild(status);
 
     const time = document.createElement("time");
@@ -1169,45 +1367,11 @@ function renderIdeTabDetail(composerId, options = {}) {
     return;
   }
 
-  const taBefore = document.getElementById("ide-detail-compose-text");
-  const prevComposer = activeIdeTabComposerId;
-  if (prevComposer && prevComposer !== tab.composerId && taBefore) {
-    saveComposeDraft(prevComposer, taBefore.value);
-  }
-
-  // Cache for the send / close handlers; cleared by setView when navigating away.
+  // Cache so a background re-render (fast poll / refresh) can re-target
+  // the same tab; cleared by setView when navigating away.
   activeIdeTabComposerId = tab.composerId;
-  activeIdeWorkspacePath = cachedIdeSnapshot.workspacePath || null;
-
-  const draftForTab = ideComposeDrafts.get(tab.composerId) || "";
-  const preserveCompose = COMPOSE_DRAFT_HELPERS
-    ? COMPOSE_DRAFT_HELPERS.shouldPreserveComposeOnRefresh({
-        preserveCompose: options.preserveCompose === true,
-        textareaFocused: taBefore === document.activeElement,
-        textareaValue: taBefore ? taBefore.value : "",
-        draftText: draftForTab,
-      })
-    : options.preserveCompose === true;
-
-  if (!preserveCompose) {
-    resetComposeUi({ clearDraft: true, composerId: tab.composerId });
-  } else {
-    const err = document.getElementById("ide-detail-compose-error");
-    if (err) err.hidden = true;
-  }
 
   syncIdeDetailFastPoll();
-
-  // Wire the Close-tab button to the confirm modal. Idempotent on every
-  // re-render — we re-attach because the modal payload (composer ID +
-  // title) depends on which tab is open.
-  const btnClose = document.getElementById("btn-ide-close-tab");
-  if (btnClose) {
-    btnClose.onclick = () => setView("close-confirm", {
-      composerId: tab.composerId,
-      title: IDE_HELPERS.formatTabTitle(tab.title, 60),
-    });
-  }
 
   const set = (id, text) => {
     const el = document.getElementById(id);
@@ -1232,148 +1396,7 @@ function renderIdeTabDetail(composerId, options = {}) {
     set("ide-detail-transcript-size", "—");
   }
 
-  const preservePending = shouldPreservePendingQuestionUi(tab.composerId, tab);
-  if (!preservePending) {
-    renderIdeTabPendingQuestion(tab);
-  }
-
-  const skipThreadRerender =
-    preserveCompose ||
-    preservePending ||
-    ideActionInFlight ||
-    isActiveElementInsidePendingSection();
-  if (!skipThreadRerender) {
-    renderIdeTabThread(tab);
-  }
-
-  if (preserveCompose) {
-    const restored =
-      (taBefore && taBefore.value.length > 0 ? taBefore.value : null) ||
-      draftForTab ||
-      "";
-    if (restored) {
-      applyComposeUiFromText(restored);
-      saveComposeDraft(tab.composerId, restored);
-    }
-  } else {
-    syncComposeButtonsDisabled();
-  }
-
-  refreshOutboundQueueUi().catch((e) => console.warn("outbound queue refresh:", e));
-}
-
-/**
- * Send a user message into the active IDE tab (shared by compose + AskQuestion UI).
- * @param {string} text
- * @returns {Promise<void>}
- */
-function revealComposeError(message) {
-  const err = document.getElementById("ide-detail-compose-error");
-  if (err) {
-    err.textContent = message;
-    err.hidden = false;
-    err.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }
-  showToast(message, "error");
-}
-
-/** Surface send/action failures in toast + compose error (when relevant). */
-function reportSendFailure(err) {
-  const msg = err && err.message ? err.message : String(err);
-  if (msg === "empty message") {
-    showToast("Type a message first.", "error");
-    return;
-  }
-  revealComposeError(msg);
-}
-
-async function sendIdeTabMessage(text, sendMode = "queue") {
-  const err = document.getElementById("ide-detail-compose-error");
-  if (!activeIdeTabComposerId) {
-    const msg = "No active IDE tab — re-open the tab from the list.";
-    revealComposeError(msg);
-    throw new Error(msg);
-  }
-  if (!IDE_ACTION_HELPERS) {
-    const msg = "Action helpers not loaded.";
-    revealComposeError(msg);
-    throw new Error(msg);
-  }
-  const trimmed = String(text || "").trim();
-  if (!trimmed) {
-    throw new Error("empty message");
-  }
-  const mode = sendMode === "interrupt" ? "interrupt" : "queue";
-  const action = IDE_ACTION_HELPERS.buildSendMessageAction({
-    tabId: activeIdeTabComposerId,
-    text: trimmed,
-    now: Date.now(),
-    sendMode: mode,
-    rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
-  });
-  const allowedCwds = (CONFIG.session && CONFIG.session.allowedCwds) || [];
-  const validation = IDE_ACTION_HELPERS.validateActionInputs(action, allowedCwds);
-  if (!validation.valid) {
-    const msg = validation.errors.join("; ");
-    revealComposeError(msg);
-    throw new Error(msg);
-  }
-  if (err) err.hidden = true;
-  setComposeSubmitting(true);
-  refreshOutboundQueueUi().catch((e) => console.warn("outbound queue:", e));
-  try {
-    await submitIdeAction(action);
-    hidePendingQuestionUi();
-    if (activeIdeTabComposerId) ideComposeDrafts.delete(activeIdeTabComposerId);
-    resetComposeUi();
-  } finally {
-    setComposeSubmitting(false);
-    refreshOutboundQueueUi().catch((e) => console.warn("outbound queue:", e));
-  }
-}
-
-function isActiveElementInsidePendingSection() {
-  const pending = document.getElementById("ide-detail-pending");
-  const active = document.activeElement;
-  if (!pending || pending.hidden || !active) return false;
-  return pending.contains(active);
-}
-
-/**
- * Skip tearing down AskQuestion DOM during background snapshot refresh
- * (prevents focus theft + broken option taps on mobile).
- */
-function shouldPreservePendingQuestionUi(composerId, tab) {
-  const pq = tab && tab.pendingQuestion;
-  const questions = pq && Array.isArray(pq.questions) ? pq.questions : [];
-  if (questions.length === 0) return false;
-  const section = document.getElementById("ide-detail-pending");
-  if (!section || section.hidden) return false;
-  const body = document.getElementById("ide-detail-pending-body");
-  if (!body || body.childElementCount === 0) return false;
-
-  const draft = composerId ? idePendingAnswerDrafts.get(composerId) : null;
-  const hasDraft =
-    PENDING_QUESTION_HELPERS &&
-    draft &&
-    PENDING_QUESTION_HELPERS.hasNonEmptyAnswerMap(draft.answers);
-
-  if (COMPOSE_DRAFT_HELPERS) {
-    return COMPOSE_DRAFT_HELPERS.shouldPreservePendingQuestionOnRefresh({
-      actionInFlight: ideActionInFlight,
-      activeElementInPending: isActiveElementInsidePendingSection(),
-      hasDraftAnswers: hasDraft,
-    });
-  }
-  return ideActionInFlight || isActiveElementInsidePendingSection() || hasDraft;
-}
-
-function hidePendingQuestionUi() {
-  const section = document.getElementById("ide-detail-pending");
-  const body = document.getElementById("ide-detail-pending-body");
-  if (section) section.hidden = true;
-  if (body) body.innerHTML = "";
-  if (activeIdeTabComposerId) idePendingAnswerDrafts.delete(activeIdeTabComposerId);
+  renderIdeTabThread(tab);
 }
 
 function renderIdeTabThread(tab) {
@@ -1426,245 +1449,303 @@ function renderIdeTabThread(tab) {
   }
 }
 
-function syncPendingSubmitButtons(body, questions, answers) {
-  if (!PENDING_QUESTION_HELPERS || !body) return;
-  const submitAll = body.querySelector(".cockpit-ide-pending-submit-all");
-  if (submitAll) {
-    submitAll.disabled = !PENDING_QUESTION_HELPERS.allQuestionsAnswered(questions, answers);
-  }
-  for (const block of body.querySelectorAll(".cockpit-ide-pending-q")) {
-    const submitOne = block.querySelector(".cockpit-ide-pending-submit-one");
-    if (!submitOne) continue;
-    const key = submitOne.dataset.questionKey || "";
-    const q = questions.find((item) => PENDING_QUESTION_HELPERS.questionKey(item) === key);
-    if (!q) continue;
-    const v = answers[key];
-    const ok = q.allowMultiple
-      ? Array.isArray(v) && v.length > 0
-      : v != null && String(v).trim() !== "";
-    submitOne.disabled = !ok;
-  }
+// -----------------------------------------------------------------------------
+// v2 (chat-model) views (mobile follow-along, 2026-09-24)
+// -----------------------------------------------------------------------------
+
+function showV2ListError(message) {
+  const el = document.getElementById("v2-list-error-state");
+  if (!el) return;
+  el.textContent = message;
+  el.hidden = false;
+}
+function clearV2ListError() {
+  const el = document.getElementById("v2-list-error-state");
+  if (el) el.hidden = true;
+}
+function showV2DetailError(message) {
+  const el = document.getElementById("v2-detail-error-state");
+  if (!el) return;
+  el.textContent = message;
+  el.hidden = false;
+}
+function clearV2DetailError() {
+  const el = document.getElementById("v2-detail-error-state");
+  if (el) el.hidden = true;
+}
+function showV2NewError(message) {
+  const el = document.getElementById("v2-new-error-state");
+  if (!el) return;
+  el.textContent = message;
+  el.hidden = false;
+}
+function clearV2NewError() {
+  const el = document.getElementById("v2-new-error-state");
+  if (el) el.hidden = true;
 }
 
-function appendPendingFreeTextRow(block, q, questions, answers, onAnswerChange) {
-  const H = PENDING_QUESTION_HELPERS;
-  const key = H.questionKey(q);
-  const row = document.createElement("div");
-  row.className = "cockpit-ide-pending-freetext";
-  const input = document.createElement("textarea");
-  input.className = "cockpit-compose-textarea cockpit-ide-pending-freetext-input";
-  input.rows = 2;
-  input.placeholder = "Type your answer…";
-  input.value = typeof answers[key] === "string" ? answers[key] : "";
-  input.addEventListener("input", () => {
-    answers[key] = input.value;
-    onAnswerChange();
-  });
-  row.appendChild(input);
-  const sendBtn = document.createElement("button");
-  sendBtn.type = "button";
-  sendBtn.className = "cockpit-btn cockpit-btn-primary cockpit-ide-pending-submit-one";
-  sendBtn.dataset.questionKey = key;
-  sendBtn.textContent = questions.length > 1 ? "Save answer" : "Send answer";
-  sendBtn.addEventListener("click", async () => {
-    if (questions.length > 1) {
-      onAnswerChange();
-      input.focus();
-      return;
-    }
-    const text = H.formatAnswersForSend([q], answers);
-    if (!text) return;
-    sendBtn.disabled = true;
-    try {
-      await sendIdeTabMessage(text);
-      if (activeIdeTabComposerId) idePendingAnswerDrafts.delete(activeIdeTabComposerId);
-    } catch (e) {
-      sendBtn.disabled = false;
-      onAnswerChange();
-      reportSendFailure(e);
-    }
-  });
-  row.appendChild(sendBtn);
-  block.appendChild(row);
-}
-
-/**
- * Show AskQuestion at the top: tap options, multi-select, or free-text + send.
- */
-function renderIdeTabPendingQuestion(tab) {
-  const section = document.getElementById("ide-detail-pending");
-  const body = document.getElementById("ide-detail-pending-body");
-  if (!section || !body || !PENDING_QUESTION_HELPERS) return;
-  body.innerHTML = "";
-  const composerId = tab && tab.composerId;
-  const pq = tab && tab.pendingQuestion;
-  const questions = pq && Array.isArray(pq.questions) ? pq.questions : [];
-  if (questions.length === 0) {
-    section.hidden = true;
-    if (composerId) idePendingAnswerDrafts.delete(composerId);
+async function renderV2List() {
+  clearV2ListError();
+  const ul = document.getElementById("v2-session-list");
+  const empty = document.getElementById("v2-list-empty-state");
+  if (!ul || !empty) return;
+  try {
+    await loadV2Index();
+  } catch (err) {
+    showV2ListError(err.message);
     return;
   }
-  section.hidden = false;
-  const H = PENDING_QUESTION_HELPERS;
-  if (questions.length > 1) {
-    const bundleHint = document.createElement("p");
-    bundleHint.className = "cockpit-ide-pending-hint cockpit-ide-pending-bundle-hint";
-    bundleHint.textContent =
-      "Answer each question below, then tap Submit all answers.";
-    body.appendChild(bundleHint);
+  const all = (cachedV2Index && cachedV2Index.sessions) || [];
+  const visible = all.filter((s) => s && !s.archived);
+  const sorted = [...visible].sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0));
+  ul.innerHTML = "";
+  if (sorted.length === 0) {
+    empty.hidden = false;
+    return;
   }
-  const fingerprint = H.pendingQuestionsFingerprint(questions);
-  let draft = composerId ? idePendingAnswerDrafts.get(composerId) : null;
-  if (!draft || draft.fingerprint !== fingerprint) {
-    draft = { fingerprint, answers: {} };
-    if (composerId) idePendingAnswerDrafts.set(composerId, draft);
-  }
-  const answers = draft.answers;
-  const multiBundle =
-    questions.length > 1 || questions.some((q) => q.allowMultiple);
-
-  const onAnswerChange = () => syncPendingSubmitButtons(body, questions, answers);
-
-  for (const q of questions) {
-    const block = document.createElement("div");
-    block.className = "cockpit-ide-pending-q";
-    const prompt = document.createElement("p");
-    prompt.className = "cockpit-ide-pending-prompt";
-    prompt.textContent = q.prompt || "Choose an option:";
-    block.appendChild(prompt);
-
-    if (q.allowMultiple) {
-      const hint = document.createElement("p");
-      hint.className = "cockpit-ide-pending-hint";
-      hint.textContent = "Select one or more, then submit.";
-      block.appendChild(hint);
-    }
-
-    if (H.showInlineFreeTextInput(q)) {
-      appendPendingFreeTextRow(block, q, questions, answers, onAnswerChange);
-      body.appendChild(block);
-      continue;
-    }
-
-    const key = H.questionKey(q);
-    const opts = document.createElement("div");
-    opts.className = "cockpit-ide-pending-options";
-
-    for (const o of q.options || []) {
-      if (H.isFreeTextEscapeOption(o)) {
-        const escapeBtn = document.createElement("button");
-        escapeBtn.type = "button";
-        escapeBtn.className = "cockpit-btn cockpit-ide-pending-opt cockpit-ide-pending-opt-escape";
-        escapeBtn.textContent = o.label || o.id || "Other…";
-        escapeBtn.addEventListener("click", () => {
-          opts.hidden = true;
-          const existing = block.querySelector(".cockpit-ide-pending-freetext");
-          if (existing) existing.remove();
-          appendPendingFreeTextRow(block, q, questions, answers, onAnswerChange);
-          const input = block.querySelector(".cockpit-ide-pending-freetext-input");
-          if (input) input.focus();
-        });
-        opts.appendChild(escapeBtn);
-        continue;
-      }
-
-      const optBtn = document.createElement("button");
-      optBtn.type = "button";
-      optBtn.className = "cockpit-btn cockpit-ide-pending-opt";
-      const label = o.label || o.id || "?";
-      optBtn.textContent = label;
-
-      if (q.allowMultiple) {
-        optBtn.addEventListener("click", () => {
-          const cur = Array.isArray(answers[key]) ? answers[key] : [];
-          const idx = cur.indexOf(label);
-          if (idx >= 0) {
-            cur.splice(idx, 1);
-            optBtn.classList.remove("cockpit-ide-pending-opt-selected");
-          } else {
-            cur.push(label);
-            optBtn.classList.add("cockpit-ide-pending-opt-selected");
-          }
-          answers[key] = cur;
-          onAnswerChange();
-        });
-      } else if (multiBundle) {
-        optBtn.addEventListener("click", () => {
-          answers[key] = label;
-          for (const btn of opts.querySelectorAll(".cockpit-ide-pending-opt")) {
-            btn.classList.toggle("cockpit-ide-pending-opt-selected", btn === optBtn);
-          }
-          onAnswerChange();
-          if (questions.length > 1) {
-            showToast("Selected — tap Submit all answers below.", "info");
-          } else {
-            showToast(`Selected: ${label}`, "info");
-          }
-        });
-      } else {
-        optBtn.addEventListener("click", async () => {
-          optBtn.disabled = true;
-          showToast(`Sending: ${label.length > 48 ? label.slice(0, 45) + "…" : label}`, "info");
-          try {
-            await sendIdeTabMessage(label);
-          } catch (e) {
-            optBtn.disabled = false;
-            reportSendFailure(e);
-          }
-        });
-      }
-      opts.appendChild(optBtn);
-    }
-
-    if ((q.options || []).length > 0) block.appendChild(opts);
-
-    if (questions.length === 1 && q.allowMultiple) {
-      const submitOne = document.createElement("button");
-      submitOne.type = "button";
-      submitOne.className = "cockpit-btn cockpit-btn-primary cockpit-ide-pending-submit-one";
-      submitOne.dataset.questionKey = key;
-      submitOne.textContent = "Submit answer";
-      submitOne.addEventListener("click", async () => {
-        const text = H.formatAnswersForSend(questions, answers);
-        if (!text) return;
-        submitOne.disabled = true;
-        try {
-          await sendIdeTabMessage(text);
-          if (composerId) idePendingAnswerDrafts.delete(composerId);
-        } catch (e) {
-          submitOne.disabled = false;
-          onAnswerChange();
-          reportSendFailure(e);
-        }
-      });
-      block.appendChild(submitOne);
-    }
-
-    body.appendChild(block);
-  }
-
-  if (questions.length > 1) {
-    const submitAll = document.createElement("button");
-    submitAll.type = "button";
-    submitAll.className = "cockpit-btn cockpit-btn-primary cockpit-ide-pending-submit-all";
-    submitAll.textContent = "Submit all answers";
-    submitAll.addEventListener("click", async () => {
-      const text = H.formatAnswersForSend(questions, answers);
-      if (!text) return;
-      submitAll.disabled = true;
-      try {
-        await sendIdeTabMessage(text);
-        if (composerId) idePendingAnswerDrafts.delete(composerId);
-      } catch (e) {
-        submitAll.disabled = false;
-        onAnswerChange();
-        reportSendFailure(e);
+  empty.hidden = true;
+  for (const s of sorted) {
+    const li = document.createElement("li");
+    li.className = "cockpit-session-row";
+    li.dataset.sessionId = s.id || "";
+    li.tabIndex = 0;
+    li.addEventListener("click", () => setView("v2-detail", { sessionId: s.id }));
+    li.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        setView("v2-detail", { sessionId: s.id });
       }
     });
-    body.appendChild(submitAll);
+
+    const title = document.createElement("span");
+    title.className = "cockpit-row-title";
+    title.textContent = (s.parentId ? "↳ " : "") + (s.title || "(untitled)");
+    li.appendChild(title);
+
+    const status = document.createElement("span");
+    status.className = `cockpit-row-status ${statusClass(s.status)}`;
+    status.dataset.status = s.status || "unknown";
+    status.textContent = s.chatId ? (s.status || "unknown") : "provisioning…";
+    li.appendChild(status);
+
+    const time = document.createElement("time");
+    time.className = "cockpit-row-time";
+    if (s.updatedAt) time.dateTime = s.updatedAt;
+    time.textContent = relativeTime(s.updatedAt);
+    li.appendChild(time);
+
+    ul.appendChild(li);
+  }
+}
+
+async function renderV2Detail(sessionId) {
+  clearV2DetailError();
+  activeV2DetailSessionId = sessionId;
+  let record;
+  try {
+    const [{ record: r }] = await Promise.all([loadV2Record(sessionId), loadV2Index()]);
+    record = r;
+  } catch (err) {
+    showV2DetailError(err.message);
+    return;
+  }
+  if (!record) {
+    showV2ListError(`v2 session not found: ${sessionId}`);
+    setView("v2-list");
+    return;
   }
 
-  onAnswerChange();
+  const set = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text == null ? "—" : String(text);
+  };
+  set("v2-detail-title", record.parentId ? `↳ sub-agent (${record.id})` : record.id);
+  set("v2-detail-status", record.status);
+  set("v2-detail-owner", record.owner);
+  set("v2-detail-chat-id", record.chatId || "(provisioning…)");
+
+  const parentRow = document.getElementById("v2-detail-parent-row");
+  const parentLink = document.getElementById("v2-detail-parent-link");
+  if (parentRow && parentLink) {
+    if (record.parentId) {
+      parentRow.hidden = false;
+      parentLink.textContent = record.parentId;
+      parentLink.onclick = (ev) => {
+        ev.preventDefault();
+        setView("v2-detail", { sessionId: record.parentId });
+      };
+    } else {
+      parentRow.hidden = true;
+    }
+  }
+
+  const modelInput = document.getElementById("v2-detail-model-input");
+  if (modelInput) modelInput.value = record.model || "";
+  const modeSelect = document.getElementById("v2-detail-mode-select");
+  if (modeSelect) modeSelect.value = record.mode || "agent";
+
+  const btnStop = document.getElementById("btn-v2-stop");
+  if (btnStop) {
+    const stoppable = record.status === "running";
+    btnStop.hidden = !stoppable;
+    btnStop.onclick = stoppable ? () => handleV2StopClick(record.id) : null;
+  }
+  const btnTakeOver = document.getElementById("btn-v2-take-over");
+  const btnHandBack = document.getElementById("btn-v2-hand-back");
+  if (btnTakeOver && btnHandBack) {
+    const ownedByMe = record.owner === V2_OWN_HOST;
+    btnTakeOver.hidden = ownedByMe;
+    btnTakeOver.onclick = ownedByMe ? null : () => handleV2TakeOverClick(record.id);
+    btnHandBack.hidden = !ownedByMe;
+    btnHandBack.onclick = ownedByMe ? () => handleV2HandBackClick(record.id) : null;
+  }
+
+  renderV2Messages(record);
+  renderV2SubAgents(record.id);
+
+  const btnStartSubAgent = document.getElementById("btn-v2-start-subagent");
+  if (btnStartSubAgent) {
+    btnStartSubAgent.onclick = () => {
+      pendingV2NewPrefill = { parentId: record.id, cwd: record.cwd };
+      setView("v2-new");
+    };
+  }
+
+  syncV2DetailPoll();
+}
+
+function renderV2Messages(record) {
+  const container = document.getElementById("v2-messages");
+  if (!container) return;
+  container.innerHTML = "";
+  const messages = orderMessagesForDisplay(record.messages);
+  for (const raw of messages) {
+    const m = formatSessionMessage(raw);
+    const bubble = document.createElement("div");
+    bubble.className = `v2-message v2-role-${m.role}`;
+    const label = document.createElement("div");
+    label.className = "v2-message-role-label";
+    label.textContent = m.label;
+    bubble.appendChild(label);
+    const text = document.createElement("div");
+    text.className = "v2-message-text";
+    text.textContent = m.text;
+    bubble.appendChild(text);
+    container.appendChild(bubble);
+  }
+  if (messages.length === 0 && !record.streaming) {
+    const empty = document.createElement("div");
+    empty.className = "v2-message v2-role-system";
+    empty.textContent = "No messages yet.";
+    container.appendChild(empty);
+  }
+  // Mobile follow-along: the agent's reply only lands in messages[] once a
+  // turn closes -- this renders whatever text the daemon's v2-action-tick
+  // has flushed so far, refreshed by syncV2DetailPoll while open.
+  if (record.streaming && record.streaming.text) {
+    const bubble = document.createElement("div");
+    bubble.className = "v2-message v2-role-assistant v2-message-streaming";
+    const label = document.createElement("div");
+    label.className = "v2-message-role-label";
+    label.textContent = "Agent (typing…)";
+    bubble.appendChild(label);
+    const text = document.createElement("div");
+    text.className = "v2-message-text";
+    text.textContent = record.streaming.text;
+    bubble.appendChild(text);
+    container.appendChild(bubble);
+  }
+  if (Array.isArray(record.queue) && record.queue.length > 0) {
+    const panel = document.createElement("div");
+    panel.className = "v2-queue-panel";
+    const title = document.createElement("div");
+    title.className = "v2-queue-title";
+    title.textContent = `Queued (${record.queue.length})`;
+    panel.appendChild(title);
+    for (const item of record.queue) {
+      const row = document.createElement("div");
+      row.className = "v2-queue-item";
+      row.textContent = item.text;
+      panel.appendChild(row);
+    }
+    container.appendChild(panel);
+  }
+}
+
+/** Sub-agent wiring (2026-09-24): children are just ordinary v2 sessions
+ *  tagged with parentId -- derived here from the light index, not stored
+ *  as a childIds[] on the parent (nothing to keep in sync). */
+function renderV2SubAgents(parentId) {
+  const section = document.getElementById("v2-subagents-list");
+  if (!section) return;
+  section.innerHTML = "";
+  const all = (cachedV2Index && cachedV2Index.sessions) || [];
+  const children = all.filter((s) => s && s.parentId === parentId);
+  for (const child of children) {
+    const li = document.createElement("li");
+    li.className = "cockpit-session-row";
+    li.tabIndex = 0;
+    li.addEventListener("click", () => setView("v2-detail", { sessionId: child.id }));
+    const title = document.createElement("span");
+    title.className = "cockpit-row-title";
+    title.textContent = child.title || "(untitled)";
+    li.appendChild(title);
+    const status = document.createElement("span");
+    status.className = `cockpit-row-status ${statusClass(child.status)}`;
+    status.textContent = child.status || "unknown";
+    li.appendChild(status);
+    section.appendChild(li);
+  }
+  const empty = document.getElementById("v2-subagents-empty");
+  if (empty) empty.hidden = children.length > 0;
+}
+
+function renderV2New() {
+  clearV2NewError();
+  const idInput = document.getElementById("v2-new-id");
+  const cwdSelect = document.getElementById("v2-new-cwd");
+  const modelInput = document.getElementById("v2-new-model");
+  const modeSelect = document.getElementById("v2-new-mode");
+  const messageInput = document.getElementById("v2-new-message");
+  const parentNote = document.getElementById("v2-new-parent-note");
+  const form = document.getElementById("v2-new-session-form");
+
+  if (idInput) idInput.value = `mcv2-${Date.now().toString(36)}`;
+  if (modelInput) modelInput.value = "";
+  if (modeSelect) modeSelect.value = "agent";
+  if (messageInput) messageInput.value = "";
+  populateV2CwdSelect();
+
+  const prefill = pendingV2NewPrefill;
+  pendingV2NewPrefill = null;
+  if (form) form.dataset.parentId = (prefill && prefill.parentId) || "";
+  if (parentNote) {
+    if (prefill && prefill.parentId) {
+      parentNote.hidden = false;
+      parentNote.textContent = `Starting as a sub-agent of ${prefill.parentId}.`;
+    } else {
+      parentNote.hidden = true;
+    }
+  }
+  if (cwdSelect && prefill && prefill.cwd) cwdSelect.value = prefill.cwd;
+}
+
+function populateV2CwdSelect() {
+  const select = document.getElementById("v2-new-cwd");
+  if (!select) return;
+  const allowed = (CONFIG.session && CONFIG.session.allowedCwds) || [];
+  select.innerHTML = "";
+  const defaultOpt = document.createElement("option");
+  defaultOpt.value = "";
+  defaultOpt.textContent = "(daemon default)";
+  defaultOpt.selected = true;
+  select.appendChild(defaultOpt);
+  for (const cwd of allowed) {
+    const opt = document.createElement("option");
+    opt.value = cwd;
+    opt.textContent = cwd;
+    select.appendChild(opt);
+  }
 }
 
 // =============================================================================
@@ -1743,6 +1824,51 @@ function syncRunningDetailPoll() {
   }, intervalMs);
 }
 
+function stopV2DetailPoll() {
+  if (v2DetailTimerId !== null) {
+    clearInterval(v2DetailTimerId);
+    v2DetailTimerId = null;
+  }
+}
+
+/** Mirrors syncRunningDetailPoll, but v2's "is anything about to change?"
+ *  is broader than v1's status==="running": also true while a chatId is
+ *  still being provisioned (AC-001) or a queued message hasn't started
+ *  yet, so the phone notices both promptly. */
+function syncV2DetailPoll() {
+  stopV2DetailPoll();
+  if (document.body.dataset.view !== "v2-detail" || !activeV2DetailSessionId) return;
+  const sec = (CONFIG.pwa && CONFIG.pwa.runningPollIntervalSeconds) || 5;
+  const intervalMs = Math.max(3, sec | 0) * 1000;
+  v2DetailTimerId = setInterval(() => {
+    if (document.body.dataset.view !== "v2-detail" || !activeV2DetailSessionId) return;
+    const id = activeV2DetailSessionId;
+    Promise.all([loadV2Record(id), loadV2Index()])
+      .then(([{ record }]) => {
+        if (!record) return; // deleted elsewhere -- next manual nav will bounce to the list
+        renderV2Messages(record);
+        renderV2SubAgents(id);
+        const set = (elId, text) => {
+          const el = document.getElementById(elId);
+          if (el) el.textContent = text == null ? "—" : String(text);
+        };
+        set("v2-detail-status", record.status);
+        set("v2-detail-owner", record.owner);
+        set("v2-detail-chat-id", record.chatId || "(provisioning…)");
+        const btnStop = document.getElementById("btn-v2-stop");
+        if (btnStop) {
+          const stoppable = record.status === "running";
+          btnStop.hidden = !stoppable;
+          btnStop.onclick = stoppable ? () => handleV2StopClick(id) : null;
+        }
+        const stillChanging =
+          record.status === "running" || !record.chatId || (Array.isArray(record.queue) && record.queue.length > 0);
+        if (!stillChanging) stopV2DetailPoll();
+      })
+      .catch((err) => showV2DetailError(err.message));
+  }, intervalMs);
+}
+
 function startAutoRefresh() {
   if (refreshTimerId === null) {
     const intervalMs = Math.max(5, (CONFIG.pwa.pollIntervalSeconds | 0)) * 1000;
@@ -1777,6 +1903,17 @@ function startAutoRefresh() {
           .catch((err) => showIdeDetailError(err.message));
       }
     }, ideIntervalMs);
+  }
+  // Independent timer for the v2 session list (mobile follow-along,
+  // 2026-09-24) -- same cadence as v1's list poll, separate handle so
+  // switching modes never starts/stops the wrong one.
+  if (v2RefreshTimerId === null) {
+    const v2IntervalMs = Math.max(5, (CONFIG.pwa.pollIntervalSeconds | 0)) * 1000;
+    v2RefreshTimerId = setInterval(() => {
+      if (document.body.dataset.view === "v2-list") {
+        renderV2List().catch((err) => showV2ListError(err.message));
+      }
+    }, v2IntervalMs);
   }
 }
 
@@ -1858,650 +1995,118 @@ async function handleFollowUpSubmit(ev) {
   }
 }
 
-// =============================================================================
-// 7b. M2.2.3 write-back: actions file I/O + toast + modal renderers
-// =============================================================================
-//
-// Shape (mirrors lib/config.mjs + extension/src/lib/types.ts):
-//   - GET  cursor-cockpit/ide-actions.json         (action queue)
-//   - PUT  cursor-cockpit/ide-actions.json         (append a new action)
-//   - GET  cursor-cockpit/ide-actions-results.json (poll for the result)
-//
-// The PWA is the only writer for ide-actions.json (single-writer); the
-// extension is the only writer for ide-actions-results.json. Therefore
-// we DO NOT need optimistic-concurrency ETag handshakes here — the
-// flows are append-only on a single writer per file. Compare with
-// state.json (multi-writer between PWA + daemon) which keeps the
-// If-Match dance.
-//
-// Result polling: after a successful PUT, we kick off a short polling
-// loop that GET-fetches ide-actions-results.json every
-// CONFIG.ideActions.resultPollIntervalSeconds until the matching
-// actionId appears or CONFIG.ideActions.resultTimeoutSeconds elapses.
-// The current toast reflects the outcome (in_progress → done → success
-// toast; error → error toast).
-
-/**
- * Load ide-actions.json from OneDrive. Returns a normalized object
- * (`{ schemaVersion, snapshotAt, actions }`) — on 404 we synthesize an
- * empty stub so the very first PUT can seed the file.
- */
-async function loadIdeActionsFile() {
-  const endpoint = CONFIG && CONFIG.ideActions && CONFIG.ideActions.endpoint;
-  if (!endpoint) {
-    throw new Error("config.ideActions.endpoint missing -- update pwa/config.json");
-  }
-  const res = await graphFetch(`${endpoint}:/content`);
-  if (res.status === 404) {
-    return { schemaVersion: 1, snapshotAt: null, actions: [] };
-  }
-  if (!res.ok) {
-    throw new Error(`ide-actions.json GET failed: ${res.status} ${res.statusText}`);
-  }
-  return await res.json();
-}
-
-/**
- * PUT a fresh ide-actions.json. The action file is single-writer (PWA
- * only), so no If-Match handshake. On any non-2xx response the caller
- * surfaces an error toast.
- */
-async function putIdeActionsFile(nextFile) {
-  const endpoint = CONFIG && CONFIG.ideActions && CONFIG.ideActions.endpoint;
-  if (!endpoint) {
-    throw new Error("config.ideActions.endpoint missing -- update pwa/config.json");
-  }
-  const res = await graphFetch(`${endpoint}:/content`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(nextFile),
-  });
-  if (!res.ok) {
-    throw new Error(`ide-actions.json PUT failed: ${res.status} ${res.statusText}`);
-  }
-}
-
-/**
- * GET ide-actions-results.json. Returns null on 404 (extension never
- * wrote a result yet); otherwise returns the parsed file.
- */
-async function loadIdeActionsResultsFile() {
-  const endpoint = CONFIG && CONFIG.ideActions && CONFIG.ideActions.resultsEndpoint;
-  if (!endpoint) return null;
-  const res = await graphFetch(`${endpoint}:/content`);
-  if (res.status === 404) return null;
-  if (!res.ok) {
-    throw new Error(`ide-actions-results.json GET failed: ${res.status} ${res.statusText}`);
-  }
-  return await res.json();
-}
-
-/**
- * Serialize ide-actions.json mutations (append / remove / patch) so rapid
- * mobile taps cannot interleave GET+PUT and drop actions.
- */
-async function enqueueIdeActionPut(mutatorFn) {
-  const run = async () => {
-    const prev = await loadIdeActionsFile();
-    const next = mutatorFn(prev);
-    await putIdeActionsFile(next);
-    return next;
-  };
-  const p = ideActionPutChain.then(run, run);
-  ideActionPutChain = p.catch((e) => console.warn("ideActionPut chain:", e));
-  return p;
-}
-
-function setComposeSubmitting(busy) {
-  composeSubmitting = !!busy;
-  const status = document.getElementById("ide-detail-compose-status");
-  const ta = document.getElementById("ide-detail-compose-text");
-  if (status) {
-    if (busy) {
-      status.textContent = "Uploading to OneDrive…";
-      status.hidden = false;
-      status.dataset.busy = "true";
-    } else {
-      status.textContent = "";
-      status.hidden = true;
-      status.dataset.busy = "false";
-    }
-  }
-  if (ta) ta.disabled = busy;
-  syncComposeButtonsDisabled();
-}
-
-function syncComposeButtonsDisabled() {
-  const ta = document.getElementById("ide-detail-compose-text");
-  const btnQueue = document.getElementById("btn-ide-send-queue");
-  const btnInterrupt = document.getElementById("btn-ide-send-interrupt");
-  const btnStop = document.getElementById("btn-ide-stop-agent");
-  const max = IDE_ACTION_HELPERS ? IDE_ACTION_HELPERS.MAX_TEXT_LEN : 20000;
-  const len = ta ? ta.value.length : 0;
-  const textOk = len > 0 && len <= max;
-  const busy = composeSubmitting;
-  const hasTab = !!activeIdeTabComposerId;
-  if (btnQueue) btnQueue.disabled = busy || !textOk || !hasTab;
-  if (btnInterrupt) btnInterrupt.disabled = busy || !textOk || !hasTab;
-  if (btnStop) btnStop.disabled = busy || !hasTab;
-}
-
-function truncateOutboundPreview(text, maxLen = 120) {
-  const t = String(text || "").trim();
-  if (t.length <= maxLen) return t;
-  return `${t.slice(0, maxLen)}…`;
-}
-
-function outboundPhaseLabel(phase, action) {
-  if (phase === "sending") return "Uploading";
-  if (phase === "delivering") return "Delivering";
-  if (action && action.sendMode === "interrupt") return "Queued (interrupt)";
-  return "Queued";
-}
-
-async function cancelOutboundAction(actionId) {
-  try {
-    await enqueueIdeActionPut((prev) =>
-      IDE_ACTION_HELPERS.removeActionById(prev, actionId, Date.now()),
-    );
-    trackedOutboundActionIds.delete(actionId);
-    showToast("Removed from queue.", "info");
-    await refreshOutboundQueueUi();
-  } catch (e) {
-    showToast(`Cancel failed: ${e.message}`, "error");
-  }
-}
-
-async function promoteOutboundToInterrupt(actionId) {
-  try {
-    await enqueueIdeActionPut((prev) =>
-      IDE_ACTION_HELPERS.patchActionById(prev, actionId, { sendMode: "interrupt" }, Date.now()),
-    );
-    showToast("Marked for interrupt delivery.", "info");
-    await refreshOutboundQueueUi();
-  } catch (e) {
-    showToast(`Interrupt upgrade failed: ${e.message}`, "error");
-  }
-}
-
-async function refreshOutboundQueueUi() {
-  const section = document.getElementById("ide-detail-outbound");
-  const list = document.getElementById("ide-detail-outbound-list");
-  if (!section || !list || !activeIdeTabComposerId || !IDE_ACTION_HELPERS) return;
-
-  let actionFile = null;
-  let resultsFile = null;
-  try {
-    [actionFile, resultsFile] = await Promise.all([
-      loadIdeActionsFile(),
-      loadIdeActionsResultsFile(),
-    ]);
-  } catch (e) {
-    console.warn("outbound queue refresh failed:", e);
-    return;
-  }
-
-  const outstanding = IDE_ACTION_HELPERS.listOutstandingForTab(
-    actionFile,
-    resultsFile,
-    activeIdeTabComposerId,
-  );
-
-  list.innerHTML = "";
-  const showSection = outstanding.length > 0 || composeSubmitting;
-  section.hidden = !showSection;
-
-  if (composeSubmitting) {
-    const li = document.createElement("li");
-    li.className = "cockpit-outbound-item";
-    li.dataset.phase = "sending";
-    const meta = document.createElement("div");
-    meta.className = "cockpit-outbound-meta";
-    const badge = document.createElement("span");
-    badge.className = "cockpit-outbound-badge";
-    badge.dataset.phase = "sending";
-    badge.textContent = "Uploading";
-    meta.appendChild(badge);
-    const where = document.createElement("span");
-    where.textContent = "OneDrive";
-    meta.appendChild(where);
-    li.appendChild(meta);
-    const text = document.createElement("p");
-    text.className = "cockpit-outbound-text";
-    text.textContent = "Uploading command…";
-    li.appendChild(text);
-    list.appendChild(li);
-  }
-
-  for (const { action, result, phase } of outstanding) {
-    const li = document.createElement("li");
-    li.className = "cockpit-outbound-item";
-    li.dataset.phase = phase;
-    li.dataset.actionId = action.actionId;
-
-    const meta = document.createElement("div");
-    meta.className = "cockpit-outbound-meta";
-    const badge = document.createElement("span");
-    badge.className = "cockpit-outbound-badge";
-    badge.dataset.phase = phase;
-    badge.textContent = outboundPhaseLabel(phase, action);
-    meta.appendChild(badge);
-    const kind = document.createElement("span");
-    kind.textContent = humanizeKind(action.kind);
-    meta.appendChild(kind);
-    li.appendChild(meta);
-
-    const text = document.createElement("p");
-    text.className = "cockpit-outbound-text";
-    if (action.kind === "send_message") {
-      text.textContent = truncateOutboundPreview(action.text);
-    } else if (action.kind === "stop_agent") {
-      text.textContent = "(stop agent)";
-    } else {
-      text.textContent = action.kind;
-    }
-    li.appendChild(text);
-
-    if (!result && phase === "queued") {
-      const actions = document.createElement("div");
-      actions.className = "cockpit-outbound-actions";
-
-      const btnCancel = document.createElement("button");
-      btnCancel.type = "button";
-      btnCancel.className = "cockpit-btn";
-      btnCancel.textContent = "Remove";
-      btnCancel.addEventListener("click", () => cancelOutboundAction(action.actionId));
-      actions.appendChild(btnCancel);
-
-      if (action.kind === "send_message" && action.sendMode !== "interrupt") {
-        const btnPromote = document.createElement("button");
-        btnPromote.type = "button";
-        btnPromote.className = "cockpit-btn cockpit-btn-warn";
-        btnPromote.textContent = "Send now";
-        btnPromote.addEventListener("click", () => promoteOutboundToInterrupt(action.actionId));
-        actions.appendChild(btnPromote);
-      }
-
-      li.appendChild(actions);
-    }
-
-    list.appendChild(li);
-  }
-}
-
-function startOutboundQueuePoll() {
-  stopOutboundQueuePoll();
-  const sec =
-    (CONFIG.ideActions && CONFIG.ideActions.resultPollIntervalSeconds) || 5;
-  const intervalMs = Math.max(3, sec | 0) * 1000;
-  outboundPollTimerId = setInterval(() => {
-    if (document.body.dataset.view !== "ide-tab-detail") return;
-    refreshOutboundQueueUi().catch((e) => console.warn("outbound poll:", e));
-  }, intervalMs);
-}
-
-function stopOutboundQueuePoll() {
-  if (outboundPollTimerId !== null) {
-    clearInterval(outboundPollTimerId);
-    outboundPollTimerId = null;
-  }
-}
-
-/**
- * Submit an action: append + PUT (serialized). Success means the command
- * reached OneDrive — extension delivery is tracked via outbound queue + poll.
- */
-async function submitIdeAction(action) {
-  if (!IDE_ACTION_HELPERS) {
-    throw new Error("ide-actions-helpers not loaded yet (bootstrap order bug)");
-  }
-  const label = humanizeKind(action.kind);
-  showToast(`Uploading ${label.toLowerCase()}…`, "info");
-  try {
-    await enqueueIdeActionPut((prev) =>
-      IDE_ACTION_HELPERS.mergeAppendAction(prev, action, Date.now()),
-    );
-    showToast(
-      `${label} uploaded — waiting for Cursor on your laptop…`,
-      "info",
-    );
-  } catch (err) {
-    showToast(`${label} upload failed: ${err.message}`, "error");
-    throw err;
-  }
-  trackedOutboundActionIds.add(action.actionId);
-  ideActionInFlight = true;
-  refreshOutboundQueueUi().catch((e) => console.warn("outbound queue:", e));
-  pollIdeActionResult(action)
-    .catch((pollErr) => {
-      showToast(
-        `${label} (${action.actionId.slice(0, 8)}) result poll failed: ${pollErr.message}`,
-        "error",
-      );
-    })
-    .finally(() => {
-      trackedOutboundActionIds.delete(action.actionId);
-      ideActionInFlight = false;
-      refreshOutboundQueueUi().catch((e) => console.warn("outbound queue:", e));
-    });
-}
-
-/**
- * Poll ide-actions-results.json until a result for `action.actionId`
- * shows up OR the configured timeout elapses. Surfaces a toast on
- * terminal states (`done`, `error`, `skipped`). Pure infinite loops are
- * avoided via the timeout guard.
- */
-async function pollIdeActionResult(action) {
-  const intervalMs = Math.max(1, (CONFIG.ideActions.resultPollIntervalSeconds | 0)) * 1000;
-  const timeoutMs = Math.max(5, (CONFIG.ideActions.resultTimeoutSeconds | 0)) * 1000;
-  const startedAt = Date.now();
-  const label = humanizeKind(action.kind);
-  while (Date.now() - startedAt < timeoutMs) {
-    await new Promise((r) => setTimeout(r, intervalMs));
-    let file;
-    try {
-      file = await loadIdeActionsResultsFile();
-    } catch (err) {
-      // Network blip — keep trying; final timeout still applies.
-      continue;
-    }
-    const entry = IDE_ACTION_HELPERS.findResultForAction(file, action.actionId);
-    if (!entry) continue;
-    if (entry.status === "in_progress") {
-      // Extension picked it up but hasn't finished — keep polling.
-      continue;
-    }
-    if (entry.status === "done") {
-      showToast(`${label} done.`, "success");
-      // Trigger a fresh IDE-tabs render so the user sees the new tab /
-      // closed tab. The detail view also auto-refreshes via the IDE
-      // refresh timer; we just give it a head start.
-      // Best-effort head-start refresh. The auto-refresh timer will
-      // retry on its next tick if either path fails; we log to console
-      // instead of toasting so a transient blip doesn't compete with
-      // the just-shown success banner.
-      loadIdeTabs().then(() => {
-        if (document.body.dataset.view === "ide-tabs") {
-          renderIdeTabsList().catch((e) => console.warn("post-action ide-tabs render failed:", e));
-        }
-      }).catch((e) => console.warn("post-action ide-tabs reload failed:", e));
-      return;
-    }
-    if (entry.status === "error") {
-      showToast(`${label} failed: ${entry.error || "unknown"}`, "error");
-      return;
-    }
-    if (entry.status === "skipped") {
-      showToast(`${label} skipped: ${entry.error || "no reason"}`, "info");
-      return;
-    }
-  }
-  showToast(
-    `${label} timed out — is Cursor open with the mobile-cockpit extension enabled?`,
-    "error",
-  );
-}
-
-function humanizeKind(kind) {
-  switch (kind) {
-    case "send_message": return "Send message";
-    case "new_agent":    return "New agent";
-    case "close_tab":    return "Close tab";
-    case "stop_agent":   return "Stop agent";
-    default:             return kind;
-  }
-}
-
-/**
- * Append a toast banner to the bottom-center stack; auto-dismiss after
- * ~5 s. `kind` ∈ {"info", "success", "error"} — styled via CSS.
- */
-function showToast(message, kind) {
-  const container = document.getElementById("cockpit-toast-container");
-  if (!container) return;
-  const el = document.createElement("div");
-  el.className = "cockpit-toast";
-  el.dataset.kind = kind || "info";
-  el.textContent = message;
-  container.appendChild(el);
-  setTimeout(() => {
-    el.style.transition = "opacity 200ms ease-out";
-    el.style.opacity = "0";
-    setTimeout(() => el.remove(), 250);
-  }, 5000);
-}
-
 // -----------------------------------------------------------------------------
-// Compose UI (per-tab Send) — wired by renderIdeTabDetail()
+// v2 UI handlers (mobile follow-along, 2026-09-24)
 // -----------------------------------------------------------------------------
 
-function saveComposeDraft(composerId, text) {
-  if (!COMPOSE_DRAFT_HELPERS || !COMPOSE_DRAFT_HELPERS.isValidComposeDraftKey(composerId)) {
-    return;
-  }
-  const t = typeof text === "string" ? text : "";
-  if (t.length > 0) ideComposeDrafts.set(composerId, t);
-  else ideComposeDrafts.delete(composerId);
-}
-
-function applyComposeUiFromText(text) {
-  const ta = document.getElementById("ide-detail-compose-text");
-  const counter = document.getElementById("ide-detail-compose-counter");
-  const max = IDE_ACTION_HELPERS ? IDE_ACTION_HELPERS.MAX_TEXT_LEN : 20000;
-  const safe = typeof text === "string" ? text : "";
-  const state = COMPOSE_DRAFT_HELPERS
-    ? COMPOSE_DRAFT_HELPERS.composeUiStateFromText(safe, max)
-    : {
-        counterText: `${safe.length} / ${max}`,
-        over: safe.length > max,
-        sendDisabled: safe.length === 0 || safe.length > max,
-      };
-  if (ta) ta.value = safe;
-  if (counter) {
-    counter.textContent = state.counterText;
-    counter.dataset.over = state.over ? "true" : "false";
-  }
-  syncComposeButtonsDisabled();
-}
-
-function resetComposeUi({ clearDraft = false, composerId = null } = {}) {
-  if (
-    clearDraft &&
-    composerId &&
-    COMPOSE_DRAFT_HELPERS &&
-    COMPOSE_DRAFT_HELPERS.isValidComposeDraftKey(composerId)
-  ) {
-    ideComposeDrafts.delete(composerId);
-  }
-  applyComposeUiFromText("");
-  const err = document.getElementById("ide-detail-compose-error");
-  if (err) err.hidden = true;
-}
-
-function wireComposeUi() {
-  const ta = document.getElementById("ide-detail-compose-text");
-  const btnQueue = document.getElementById("btn-ide-send-queue");
-  const btnInterrupt = document.getElementById("btn-ide-send-interrupt");
-  const btnStop = document.getElementById("btn-ide-stop-agent");
-  const counter = document.getElementById("ide-detail-compose-counter");
-  if (!ta || !btnQueue || !btnInterrupt || !counter) return;
-  const max = IDE_ACTION_HELPERS ? IDE_ACTION_HELPERS.MAX_TEXT_LEN : 20000;
-  ta.addEventListener("input", () => {
-    const len = ta.value.length;
-    counter.textContent = `${len} / ${max}`;
-    counter.dataset.over = len > max ? "true" : "false";
-    syncComposeButtonsDisabled();
-    if (activeIdeTabComposerId) saveComposeDraft(activeIdeTabComposerId, ta.value);
-  });
-  ta.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter" && !ev.shiftKey) {
-      ev.preventDefault();
-      if (!btnQueue.disabled) handleSendQueueClick();
-    }
-  });
-  btnQueue.addEventListener("click", () => handleSendQueueClick());
-  btnInterrupt.addEventListener("click", () => handleSendInterruptClick());
-  if (btnStop) btnStop.addEventListener("click", () => handleStopAgentClick());
-}
-
-async function handleSendQueueClick() {
-  const ta = document.getElementById("ide-detail-compose-text");
-  const btnQueue = document.getElementById("btn-ide-send-queue");
-  if (!ta || !btnQueue || btnQueue.disabled) return;
-  try {
-    await sendIdeTabMessage(ta.value, "queue");
-  } catch (e) {
-    reportSendFailure(e);
-  }
-}
-
-async function handleSendInterruptClick() {
-  const ta = document.getElementById("ide-detail-compose-text");
-  const btnInterrupt = document.getElementById("btn-ide-send-interrupt");
-  if (!ta || !btnInterrupt || btnInterrupt.disabled) return;
-  try {
-    await sendIdeTabMessage(ta.value, "interrupt");
-  } catch (e) {
-    reportSendFailure(e);
-  }
-}
-
-async function handleStopAgentClick() {
-  const btnStop = document.getElementById("btn-ide-stop-agent");
-  if (!activeIdeTabComposerId || !IDE_ACTION_HELPERS || (btnStop && btnStop.disabled)) {
-    return;
-  }
-  const action = IDE_ACTION_HELPERS.buildStopAgentAction({
-    tabId: activeIdeTabComposerId,
-    now: Date.now(),
-    rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
-  });
-  const allowedCwds = (CONFIG.session && CONFIG.session.allowedCwds) || [];
-  const validation = IDE_ACTION_HELPERS.validateActionInputs(action, allowedCwds);
-  if (!validation.valid) {
-    showToast(validation.errors.join("; "), "error");
-    return;
-  }
-  setComposeSubmitting(true);
-  refreshOutboundQueueUi().catch((e) => console.warn("outbound queue:", e));
-  try {
-    await submitIdeAction(action);
-    showToast("Stop agent requested.", "info");
-  } catch (e) {
-    showToast(`Stop failed: ${e.message}`, "error");
-  } finally {
-    setComposeSubmitting(false);
-    refreshOutboundQueueUi().catch((e) => console.warn("outbound queue:", e));
-  }
-}
-
-// -----------------------------------------------------------------------------
-// New-agent modal — toolbar button → modal → action
-// -----------------------------------------------------------------------------
-
-function renderNewAgentModal() {
-  // Populate the workspace dropdown from CONFIG.session.allowedCwds.
-  const select = document.getElementById("new-agent-workspace");
-  const ta = document.getElementById("new-agent-text");
-  const err = document.getElementById("new-agent-error");
-  if (!select) return;
-  const allowed = (CONFIG.session && CONFIG.session.allowedCwds) || [];
-  select.innerHTML = "";
-  // Pre-select the current IDE workspace if it's in the allow-list — that
-  // matches the user's mental model ("open another agent in this project").
-  const current = (cachedIdeSnapshot && cachedIdeSnapshot.workspacePath) || null;
-  for (const cwd of allowed) {
-    const opt = document.createElement("option");
-    opt.value = cwd;
-    opt.textContent = cwd;
-    if (cwd === current) opt.selected = true;
-    select.appendChild(opt);
-  }
-  if (ta) ta.value = "";
-  if (err) err.hidden = true;
-}
-
-async function handleNewAgentSubmit(ev) {
+async function handleV2NewSubmit(ev) {
   ev.preventDefault();
-  const select = document.getElementById("new-agent-workspace");
-  const ta = document.getElementById("new-agent-text");
-  const err = document.getElementById("new-agent-error");
-  const btn = document.getElementById("btn-new-agent-create");
-  if (!select || !ta) return;
-  if (!IDE_ACTION_HELPERS) {
-    if (err) { err.textContent = "Action helpers not loaded."; err.hidden = false; }
+  clearV2NewError();
+  const idEl = document.getElementById("v2-new-id");
+  const cwdEl = document.getElementById("v2-new-cwd");
+  const modelEl = document.getElementById("v2-new-model");
+  const modeEl = document.getElementById("v2-new-mode");
+  const messageEl = document.getElementById("v2-new-message");
+  const form = document.getElementById("v2-new-session-form");
+  const submitBtn = document.getElementById("btn-v2-new-submit");
+  const id = idEl ? idEl.value.trim() : "";
+  if (!id) {
+    showV2NewError("Session id is required");
     return;
   }
-  const workspace = select.value;
-  const text = (ta.value || "").trim();
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    const record = await v2CreateSession({
+      id,
+      cwd: cwdEl ? cwdEl.value : "",
+      model: modelEl ? modelEl.value.trim() : "",
+      mode: modeEl ? modeEl.value : "",
+      parentId: (form && form.dataset.parentId) || null,
+      firstMessage: messageEl ? messageEl.value : "",
+    });
+    setView("v2-detail", { sessionId: record.id });
+  } catch (err) {
+    showV2NewError(err.message);
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+async function handleV2ComposerSend() {
+  const modeEl = document.getElementById("v2-composer-mode");
+  const textEl = document.getElementById("v2-composer-text");
+  const btn = document.getElementById("btn-v2-composer-send");
+  const id = activeV2DetailSessionId;
+  if (!id || !textEl) return;
+  const text = textEl.value.trim();
+  if (!text) return;
   if (btn) btn.disabled = true;
   try {
-    const action = IDE_ACTION_HELPERS.buildNewAgentAction({
-      workspace,
-      text: text || null,
-      now: Date.now(),
-      rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
-    });
-    const allowedCwds = (CONFIG.session && CONFIG.session.allowedCwds) || [];
-    const validation = IDE_ACTION_HELPERS.validateActionInputs(action, allowedCwds);
-    if (!validation.valid) {
-      const msg = validation.errors.join("; ");
-      if (err) { err.textContent = msg; err.hidden = false; }
-      showToast(msg, "error");
-      return;
+    if (modeEl && modeEl.value === "force") {
+      await v2RequestForce(id, text);
+    } else {
+      await v2EnqueueMessage(id, text);
     }
-    if (err) err.hidden = true;
-    await submitIdeAction(action);
-    setView("ide-tabs");
-  } catch (e) {
-    const msg = e && e.message ? e.message : String(e);
-    if (err) { err.textContent = msg; err.hidden = false; }
-    showToast(msg, "error");
+    textEl.value = "";
+    await renderV2Detail(id);
+  } catch (err) {
+    showV2DetailError(err.message);
   } finally {
     if (btn) btn.disabled = false;
   }
 }
 
-// -----------------------------------------------------------------------------
-// Close-tab confirmation modal — wired on render so the payload is fresh
-// -----------------------------------------------------------------------------
-
-function renderCloseConfirmModal(composerId, title) {
-  const titleEl = document.getElementById("close-confirm-title-name");
-  const idEl = document.getElementById("close-confirm-tab-id");
-  const btnConfirm = document.getElementById("btn-close-confirm");
-  if (titleEl) titleEl.textContent = title || "(untitled)";
-  if (idEl) idEl.textContent = composerId || "—";
-  if (btnConfirm) {
-    btnConfirm.onclick = () => handleCloseTabConfirm(composerId);
+async function handleV2StopClick(id) {
+  clearV2DetailError();
+  try {
+    await v2RequestStop(id);
+    await renderV2Detail(id);
+  } catch (err) {
+    showV2DetailError(err.message);
   }
 }
 
-async function handleCloseTabConfirm(composerId) {
-  if (!IDE_ACTION_HELPERS) {
-    showToast("Action helpers not loaded.", "error");
-    return;
-  }
-  const action = IDE_ACTION_HELPERS.buildCloseTabAction({
-    tabId: composerId,
-    now: Date.now(),
-    rngFn: WRITE_HELPERS && WRITE_HELPERS.cryptoRandomBytes,
-  });
-  const allowedCwds = (CONFIG.session && CONFIG.session.allowedCwds) || [];
-  const validation = IDE_ACTION_HELPERS.validateActionInputs(action, allowedCwds);
-  if (!validation.valid) {
-    showToast(`Close-tab validation failed: ${validation.errors.join("; ")}`, "error");
-    return;
-  }
+async function handleV2TakeOverClick(id) {
+  clearV2DetailError();
   try {
-    await submitIdeAction(action);
-    // Pop the user back to the IDE-tabs list — the detail view will be
-    // dead once the extension confirms the close anyway, and showing
-    // an empty thread is worse than dropping to the list.
-    setView("ide-tabs");
-  } catch (e) {
-    showToast(`Close-tab failed: ${e.message}`, "error");
+    await v2TakeOverLease(id);
+    await renderV2Detail(id);
+  } catch (err) {
+    showV2DetailError(err.message);
+  }
+}
+
+async function handleV2HandBackClick(id) {
+  clearV2DetailError();
+  try {
+    await v2HandBackLease(id);
+    await renderV2Detail(id);
+  } catch (err) {
+    showV2DetailError(err.message);
+  }
+}
+
+async function handleV2ModelChange() {
+  const id = activeV2DetailSessionId;
+  const modelInput = document.getElementById("v2-detail-model-input");
+  if (!id || !modelInput) return;
+  const model = modelInput.value.trim();
+  if (!model) return;
+  try {
+    await v2SetModel(id, model);
+  } catch (err) {
+    showV2DetailError(err.message);
+  }
+}
+
+async function handleV2ModeChange() {
+  const id = activeV2DetailSessionId;
+  const modeSelect = document.getElementById("v2-detail-mode-select");
+  if (!id || !modeSelect) return;
+  try {
+    await v2SetMode(id, modeSelect.value);
+  } catch (err) {
+    showV2DetailError(err.message);
   }
 }
 
@@ -2534,20 +2139,12 @@ async function bootstrap() {
   // ide-helpers module is sibling; both are loaded in parallel because
   // they have no inter-dependency.
   try {
-    [
-      WRITE_HELPERS,
-      IDE_HELPERS,
-      IDE_ACTION_HELPERS,
-      REFRESH_HELPERS,
-      COMPOSE_DRAFT_HELPERS,
-      PENDING_QUESTION_HELPERS,
-    ] = await Promise.all([
-      import("./write-helpers.mjs?v=a8bd968"),
-      import("./ide-helpers.mjs?v=a8bd968"),
-      import("./ide-actions-helpers.mjs?v=a8bd968"),
+    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS] = await Promise.all([
+      import("./write-helpers.mjs?v=ed90a82"),
+      import("./ide-helpers.mjs?v=ed90a82"),
       import("./refresh-helpers.mjs"),
-      import("./compose-draft.mjs"),
-      import("./pending-question.mjs"),
+      import("./transcript-model.mjs"),
+      import("./scrollback-helpers.mjs"),
     ]);
   } catch (err) {
     setStatusBadge(`helpers import error: ${err.message}`, "error");
@@ -2633,26 +2230,52 @@ async function bootstrap() {
   }
   syncIdeListModeToggle();
 
-  // M2.2.3 wireup: + New agent toolbar button, compose textarea + Send,
-  // close-confirm modal cancel buttons, new-agent modal form + cancels.
-  const btnNewAgent = document.getElementById("btn-ide-new-agent");
-  if (btnNewAgent) {
-    btnNewAgent.addEventListener("click", () => setView("new-agent"));
+  // v2 (chat-model) button wiring (mobile follow-along, 2026-09-24). Back
+  // buttons + the mode-toggle pill are already generic (data-target-view),
+  // handled by the loops above.
+  const btnV2Refresh = document.getElementById("btn-v2-refresh");
+  if (btnV2Refresh) {
+    btnV2Refresh.addEventListener("click", () => {
+      renderV2List().catch((err) => showV2ListError(err.message));
+    });
   }
-  wireComposeUi();
-  const newAgentForm = document.getElementById("form-new-agent");
-  if (newAgentForm) newAgentForm.addEventListener("submit", handleNewAgentSubmit);
-  for (const id of ["btn-new-agent-cancel", "btn-new-agent-cancel-bottom"]) {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener("click", () => setView("ide-tabs"));
+  const btnV2DetailRefresh = document.getElementById("btn-v2-detail-refresh");
+  if (btnV2DetailRefresh) {
+    btnV2DetailRefresh.addEventListener("click", () => {
+      if (activeV2DetailSessionId) {
+        renderV2Detail(activeV2DetailSessionId).catch((err) => showV2DetailError(err.message));
+      }
+    });
   }
-  const btnCloseCancel = document.getElementById("btn-close-cancel");
-  if (btnCloseCancel) btnCloseCancel.addEventListener("click", () => {
-    // Modal overlays the detail view; restore the detail without losing
-    // scroll position by simply hiding the modal and re-showing the
-    // existing detail view.
-    setView("ide-tab-detail", { composerId: activeIdeTabComposerId });
-  });
+  const btnV2NewSession = document.getElementById("btn-v2-new-session");
+  if (btnV2NewSession) {
+    btnV2NewSession.addEventListener("click", () => {
+      pendingV2NewPrefill = null;
+      setView("v2-new");
+    });
+  }
+  const btnV2NewCancel = document.getElementById("btn-v2-new-cancel");
+  if (btnV2NewCancel) btnV2NewCancel.addEventListener("click", () => setView("v2-list"));
+  const v2NewForm = document.getElementById("v2-new-session-form");
+  if (v2NewForm) v2NewForm.addEventListener("submit", handleV2NewSubmit);
+  const btnV2ComposerSend = document.getElementById("btn-v2-composer-send");
+  if (btnV2ComposerSend) {
+    btnV2ComposerSend.addEventListener("click", () => {
+      handleV2ComposerSend().catch((err) => showV2DetailError(err.message));
+    });
+  }
+  const v2ModelInput = document.getElementById("v2-detail-model-input");
+  if (v2ModelInput) {
+    v2ModelInput.addEventListener("change", () => {
+      handleV2ModelChange().catch((err) => showV2DetailError(err.message));
+    });
+  }
+  const v2ModeSelect = document.getElementById("v2-detail-mode-select");
+  if (v2ModeSelect) {
+    v2ModeSelect.addEventListener("change", () => {
+      handleV2ModeChange().catch((err) => showV2DetailError(err.message));
+    });
+  }
 
   window.addEventListener("hashchange", () => {
     if (suppressHashSync) return;
