@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-24 16:20 CEST 7ba696d`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-24 16:20 CEST 7ba696d";
+// `2026-09-24 21:14 CEST d8bd171`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-24 21:14 CEST d8bd171";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -539,6 +539,25 @@ async function v2TakeOverLease(id) {
 
 async function v2HandBackLease(id) {
   return v2WriteRecordAndMirrorIndex(id, (record) => V2_MODEL.handBackLease(record, { now: Date.now() }));
+}
+
+/**
+ * S-011/AC-026's counterpart: keep a lease WE hold alive while its detail
+ * view stays open, so `daemon/lib/v2-action-tick.mjs`'s expiry sweep (wired
+ * 2026-09-24) doesn't reclaim it out from under an actively-used session.
+ * Deliberately swallows LEASE_OWNER_MISMATCH/NO_ACTIVE_LEASE -- both mean
+ * "we don't actually hold this lease (any more)", which `syncV2DetailPoll`
+ * below already re-derives from the next record read; a failed heartbeat
+ * renewal is not itself an error the user needs to see.
+ */
+async function v2RenewLeaseHeartbeat(id) {
+  try {
+    return await v2WriteRecordWithRetry(id, (record) =>
+      V2_MODEL.renewLeaseHeartbeat(record, { owner: V2_OWN_HOST, now: Date.now() }),
+    );
+  } catch (_err) {
+    return null;
+  }
 }
 
 // =============================================================================
@@ -1590,6 +1609,61 @@ async function renderV2List() {
   }
 }
 
+/**
+ * S-010/AC-025: "while a session is leased to a host, only that host shall
+ * write turns; the other shall show the owner and offer only take over."
+ * This is the UI-level half of that (SPEC.md's own framing -- server-side
+ * write rejection on every route is a separate, larger, still-open task);
+ * disables every control that would otherwise let this host interfere with
+ * whoever actually holds the lease, leaving Take Over as the one live
+ * escape hatch. A record leased to "daemon" (nobody) or to THIS host is
+ * fully interactive, same as before this existed.
+ */
+/**
+ * Viktor's ask (2026-09-24 evening): while an action is in flight, show a
+ * working indicator and keep the next action from firing until it's clear
+ * what state the session is actually in. Disables the same control set
+ * `applyV2LeaseGating` gates, plus Take Over/Hand Back; every caller
+ * re-syncs via a fresh `renderV2Detail` in its own `finally` block (success
+ * OR error), which re-derives the CORRECT disabled state from the real
+ * record afterward -- this function only owns the "busy right now" span,
+ * never the after-the-fact state.
+ */
+function setV2Busy(busy) {
+  const note = document.getElementById("v2-detail-busy");
+  if (note) note.hidden = !busy;
+  const ids = [
+    "v2-detail-model-input",
+    "v2-detail-mode-select",
+    "v2-composer-mode",
+    "v2-composer-text",
+    "btn-v2-composer-send",
+    "btn-v2-stop",
+    "btn-v2-take-over",
+    "btn-v2-hand-back",
+  ];
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = busy;
+  }
+}
+
+function applyV2LeaseGating(record) {
+  const leasedByOther = Boolean(record.owner) && record.owner !== "daemon" && record.owner !== V2_OWN_HOST;
+  const note = document.getElementById("v2-detail-lease-note");
+  if (note) {
+    note.hidden = !leasedByOther;
+    if (leasedByOther) note.textContent = `Controlled from ${record.owner} right now — Take over to intervene.`;
+  }
+  const gatedIds = ["v2-detail-model-input", "v2-detail-mode-select", "v2-composer-mode", "v2-composer-text", "btn-v2-composer-send"];
+  for (const id of gatedIds) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = leasedByOther;
+  }
+  const btnStop = document.getElementById("btn-v2-stop");
+  if (btnStop && leasedByOther) btnStop.hidden = true;
+}
+
 async function renderV2Detail(sessionId) {
   clearV2DetailError();
   activeV2DetailSessionId = sessionId;
@@ -1652,6 +1726,7 @@ async function renderV2Detail(sessionId) {
     btnHandBack.hidden = !ownedByMe;
     btnHandBack.onclick = ownedByMe ? () => handleV2HandBackClick(record.id) : null;
   }
+  applyV2LeaseGating(record);
 
   renderV2Messages(record);
   renderV2SubAgents(record.id);
@@ -1918,8 +1993,17 @@ function syncV2DetailPoll() {
           btnStop.hidden = !stoppable;
           btnStop.onclick = stoppable ? () => handleV2StopClick(id) : null;
         }
+        applyV2LeaseGating(record);
+        const ownedByMe = record.owner === V2_OWN_HOST;
+        // Keep the lease alive for as long as its detail view stays open and
+        // we hold it (S-011/AC-026's counterpart to the daemon's new expiry
+        // sweep) -- best-effort, errors already swallowed inside the helper.
+        if (ownedByMe) v2RenewLeaseHeartbeat(id);
         const stillChanging =
-          record.status === "running" || !record.chatId || (Array.isArray(record.queue) && record.queue.length > 0);
+          ownedByMe ||
+          record.status === "running" ||
+          !record.chatId ||
+          (Array.isArray(record.queue) && record.queue.length > 0);
         if (!stillChanging) stopV2DetailPoll();
       })
       .catch((err) => showV2DetailError(err.message));
@@ -2094,12 +2178,12 @@ async function handleV2NewSubmit(ev) {
 async function handleV2ComposerSend() {
   const modeEl = document.getElementById("v2-composer-mode");
   const textEl = document.getElementById("v2-composer-text");
-  const btn = document.getElementById("btn-v2-composer-send");
   const id = activeV2DetailSessionId;
   if (!id || !textEl) return;
   const text = textEl.value.trim();
   if (!text) return;
-  if (btn) btn.disabled = true;
+  clearV2DetailError();
+  setV2Busy(true);
   try {
     if (modeEl && modeEl.value === "force") {
       await v2RequestForce(id, text);
@@ -2107,41 +2191,50 @@ async function handleV2ComposerSend() {
       await v2EnqueueMessage(id, text);
     }
     textEl.value = "";
-    await renderV2Detail(id);
   } catch (err) {
     showV2DetailError(err.message);
   } finally {
-    if (btn) btn.disabled = false;
+    await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
+    setV2Busy(false);
   }
 }
 
 async function handleV2StopClick(id) {
   clearV2DetailError();
+  setV2Busy(true);
   try {
     await v2RequestStop(id);
-    await renderV2Detail(id);
   } catch (err) {
     showV2DetailError(err.message);
+  } finally {
+    await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
+    setV2Busy(false);
   }
 }
 
 async function handleV2TakeOverClick(id) {
   clearV2DetailError();
+  setV2Busy(true);
   try {
     await v2TakeOverLease(id);
-    await renderV2Detail(id);
   } catch (err) {
     showV2DetailError(err.message);
+  } finally {
+    await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
+    setV2Busy(false);
   }
 }
 
 async function handleV2HandBackClick(id) {
   clearV2DetailError();
+  setV2Busy(true);
   try {
     await v2HandBackLease(id);
-    await renderV2Detail(id);
   } catch (err) {
     showV2DetailError(err.message);
+  } finally {
+    await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
+    setV2Busy(false);
   }
 }
 
@@ -2151,11 +2244,16 @@ async function handleV2ModelChange() {
   if (!id || !modelInput) return;
   const model = modelInput.value.trim();
   if (!model) return;
+  clearV2DetailError();
+  setV2Busy(true);
   try {
     await v2SetModel(id, model);
     setLastUsedModel(model);
   } catch (err) {
     showV2DetailError(err.message);
+  } finally {
+    await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
+    setV2Busy(false);
   }
 }
 
@@ -2163,10 +2261,15 @@ async function handleV2ModeChange() {
   const id = activeV2DetailSessionId;
   const modeSelect = document.getElementById("v2-detail-mode-select");
   if (!id || !modeSelect) return;
+  clearV2DetailError();
+  setV2Busy(true);
   try {
     await v2SetMode(id, modeSelect.value);
   } catch (err) {
     showV2DetailError(err.message);
+  } finally {
+    await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
+    setV2Busy(false);
   }
 }
 
@@ -2200,8 +2303,8 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS] = await Promise.all([
-      import("./write-helpers.mjs?v=7ba696d"),
-      import("./ide-helpers.mjs?v=7ba696d"),
+      import("./write-helpers.mjs?v=d8bd171"),
+      import("./ide-helpers.mjs?v=d8bd171"),
       import("./refresh-helpers.mjs"),
       import("./transcript-model.mjs"),
       import("./scrollback-helpers.mjs"),

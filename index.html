@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-24 16:20 CEST 7ba696d in config.json + app.js).
+  script (replaces 2026-09-24 21:14 CEST d8bd171 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=7ba696d")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=d8bd171")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -373,6 +373,9 @@
         <button type="button" id="btn-v2-hand-back" class="cockpit-btn" hidden>Hand back</button>
         <button type="button" id="btn-v2-stop" class="cockpit-btn cockpit-btn-warning" hidden>Stop</button>
       </div>
+      <!-- AC-025 (SPEC.md S-010): while another host holds the lease, this
+           note explains why the composer/model/mode below are disabled. -->
+      <p id="v2-detail-lease-note" class="cockpit-hint" hidden></p>
 
       <section class="v2-subagents-section">
         <div class="v2-subagents-header">
@@ -398,6 +401,10 @@
         <textarea id="v2-composer-text" class="v2-composer-text" rows="3" placeholder="Message"></textarea>
         <button type="button" id="btn-v2-composer-send" class="cockpit-btn cockpit-btn-primary">Send</button>
       </div>
+      <!-- Shown while any action (send/stop/take-over/model switch/...) is
+           in flight -- the controls it names are also disabled for the same
+           span, via setV2Busy() in app.js. -->
+      <p id="v2-detail-busy" class="cockpit-hint" hidden>Working…</p>
       <p id="v2-detail-error-state" class="cockpit-error" hidden role="alert"></p>
     </section>
 
@@ -459,6 +466,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=7ba696d" defer></script>
+  <script src="./app.js?v=d8bd171" defer></script>
 </body>
 </html>
