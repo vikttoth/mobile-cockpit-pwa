@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-24 22:51 CEST e4f2c31`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-24 22:51 CEST e4f2c31";
+// `2026-09-24 23:25 CEST 80aedc0`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-24 23:25 CEST 80aedc0";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -968,10 +968,38 @@ function setView(viewId, payload) {
   }
 }
 
+/**
+ * Turns a known technical error into a short, plain-English sentence for
+ * someone who isn't going to recognize "AADSTS50005" or "PRECONDITION_
+ * FAILED" (Viktor's ask, 2026-09-24, after the raw MSAL error string
+ * showed up in the UI verbatim during tonight's live testing). Matches on
+ * substrings actually seen coming out of this app's own error paths --
+ * NEVER swallows an unrecognized message, always falls back to the raw
+ * text unchanged, so a new/unexpected error is still fully visible, just
+ * not translated.
+ */
+function translateErrorMessage(raw) {
+  const message = typeof raw === "string" ? raw : String(raw ?? "");
+  const rules = [
+    [/MSAL silent auth failed|AADSTS/i,
+      "Can't connect to your Microsoft account right now. This usually clears up within a few minutes on its own; tell Viktor if it keeps happening."],
+    [/PRECONDITION_FAILED|412/,
+      "Someone else (or another tab) changed this at the same moment. Reload and try again."],
+    [/SESSION_NOT_FOUND/,
+      "This session doesn't exist anymore — it may have been deleted."],
+    [/failed to fetch|networkerror|load failed/i,
+      "Can't reach the server. Check your connection and try again."],
+  ];
+  for (const [pattern, friendly] of rules) {
+    if (pattern.test(message)) return friendly;
+  }
+  return message;
+}
+
 function showListError(message) {
   const el = document.getElementById("list-error-state");
   if (!el) return;
-  el.textContent = message;
+  el.textContent = translateErrorMessage(message);
   el.hidden = false;
 }
 
@@ -983,7 +1011,7 @@ function clearListError() {
 function showDetailError(message) {
   const el = document.getElementById("detail-error-state");
   if (!el) return;
-  el.textContent = message;
+  el.textContent = translateErrorMessage(message);
   el.hidden = false;
 }
 
@@ -995,7 +1023,7 @@ function clearDetailError() {
 function showNewError(message) {
   const el = document.getElementById("new-error-state");
   if (!el) return;
-  el.textContent = message;
+  el.textContent = translateErrorMessage(message);
   el.hidden = false;
 }
 
@@ -1210,17 +1238,46 @@ function setLastUsedModel(model) {
  * every poll-driven re-render of the detail view doesn't fight an open
  * dropdown or discard the caller's subsequent `.value` assignment.
  */
+/**
+ * Purely derived from the id string, not a schema field -- adding a
+ * `group` to every MODEL_OPTIONS entry would mean typing it 57 times
+ * across 3 mirrored copies (lib/config.mjs, pwa/config.json,
+ * local-ui/app.js) for something a 6-line prefix check already gives for
+ * free. Mirrored as-is in local-ui/app.js (same reasoning as that file's
+ * other small duplicated helpers -- it depends on nothing under pwa/).
+ */
+function modelGroupFor(id) {
+  if (id === "auto") return null; // ungrouped, always first
+  if (id.startsWith("claude-")) return "Claude";
+  if (id.startsWith("gpt-")) return "GPT";
+  if (id.startsWith("cursor-grok-")) return "Grok";
+  if (id.startsWith("gemini-")) return "Gemini";
+  return "Other";
+}
+
 function populateModelSelect(selectId) {
   const select = document.getElementById(selectId);
   if (!select) return;
   const options = (CONFIG.session && CONFIG.session.modelOptions) || [];
   if (select.options.length === options.length) return;
   select.innerHTML = "";
+  const groups = new Map();
   for (const { id, label } of options) {
     const opt = document.createElement("option");
     opt.value = id;
     opt.textContent = label;
-    select.appendChild(opt);
+    const groupName = modelGroupFor(id);
+    if (!groupName) {
+      select.appendChild(opt);
+      continue;
+    }
+    if (!groups.has(groupName)) {
+      const og = document.createElement("optgroup");
+      og.label = groupName;
+      groups.set(groupName, og);
+      select.appendChild(og);
+    }
+    groups.get(groupName).appendChild(opt);
   }
 }
 
@@ -1231,7 +1288,7 @@ function populateModelSelect(selectId) {
 function showIdeTabsError(message) {
   const el = document.getElementById("ide-tabs-error-state");
   if (!el) return;
-  el.textContent = message;
+  el.textContent = translateErrorMessage(message);
   el.hidden = false;
 }
 function clearIdeTabsError() {
@@ -1241,7 +1298,7 @@ function clearIdeTabsError() {
 function showIdeDetailError(message) {
   const el = document.getElementById("ide-detail-error-state");
   if (!el) return;
-  el.textContent = message;
+  el.textContent = translateErrorMessage(message);
   el.hidden = false;
 }
 function clearIdeDetailError() {
@@ -1495,7 +1552,7 @@ function renderIdeTabThread(tab) {
 function showV2ListError(message) {
   const el = document.getElementById("v2-list-error-state");
   if (!el) return;
-  el.textContent = message;
+  el.textContent = translateErrorMessage(message);
   el.hidden = false;
 }
 function clearV2ListError() {
@@ -1505,7 +1562,7 @@ function clearV2ListError() {
 function showV2DetailError(message) {
   const el = document.getElementById("v2-detail-error-state");
   if (!el) return;
-  el.textContent = message;
+  el.textContent = translateErrorMessage(message);
   el.hidden = false;
 }
 function clearV2DetailError() {
@@ -1515,7 +1572,7 @@ function clearV2DetailError() {
 function showV2NewError(message) {
   const el = document.getElementById("v2-new-error-state");
   if (!el) return;
-  el.textContent = message;
+  el.textContent = translateErrorMessage(message);
   el.hidden = false;
 }
 function clearV2NewError() {
@@ -1595,9 +1652,9 @@ function setV2Busy(busy) {
   const ids = [
     "v2-detail-model-input",
     "v2-detail-mode-select",
-    "v2-composer-mode",
     "v2-composer-text",
     "btn-v2-composer-send",
+    "btn-v2-composer-force",
     "btn-v2-stop",
   ];
   for (const id of ids) {
@@ -1608,6 +1665,13 @@ function setV2Busy(busy) {
 
 async function renderV2Detail(sessionId) {
   clearV2DetailError();
+  // Always start collapsed when (re-)entering a session's detail view --
+  // it staying open from a PREVIOUS session would be confusing, and the
+  // poll tick below never touches this itself.
+  const menuPanel = document.getElementById("v2-detail-menu");
+  const menuBtn = document.getElementById("btn-v2-detail-menu");
+  if (menuPanel) menuPanel.hidden = true;
+  if (menuBtn) menuBtn.setAttribute("aria-expanded", "false");
   activeV2DetailSessionId = sessionId;
   let record;
   try {
@@ -1643,6 +1707,8 @@ async function renderV2Detail(sessionId) {
     btnStop.hidden = !stoppable;
     btnStop.onclick = stoppable ? () => handleV2StopClick(record.id) : null;
   }
+  const btnForce = document.getElementById("btn-v2-composer-force");
+  if (btnForce) btnForce.hidden = record.status !== "running";
   renderV2Messages(record);
 
   syncV2DetailPoll();
@@ -1859,6 +1925,8 @@ function syncV2DetailPoll() {
           btnStop.hidden = !stoppable;
           btnStop.onclick = stoppable ? () => handleV2StopClick(id) : null;
         }
+        const btnForce = document.getElementById("btn-v2-composer-force");
+        if (btnForce) btnForce.hidden = record.status !== "running";
         const stillChanging =
           record.status === "running" ||
           !record.chatId ||
@@ -2033,8 +2101,12 @@ async function handleV2NewSubmit(ev) {
   }
 }
 
+// Send always queues (safe default -- never interrupts a running turn
+// without being asked). Force is a SEPARATE button, only ever visible
+// while a turn is actually running (see renderV2Detail/the poll tick),
+// mirroring how Claude's own composer behaves instead of a permanent
+// Queue/Force mode selector (Viktor's ask, 2026-09-24).
 async function handleV2ComposerSend() {
-  const modeEl = document.getElementById("v2-composer-mode");
   const textEl = document.getElementById("v2-composer-text");
   const id = activeV2DetailSessionId;
   if (!id || !textEl) return;
@@ -2043,11 +2115,26 @@ async function handleV2ComposerSend() {
   clearV2DetailError();
   setV2Busy(true);
   try {
-    if (modeEl && modeEl.value === "force") {
-      await v2RequestForce(id, text);
-    } else {
-      await v2EnqueueMessage(id, text);
-    }
+    await v2EnqueueMessage(id, text);
+    textEl.value = "";
+  } catch (err) {
+    showV2DetailError(err.message);
+  } finally {
+    await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
+    setV2Busy(false);
+  }
+}
+
+async function handleV2ComposerForce() {
+  const textEl = document.getElementById("v2-composer-text");
+  const id = activeV2DetailSessionId;
+  if (!id || !textEl) return;
+  const text = textEl.value.trim();
+  if (!text) return;
+  clearV2DetailError();
+  setV2Busy(true);
+  try {
+    await v2RequestForce(id, text);
     textEl.value = "";
   } catch (err) {
     showV2DetailError(err.message);
@@ -2136,8 +2223,8 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS] = await Promise.all([
-      import("./write-helpers.mjs?v=e4f2c31"),
-      import("./ide-helpers.mjs?v=e4f2c31"),
+      import("./write-helpers.mjs?v=80aedc0"),
+      import("./ide-helpers.mjs?v=80aedc0"),
       import("./refresh-helpers.mjs"),
       import("./transcript-model.mjs"),
       import("./scrollback-helpers.mjs"),
@@ -2255,6 +2342,21 @@ async function bootstrap() {
   if (btnV2ComposerSend) {
     btnV2ComposerSend.addEventListener("click", () => {
       handleV2ComposerSend().catch((err) => showV2DetailError(err.message));
+    });
+  }
+  const btnV2ComposerForce = document.getElementById("btn-v2-composer-force");
+  if (btnV2ComposerForce) {
+    btnV2ComposerForce.addEventListener("click", () => {
+      handleV2ComposerForce().catch((err) => showV2DetailError(err.message));
+    });
+  }
+  const btnV2DetailMenu = document.getElementById("btn-v2-detail-menu");
+  const v2DetailMenuPanel = document.getElementById("v2-detail-menu");
+  if (btnV2DetailMenu && v2DetailMenuPanel) {
+    btnV2DetailMenu.addEventListener("click", () => {
+      const open = v2DetailMenuPanel.hidden;
+      v2DetailMenuPanel.hidden = !open;
+      btnV2DetailMenu.setAttribute("aria-expanded", String(open));
     });
   }
   const v2ModelInput = document.getElementById("v2-detail-model-input");

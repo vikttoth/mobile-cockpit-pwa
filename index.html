@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-24 22:51 CEST e4f2c31 in config.json + app.js).
+  script (replaces 2026-09-24 23:25 CEST 80aedc0 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=e4f2c31")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=80aedc0")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -336,22 +336,29 @@
     <!--
       View 7: v2 session detail -- the actual chat. Renders messages[]
       oldest-to-newest (AC-019, pwa/scrollback-helpers.mjs), a live
-      "typing…" bubble while a turn is running (record.streaming), a
-      composer with Queue/Force send modes, Stop, model/mode switches,
-      lease take-over/hand-back, and a Sub-agents section (delegated
-      parallel tasks -- see SPEC.md).
+      "typing…" bubble while a turn is running (record.streaming). Model/
+      Mode/Stop live behind the "⋯" overflow sheet (2026-09-24 polish --
+      see SPEC.md); the composer is just Send, plus a Force button that
+      only appears while a turn is running.
     -->
     <section id="view-v2-detail" class="cockpit-view" data-view-id="v2-detail" hidden>
       <div class="cockpit-detail-header">
         <button type="button" class="cockpit-back-btn" data-target-view="v2-list" aria-label="Back to chat list">← Back</button>
+        <h2 id="v2-detail-title" class="v2-detail-title-inline">…</h2>
         <button type="button" id="btn-v2-detail-refresh" class="cockpit-btn" aria-label="Refresh session">↻</button>
+        <button type="button" id="btn-v2-detail-menu" class="cockpit-btn" aria-label="Session options" aria-expanded="false">⋯</button>
       </div>
-      <h2 id="v2-detail-title">…</h2>
-      <dl class="cockpit-detail-meta">
-        <dt>Status</dt><dd id="v2-detail-status">…</dd>
-        <dt>Chat id</dt><dd id="v2-detail-chat-id">…</dd>
-      </dl>
-      <div class="v2-detail-controls">
+
+      <!-- Overflow sheet: everything that isn't "read the conversation" or
+           "send a message" -- toggled by btn-v2-detail-menu. Model/Mode/Stop
+           used to sit in the always-visible header; on a phone screen that
+           was permanent chrome competing with the conversation for space,
+           for controls used rarely. -->
+      <div id="v2-detail-menu" class="v2-detail-menu" hidden>
+        <dl class="cockpit-detail-meta">
+          <dt>Status</dt><dd id="v2-detail-status">…</dd>
+          <dt>Chat id</dt><dd id="v2-detail-chat-id">…</dd>
+        </dl>
         <label class="v2-inline-control">
           Model
           <!-- Options populated from CONFIG.session.modelOptions in app.js#populateModelSelect(). -->
@@ -373,16 +380,18 @@
       </div>
 
       <div class="v2-composer">
-        <select id="v2-composer-mode" class="v2-composer-mode-select">
-          <option value="queue" selected>Queue (append, run next)</option>
-          <option value="force">Force (interrupt current turn, send now)</option>
-        </select>
         <textarea id="v2-composer-text" class="v2-composer-text" rows="3" placeholder="Message"></textarea>
+        <!-- Force only ever shown while a turn is running -- interrupting
+             an idle session has no meaning, so there is nothing to show
+             the rest of the time (Viktor's ask, 2026-09-24: mirror how
+             Claude's own composer behaves instead of a permanent
+             Queue/Force mode selector). -->
+        <button type="button" id="btn-v2-composer-force" class="cockpit-btn cockpit-btn-warning" hidden title="Interrupt the running turn and send this now">⚡ Force</button>
         <button type="button" id="btn-v2-composer-send" class="cockpit-btn cockpit-btn-primary">Send</button>
       </div>
-      <!-- Shown while any action (send/stop/take-over/model switch/...) is
-           in flight -- the controls it names are also disabled for the same
-           span, via setV2Busy() in app.js. -->
+      <!-- Shown while any action (send/stop/model switch/...) is in flight
+           -- the controls it names are also disabled for the same span,
+           via setV2Busy() in app.js. -->
       <p id="v2-detail-busy" class="cockpit-hint" hidden>Working…</p>
       <p id="v2-detail-error-state" class="cockpit-error" hidden role="alert"></p>
     </section>
@@ -444,6 +453,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=e4f2c31" defer></script>
+  <script src="./app.js?v=80aedc0" defer></script>
 </body>
 </html>
