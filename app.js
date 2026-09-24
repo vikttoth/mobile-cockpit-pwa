@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-24 15:32 CEST 37675c9`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-24 15:32 CEST 37675c9";
+// `2026-09-24 16:20 CEST 7ba696d`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-24 16:20 CEST 7ba696d";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1159,10 +1159,15 @@ function hideFollowUpPanel() {
 
 function renderNew() {
   clearNewError();
-  populateCwdSelect();
-  // Clear stale form state when re-entering the composer.
+  // Clear stale form state BEFORE populating -- form.reset() reverts a
+  // <select> to its first <option> in DOM order, which would silently
+  // undo populateModelSelect's last-used-model default if it ran first.
   const form = document.getElementById("new-session-form");
   if (form) form.reset();
+  populateCwdSelect();
+  populateModelSelect("new-model");
+  const modelSelect = document.getElementById("new-model");
+  if (modelSelect) modelSelect.value = getLastUsedModel();
 }
 
 function populateCwdSelect() {
@@ -1187,6 +1192,49 @@ function populateCwdSelect() {
   defaultOpt.textContent = "(daemon default)";
   select.appendChild(defaultOpt);
   if (allowed.length > 0) select.value = allowed[0];
+}
+
+// Model picker (2026-09-24): Viktor asked for "the full list of all
+// selectable models, like it is in the [Cursor] UI" rather than a free-text
+// guess-the-id field, defaulting to "Auto" or whatever was picked last.
+// CONFIG.session.modelOptions is the full `cursor-agent --list-models`
+// catalog (mirrored from lib/config.mjs#MODEL_OPTIONS).
+const LAST_MODEL_STORAGE_KEY = "mc-last-model";
+
+function getLastUsedModel() {
+  try {
+    return localStorage.getItem(LAST_MODEL_STORAGE_KEY) || "auto";
+  } catch (_err) {
+    return "auto";
+  }
+}
+
+function setLastUsedModel(model) {
+  try {
+    if (model) localStorage.setItem(LAST_MODEL_STORAGE_KEY, model);
+  } catch (_err) {
+    // best-effort only -- a blocked localStorage must not break model switching
+  }
+}
+
+/**
+ * Populate a <select> with CONFIG.session.modelOptions. Idempotent (skips
+ * the rebuild once the option count already matches) so calling this on
+ * every poll-driven re-render of the detail view doesn't fight an open
+ * dropdown or discard the caller's subsequent `.value` assignment.
+ */
+function populateModelSelect(selectId) {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  const options = (CONFIG.session && CONFIG.session.modelOptions) || [];
+  if (select.options.length === options.length) return;
+  select.innerHTML = "";
+  for (const { id, label } of options) {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = label;
+    select.appendChild(opt);
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -1583,8 +1631,9 @@ async function renderV2Detail(sessionId) {
     }
   }
 
+  populateModelSelect("v2-detail-model-input");
   const modelInput = document.getElementById("v2-detail-model-input");
-  if (modelInput) modelInput.value = record.model || "";
+  if (modelInput) modelInput.value = record.model || "auto";
   const modeSelect = document.getElementById("v2-detail-mode-select");
   if (modeSelect) modeSelect.value = record.mode || "agent";
 
@@ -1715,7 +1764,8 @@ function renderV2New() {
   const form = document.getElementById("v2-new-session-form");
 
   if (idInput) idInput.value = `mcv2-${Date.now().toString(36)}`;
-  if (modelInput) modelInput.value = "";
+  populateModelSelect("v2-new-model");
+  if (modelInput) modelInput.value = getLastUsedModel();
   if (modeSelect) modeSelect.value = "agent";
   if (messageInput) messageInput.value = "";
   populateV2CwdSelect();
@@ -1942,6 +1992,7 @@ async function handleNewSubmit(ev) {
   if (submitBtn) submitBtn.disabled = true;
   try {
     await createSession({ prompt, cwd, model });
+    setLastUsedModel(model);
     setView("list");
   } catch (err) {
     showNewError(err.message);
@@ -2031,6 +2082,7 @@ async function handleV2NewSubmit(ev) {
       parentId: (form && form.dataset.parentId) || null,
       firstMessage: messageEl ? messageEl.value : "",
     });
+    setLastUsedModel(modelEl ? modelEl.value.trim() : "");
     setView("v2-detail", { sessionId: record.id });
   } catch (err) {
     showV2NewError(err.message);
@@ -2101,6 +2153,7 @@ async function handleV2ModelChange() {
   if (!model) return;
   try {
     await v2SetModel(id, model);
+    setLastUsedModel(model);
   } catch (err) {
     showV2DetailError(err.message);
   }
@@ -2147,8 +2200,8 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS] = await Promise.all([
-      import("./write-helpers.mjs?v=37675c9"),
-      import("./ide-helpers.mjs?v=37675c9"),
+      import("./write-helpers.mjs?v=7ba696d"),
+      import("./ide-helpers.mjs?v=7ba696d"),
       import("./refresh-helpers.mjs"),
       import("./transcript-model.mjs"),
       import("./scrollback-helpers.mjs"),

@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-24 15:32 CEST 37675c9 in config.json + app.js).
+  script (replaces 2026-09-24 16:20 CEST 7ba696d in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=37675c9")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=7ba696d")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -214,9 +214,9 @@
       </p>
       <form id="new-session-form" class="cockpit-form">
         <label>
-          Model (optional)
-          <input type="text" id="new-model" name="model" maxlength="80" autocomplete="off"
-                 placeholder="composer-2.5 (leave blank for daemon default)" />
+          Model
+          <!-- Options populated from CONFIG.session.modelOptions in app.js#populateModelSelect(). -->
+          <select id="new-model" name="model"></select>
         </label>
         <label>
           Working directory
@@ -358,7 +358,8 @@
       <div class="v2-detail-controls">
         <label class="v2-inline-control">
           Model
-          <input type="text" id="v2-detail-model-input" maxlength="80" autocomplete="off" placeholder="daemon default" />
+          <!-- Options populated from CONFIG.session.modelOptions in app.js#populateModelSelect(). -->
+          <select id="v2-detail-model-input"></select>
         </label>
         <label class="v2-inline-control">
           Mode
@@ -416,9 +417,9 @@
           <input type="text" id="v2-new-id" name="id" maxlength="80" autocomplete="off" required />
         </label>
         <label>
-          Model (optional)
-          <input type="text" id="v2-new-model" name="model" maxlength="80" autocomplete="off"
-                 placeholder="composer-2.5 (leave blank for daemon default)" />
+          Model
+          <!-- Options populated from CONFIG.session.modelOptions in app.js#populateModelSelect(). -->
+          <select id="v2-new-model" name="model"></select>
         </label>
         <label>
           Mode
@@ -458,6 +459,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=37675c9" defer></script>
+  <script src="./app.js?v=7ba696d" defer></script>
 </body>
 </html>
