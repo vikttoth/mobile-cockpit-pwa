@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-24 15:06 CEST ed90a82`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-24 15:06 CEST ed90a82";
+// `2026-09-24 15:32 CEST 37675c9`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-24 15:32 CEST 37675c9";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1169,20 +1169,24 @@ function populateCwdSelect() {
   const select = document.getElementById("new-cwd");
   if (!select) return;
   const allowed = (CONFIG.session && CONFIG.session.allowedCwds) || [];
-  // Rebuild: first option = "(daemon default)" (empty value), then one
-  // <option> per allowedCwd. Idempotent — safe to call on every render.
+  // Rebuild: one <option> per allowedCwd (first one pre-selected -- a
+  // concrete, always-valid path beats an ambiguous "(daemon default)"
+  // that gives no visible confirmation it resolved to anything real,
+  // 2026-09-24), then "(daemon default)" last for anyone who explicitly
+  // wants to defer to the daemon's own fallback. Idempotent -- safe to
+  // call on every render.
   select.innerHTML = "";
-  const defaultOpt = document.createElement("option");
-  defaultOpt.value = "";
-  defaultOpt.textContent = "(daemon default)";
-  defaultOpt.selected = true;
-  select.appendChild(defaultOpt);
   for (const cwd of allowed) {
     const opt = document.createElement("option");
     opt.value = cwd;
     opt.textContent = cwd;
     select.appendChild(opt);
   }
+  const defaultOpt = document.createElement("option");
+  defaultOpt.value = "";
+  defaultOpt.textContent = "(daemon default)";
+  select.appendChild(defaultOpt);
+  if (allowed.length > 0) select.value = allowed[0];
 }
 
 // -----------------------------------------------------------------------------
@@ -1734,18 +1738,21 @@ function populateV2CwdSelect() {
   const select = document.getElementById("v2-new-cwd");
   if (!select) return;
   const allowed = (CONFIG.session && CONFIG.session.allowedCwds) || [];
+  // Same "concrete path pre-selected, ambiguous default demoted to an
+  // explicit opt-in" fix as populateCwdSelect (2026-09-24) -- see its
+  // comment for why.
   select.innerHTML = "";
-  const defaultOpt = document.createElement("option");
-  defaultOpt.value = "";
-  defaultOpt.textContent = "(daemon default)";
-  defaultOpt.selected = true;
-  select.appendChild(defaultOpt);
   for (const cwd of allowed) {
     const opt = document.createElement("option");
     opt.value = cwd;
     opt.textContent = cwd;
     select.appendChild(opt);
   }
+  const defaultOpt = document.createElement("option");
+  defaultOpt.value = "";
+  defaultOpt.textContent = "(daemon default)";
+  select.appendChild(defaultOpt);
+  if (allowed.length > 0) select.value = allowed[0];
 }
 
 // =============================================================================
@@ -2140,8 +2147,8 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS] = await Promise.all([
-      import("./write-helpers.mjs?v=ed90a82"),
-      import("./ide-helpers.mjs?v=ed90a82"),
+      import("./write-helpers.mjs?v=37675c9"),
+      import("./ide-helpers.mjs?v=37675c9"),
       import("./refresh-helpers.mjs"),
       import("./transcript-model.mjs"),
       import("./scrollback-helpers.mjs"),
