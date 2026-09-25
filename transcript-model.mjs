@@ -124,6 +124,8 @@ export function buildSessionRecord(opts) {
     mode: opts.mode ?? null,
     cwd: opts.cwd ?? null,
     worktree: opts.worktree ?? null,
+    sharedWith: [],
+    sharingEnabled: false,
     createdAt: nowIso,
     updatedAt: nowIso,
   };
@@ -386,6 +388,57 @@ export function unarchiveSession(record, opts) {
     throw new Error("unarchiveSession: now must be a finite epoch-ms number");
   }
   return { ...record, archived: false, updatedAt: isoNow(opts.now) };
+}
+
+/**
+ * Pure invite (SPEC-DELTA-2026-09-25-session-sharing-stage1, AC-031/AC-036): adds an
+ * email/UPN to a session's remembered share list, deduped case-insensitively, and turns
+ * the Sharing toggle ON -- inviting someone is itself a "share this now" action, not a
+ * two-step "add to list, then separately enable" dance. Re-inviting an email already on
+ * the list is a no-op on the list itself (still re-affirms sharingEnabled: true). See
+ * `setSharingEnabled` below for the ON/OFF toggle that does NOT touch this list --
+ * that separation is what lets "turn sharing back on" restore the same list with no
+ * re-inviting.
+ *
+ * @param {object} record
+ * @param {{email: string, now: number}} opts
+ * @returns {object} new session record
+ */
+export function addSharedWithEntry(record, opts) {
+  if (typeof opts?.email !== "string" || !opts.email.trim()) {
+    throw new Error("addSharedWithEntry: email is required");
+  }
+  if (!Number.isFinite(opts?.now)) {
+    throw new Error("addSharedWithEntry: now must be a finite epoch-ms number");
+  }
+  const email = opts.email.trim();
+  const nowIso = isoNow(opts.now);
+  const existing = Array.isArray(record.sharedWith) ? record.sharedWith : [];
+  const already = existing.some((e) => e.email.toLowerCase() === email.toLowerCase());
+  const sharedWith = already ? existing : [...existing, { email, invitedAt: nowIso }];
+  return { ...record, sharedWith, sharingEnabled: true, updatedAt: nowIso };
+}
+
+/**
+ * Pure Sharing on/off toggle (SPEC-DELTA-2026-09-25-session-sharing-stage1,
+ * AC-032/AC-037): flips `sharingEnabled` WITHOUT touching `sharedWith` at all -- the
+ * whole point is that turning sharing back on re-grants the SAME remembered list with no
+ * re-inviting. The actual Graph grant/revoke side effects (one call per entry in
+ * `sharedWith`) live in the session-store wrapper, not here -- this function only owns
+ * the intent, same division of labor as `requestStop`/the child-registry kill-check.
+ *
+ * @param {object} record
+ * @param {{enabled: boolean, now: number}} opts
+ * @returns {object} new session record
+ */
+export function setSharingEnabled(record, opts) {
+  if (typeof opts?.enabled !== "boolean") {
+    throw new Error("setSharingEnabled: enabled must be a boolean");
+  }
+  if (!Number.isFinite(opts?.now)) {
+    throw new Error("setSharingEnabled: now must be a finite epoch-ms number");
+  }
+  return { ...record, sharingEnabled: opts.enabled, updatedAt: isoNow(opts.now) };
 }
 
 /**

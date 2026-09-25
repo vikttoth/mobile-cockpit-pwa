@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-25 10:30 CEST 07b8f67 in config.json + app.js).
+  script (replaces 2026-09-25 12:11 CEST 14fb909 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=07b8f67")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=14fb909")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -80,6 +80,9 @@
     <button type="button" id="btn-mode-app-info" class="cockpit-mode-btn"
             role="tab" data-target-view="app-info"
             title="Android app — Cursor costs, API usage, stack">App</button>
+    <button type="button" id="btn-mode-shared" class="cockpit-mode-btn"
+            role="tab" data-target-view="shared-list"
+            title="Sessions someone else shared with you, read-only (SPEC-DELTA-2026-09-25-session-sharing-stage1)">Shared</button>
   </nav>
 
   <main>
@@ -380,6 +383,28 @@
           </select>
         </label>
         <button type="button" id="btn-v2-stop" class="cockpit-btn cockpit-btn-warning" hidden>Stop</button>
+
+        <!-- SPEC-DELTA-2026-09-25-session-sharing-stage1: session-level,
+             read-only sharing. The toggle is separate from the invite list
+             on purpose -- turning it off revokes real Graph access but
+             remembers who was invited, so turning it back on needs no
+             re-typing (AC-032/AC-037). Per-person removal is explicitly
+             out of scope for Stage 1 -- the toggle affects everyone at once. -->
+        <div class="v2-share-panel">
+          <label class="v2-inline-control">
+            Sharing
+            <input type="checkbox" id="v2-detail-sharing-toggle" />
+          </label>
+          <ul id="v2-detail-shared-list" class="v2-share-list">
+            <!-- Populated by app.js#renderSharePanel(): <li>email — invited &lt;time&gt;</li> -->
+          </ul>
+          <p id="v2-share-empty-state" class="cockpit-hint" hidden>Nobody invited yet.</p>
+          <form id="v2-share-invite-form" class="v2-share-invite-form">
+            <input type="email" id="v2-share-invite-email" placeholder="colleague@nokia.com" required />
+            <button type="submit" id="btn-v2-share-invite" class="cockpit-btn">Invite</button>
+          </form>
+          <p id="v2-share-error-state" class="cockpit-error" hidden role="alert"></p>
+        </div>
       </div>
 
       <div id="v2-messages" class="v2-messages" role="log" aria-live="polite">
@@ -449,6 +474,41 @@
       <p id="v2-new-error-state" class="cockpit-error" hidden role="alert"></p>
     </section>
 
+    <!--
+      View 9: "Shared with me" -- sessions someone else invited us to
+      (SPEC-DELTA-2026-09-25-session-sharing-stage1, AC-034). Lists items
+      from GET /me/drive/sharedWithMe. Strictly read-only -- see view 10.
+    -->
+    <section id="view-shared-list" class="cockpit-view" data-view-id="shared-list" hidden>
+      <div class="cockpit-list-toolbar">
+        <button type="button" id="btn-shared-refresh" class="cockpit-btn" aria-label="Refresh shared sessions">↻</button>
+      </div>
+      <ul id="shared-session-list" class="cockpit-session-list" role="list">
+        <!-- Populated by app.js#renderSharedList(). -->
+      </ul>
+      <p id="shared-list-empty-state" class="cockpit-empty" hidden>
+        Nobody has shared a session with you yet.
+      </p>
+      <p id="shared-list-error-state" class="cockpit-error" hidden role="alert"></p>
+    </section>
+
+    <!--
+      View 10: a single shared session, read-only (AC-035). No composer, no
+      model/mode/stop, no overflow menu -- reusing any v2-detail control here
+      would be a real access-control bug, not just a UX slip.
+    -->
+    <section id="view-shared-detail" class="cockpit-view" data-view-id="shared-detail" hidden>
+      <div class="cockpit-detail-header">
+        <button type="button" class="cockpit-back-btn" data-target-view="shared-list" aria-label="Back to shared sessions">← Back</button>
+        <h2 id="shared-detail-title" class="v2-detail-title-inline">…</h2>
+      </div>
+      <p class="cockpit-hint">Shared with you, read-only.</p>
+      <div id="shared-messages" class="v2-messages" role="log" aria-live="polite">
+        <!-- Populated by app.js#renderSharedDetail(). -->
+      </div>
+      <p id="shared-detail-error-state" class="cockpit-error" hidden role="alert"></p>
+    </section>
+
   </main>
 
   <footer class="cockpit-footer">
@@ -466,6 +526,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=07b8f67" defer></script>
+  <script src="./app.js?v=14fb909" defer></script>
 </body>
 </html>

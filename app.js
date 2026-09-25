@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-25 10:30 CEST 07b8f67`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-25 10:30 CEST 07b8f67";
+// `2026-09-25 12:11 CEST 14fb909`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-25 12:11 CEST 14fb909";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -391,6 +391,46 @@ async function putJson(endpoint, json, etagOrNull) {
   return res.json().catch(() => null);
 }
 
+// SPEC-DELTA-2026-09-25-session-sharing-stage1: item-level sharing, the
+// browser-side mirror of lib/graph-state.mjs#invitePath/listPermissionsPath/
+// revokePermissionPath. Same path-addressed pattern as loadJson/putJson
+// above (`${endpoint}:/invite` etc.), not a JSON-file read/write.
+
+async function graphInvite(endpoint, { email, sendInvitation }) {
+  const res = await graphFetch(`${endpoint}:/invite`, {
+    method: "POST",
+    body: JSON.stringify({
+      recipients: [{ email }],
+      requireSignIn: true,
+      sendInvitation: sendInvitation ?? false,
+      roles: ["read"],
+    }),
+  });
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "");
+    throw new Error(`graphInvite: POST failed ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
+  }
+  return res.json().catch(() => null);
+}
+
+async function graphListPermissions(endpoint) {
+  const res = await graphFetch(`${endpoint}:/permissions`);
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "");
+    throw new Error(`graphListPermissions: GET failed ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
+  }
+  const json = await res.json().catch(() => null);
+  return Array.isArray(json?.value) ? json.value : [];
+}
+
+async function graphRevokePermission(endpoint, permissionId) {
+  const res = await graphFetch(`${endpoint}:/permissions/${encodeURIComponent(permissionId)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 404) {
+    const bodyText = await res.text().catch(() => "");
+    throw new Error(`graphRevokePermission: DELETE failed ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
+  }
+}
+
 /** Mirrors lib/config.mjs#sessionRecordRelativePath(id), endpoint-shaped. */
 function v2RecordEndpoint(id) {
   return `${CONFIG.sessionsDir.endpoint}/${id}.json`;
@@ -527,6 +567,38 @@ async function v2SetMode(id, mode) {
 // v2TakeOverLease/v2HandBackLease/v2RenewLeaseHeartbeat were removed
 // 2026-09-24 along with the whole lease feature -- see
 // lib/transcript-model.mjs's note for why.
+
+// SPEC-DELTA-2026-09-25-session-sharing-stage1: mirrors
+// lib/session-store.mjs#requestSessionInvite/requestSessionSetSharingEnabled
+// exactly -- grant/revoke the real Graph permission FIRST, then update the
+// record via the pure transform, same "never claim an invite that didn't
+// actually happen" ordering.
+
+async function v2InviteToSession(id, email) {
+  await graphInvite(v2RecordEndpoint(id), { email });
+  return v2WriteRecordWithRetry(id, (record) => V2_MODEL.addSharedWithEntry(record, { email, now: Date.now() }));
+}
+
+async function v2SetSharingEnabled(id, enabled) {
+  const endpoint = v2RecordEndpoint(id);
+  if (enabled) {
+    const { record } = await loadV2Record(id);
+    if (!record) {
+      const err = new Error(`v2 session not found: ${id}`);
+      err.code = "SESSION_NOT_FOUND";
+      throw err;
+    }
+    for (const entry of record.sharedWith ?? []) {
+      await graphInvite(endpoint, { email: entry.email });
+    }
+  } else {
+    const permissions = (await graphListPermissions(endpoint)).filter((p) => !p.roles?.includes("owner"));
+    for (const permission of permissions) {
+      await graphRevokePermission(endpoint, permission.id);
+    }
+  }
+  return v2WriteRecordWithRetry(id, (record) => V2_MODEL.setSharingEnabled(record, { enabled, now: Date.now() }));
+}
 
 // =============================================================================
 // 2b. Manual refresh (↻) — nudge desktop daemons + wait for fresh OneDrive data
@@ -937,6 +1009,10 @@ function setView(viewId, payload) {
     renderV2Detail(payload.sessionId).catch((err) => showV2DetailError(err.message));
   } else if (viewId === "v2-new") {
     renderV2New();
+  } else if (viewId === "shared-list") {
+    renderSharedList().catch((err) => showSharedListError(err.message));
+  } else if (viewId === "shared-detail" && payload && payload.driveId && payload.itemId) {
+    renderSharedDetail(payload.driveId, payload.itemId).catch((err) => showSharedDetailError(err.message));
   }
   // Drop the cached composer ID when navigating away from the IDE detail
   // view so a stale value can't accidentally target the wrong tab on the
@@ -954,6 +1030,9 @@ function setView(viewId, payload) {
   if (viewId !== "v2-detail") {
     activeV2DetailSessionId = null;
     stopV2DetailPoll();
+  }
+  if (viewId !== "shared-detail") {
+    activeSharedItem = null;
   }
   if (
     viewId === "list" ||
@@ -1710,8 +1789,28 @@ async function renderV2Detail(sessionId) {
   const btnForce = document.getElementById("btn-v2-composer-force");
   if (btnForce) btnForce.hidden = record.status !== "running";
   renderV2Messages(record);
+  renderSharePanel(record);
 
   syncV2DetailPoll();
+}
+
+/** SPEC-DELTA-2026-09-25-session-sharing-stage1: renders the Share panel's
+ * toggle + remembered invite list from whatever the record currently says.
+ * Never throws -- a rendering-only function, same posture as renderV2Messages. */
+function renderSharePanel(record) {
+  const toggle = document.getElementById("v2-detail-sharing-toggle");
+  if (toggle) toggle.checked = !!record.sharingEnabled;
+  const list = document.getElementById("v2-detail-shared-list");
+  const empty = document.getElementById("v2-share-empty-state");
+  if (!list) return;
+  list.innerHTML = "";
+  const sharedWith = Array.isArray(record.sharedWith) ? record.sharedWith : [];
+  if (empty) empty.hidden = sharedWith.length > 0;
+  for (const entry of sharedWith) {
+    const li = document.createElement("li");
+    li.textContent = `${entry.email} — invited ${relativeTime(entry.invitedAt)}`;
+    list.appendChild(li);
+  }
 }
 
 function renderV2Messages(record) {
@@ -2193,6 +2292,44 @@ async function handleV2ModeChange() {
   }
 }
 
+// SPEC-DELTA-2026-09-25-session-sharing-stage1.
+async function handleV2ShareInviteSubmit(evt) {
+  evt.preventDefault();
+  const id = activeV2DetailSessionId;
+  const emailInput = document.getElementById("v2-share-invite-email");
+  if (!id || !emailInput) return;
+  const email = emailInput.value.trim();
+  if (!email) return;
+  clearV2DetailError();
+  setV2Busy(true);
+  try {
+    await v2InviteToSession(id, email);
+    emailInput.value = "";
+  } catch (err) {
+    showV2DetailError(err.message);
+  } finally {
+    await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
+    setV2Busy(false);
+  }
+}
+
+async function handleV2SharingToggleChange() {
+  const id = activeV2DetailSessionId;
+  const toggle = document.getElementById("v2-detail-sharing-toggle");
+  if (!id || !toggle) return;
+  const enabled = toggle.checked;
+  clearV2DetailError();
+  setV2Busy(true);
+  try {
+    await v2SetSharingEnabled(id, enabled);
+  } catch (err) {
+    showV2DetailError(err.message);
+  } finally {
+    await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
+    setV2Busy(false);
+  }
+}
+
 // =============================================================================
 // 7c. Health badge (SPEC task 12, AC-008 -- wired 2026-09-25)
 // =============================================================================
@@ -2240,6 +2377,158 @@ async function loadHealth() {
 }
 
 // =============================================================================
+// 7d. "Shared with me" -- read-only guest view (SPEC-DELTA-2026-09-25-
+//     session-sharing-stage1, AC-034/AC-035)
+// =============================================================================
+//
+// A completely separate read path from the host's own v2 code above: the
+// host reads their OWN drive (/me/drive/root:/...); a guest reads whatever
+// Graph's own sharedWithMe surfaced, addressed by the OWNER's driveId/itemId
+// (/drives/{driveId}/items/{itemId}/content), never the guest's own root.
+// No composer, no model/mode/stop, no overflow menu anywhere in this
+// section -- reusing v2-detail's write controls here would be a real
+// access-control bug, not a UX slip.
+
+let activeSharedItem = null;
+
+function showSharedListError(message) {
+  const el = document.getElementById("shared-list-error-state");
+  if (!el) return;
+  el.textContent = translateErrorMessage(message);
+  el.hidden = false;
+}
+function clearSharedListError() {
+  const el = document.getElementById("shared-list-error-state");
+  if (el) el.hidden = true;
+}
+function showSharedDetailError(message) {
+  const el = document.getElementById("shared-detail-error-state");
+  if (!el) return;
+  el.textContent = translateErrorMessage(message);
+  el.hidden = false;
+}
+function clearSharedDetailError() {
+  const el = document.getElementById("shared-detail-error-state");
+  if (el) el.hidden = true;
+}
+
+/**
+ * GET /me/drive/sharedWithMe, filtered to mobile-cockpit v2 session records
+ * (AC-034: never any OTHER kind of file someone might have shared with this
+ * account). `.json` is a loose filter, but this app has no other sharing
+ * feature to collide with it.
+ */
+async function loadSharedWithMe() {
+  const res = await graphFetch("/me/drive/sharedWithMe");
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "");
+    throw new Error(`loadSharedWithMe: GET failed ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
+  }
+  const json = await res.json().catch(() => null);
+  const items = Array.isArray(json?.value) ? json.value : [];
+  return items
+    .filter((item) => item.remoteItem && typeof item.remoteItem.name === "string" && item.remoteItem.name.endsWith(".json"))
+    .map((item) => ({
+      driveId: item.remoteItem.parentReference?.driveId,
+      itemId: item.remoteItem.id,
+      name: item.remoteItem.name,
+    }))
+    .filter((item) => item.driveId && item.itemId);
+}
+
+async function renderSharedList() {
+  clearSharedListError();
+  const ul = document.getElementById("shared-session-list");
+  const empty = document.getElementById("shared-list-empty-state");
+  if (!ul || !empty) return;
+  let items;
+  try {
+    items = await loadSharedWithMe();
+  } catch (err) {
+    showSharedListError(err.message);
+    return;
+  }
+  ul.innerHTML = "";
+  if (items.length === 0) {
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+  for (const item of items) {
+    const li = document.createElement("li");
+    li.className = "cockpit-session-row";
+    li.tabIndex = 0;
+    const title = document.createElement("span");
+    title.className = "cockpit-row-title";
+    title.textContent = item.name.replace(/\.json$/, "");
+    li.appendChild(title);
+    const goToDetail = () => setView("shared-detail", { driveId: item.driveId, itemId: item.itemId });
+    li.addEventListener("click", goToDetail);
+    li.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        goToDetail();
+      }
+    });
+    ul.appendChild(li);
+  }
+}
+
+/** GET .../content on the OWNER's drive item -- never the guest's own /me/drive/root. */
+async function loadSharedRecord(driveId, itemId) {
+  const res = await graphFetch(`/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/content`);
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "");
+    throw new Error(`loadSharedRecord: GET failed ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
+  }
+  return res.json();
+}
+
+async function renderSharedDetail(driveId, itemId) {
+  clearSharedDetailError();
+  activeSharedItem = { driveId, itemId };
+  let record;
+  try {
+    record = await loadSharedRecord(driveId, itemId);
+  } catch (err) {
+    showSharedDetailError(err.message);
+    return;
+  }
+  const titleEl = document.getElementById("shared-detail-title");
+  if (titleEl) titleEl.textContent = record.id || "(shared session)";
+  renderSharedMessages(record);
+}
+
+/** Read-only render -- deliberately NOT renderV2Messages (no streaming bubble,
+ * no write-path coupling of any kind; a shared record never has a composer). */
+function renderSharedMessages(record) {
+  const container = document.getElementById("shared-messages");
+  if (!container) return;
+  container.innerHTML = "";
+  const messages = orderMessagesForDisplay(record.messages);
+  for (const raw of messages) {
+    const m = formatSessionMessage(raw);
+    const bubble = document.createElement("div");
+    bubble.className = `v2-message v2-role-${m.role}`;
+    const label = document.createElement("div");
+    label.className = "v2-message-role-label";
+    label.textContent = m.label;
+    bubble.appendChild(label);
+    const text = document.createElement("div");
+    text.className = "v2-message-text";
+    text.textContent = m.text;
+    bubble.appendChild(text);
+    container.appendChild(bubble);
+  }
+  if (messages.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "v2-message v2-role-system";
+    empty.textContent = "No messages yet.";
+    container.appendChild(empty);
+  }
+}
+
+// =============================================================================
 // 8. Bootstrap
 // =============================================================================
 
@@ -2269,8 +2558,8 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS] = await Promise.all([
-      import("./write-helpers.mjs?v=07b8f67"),
-      import("./ide-helpers.mjs?v=07b8f67"),
+      import("./write-helpers.mjs?v=14fb909"),
+      import("./ide-helpers.mjs?v=14fb909"),
       import("./refresh-helpers.mjs"),
       import("./transcript-model.mjs"),
       import("./scrollback-helpers.mjs"),
@@ -2375,6 +2664,12 @@ async function bootstrap() {
       renderV2List().catch((err) => showV2ListError(err.message));
     });
   }
+  const btnSharedRefresh = document.getElementById("btn-shared-refresh");
+  if (btnSharedRefresh) {
+    btnSharedRefresh.addEventListener("click", () => {
+      renderSharedList().catch((err) => showSharedListError(err.message));
+    });
+  }
   const btnV2DetailRefresh = document.getElementById("btn-v2-detail-refresh");
   if (btnV2DetailRefresh) {
     btnV2DetailRefresh.addEventListener("click", () => {
@@ -2422,6 +2717,18 @@ async function bootstrap() {
   if (v2ModeSelect) {
     v2ModeSelect.addEventListener("change", () => {
       handleV2ModeChange().catch((err) => showV2DetailError(err.message));
+    });
+  }
+  const v2ShareInviteForm = document.getElementById("v2-share-invite-form");
+  if (v2ShareInviteForm) {
+    v2ShareInviteForm.addEventListener("submit", (evt) => {
+      handleV2ShareInviteSubmit(evt).catch((err) => showV2DetailError(err.message));
+    });
+  }
+  const v2SharingToggle = document.getElementById("v2-detail-sharing-toggle");
+  if (v2SharingToggle) {
+    v2SharingToggle.addEventListener("change", () => {
+      handleV2SharingToggleChange().catch((err) => showV2DetailError(err.message));
     });
   }
 
