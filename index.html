@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-25 08:10 CEST 4c877ad in config.json + app.js).
+  script (replaces 2026-09-25 10:30 CEST 07b8f67 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=4c877ad")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=07b8f67")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -457,9 +457,15 @@
       <span id="build-stamp" aria-label="Build timestamp">stamp-not-set</span>
       —
       <span id="conn-state" aria-live="polite">offline</span>
+      —
+      <!-- SPEC task 12 (AC-008), wired 2026-09-25: GET .../cursor-cockpit/health.json
+           (same file the daemon publishes to via lib/health-store.mjs). Hidden
+           until the first successful load; app.js#loadHealth sets data-state
+           and the visible text, never more than one status at a time. -->
+      <span id="health-badge" data-state="unknown" aria-live="polite" hidden></span>
     </small>
   </footer>
 
-  <script src="./app.js?v=4c877ad" defer></script>
+  <script src="./app.js?v=07b8f67" defer></script>
 </body>
 </html>

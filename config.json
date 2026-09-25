@@ -27,6 +27,12 @@
     "relativePath": "cursor-cockpit/sessions",
     "endpoint": "/me/drive/root:/cursor-cockpit/sessions"
   },
+  "health": {
+    "_comment": "SPEC task 12 (AC-008), wired 2026-09-25. relativePath MUST match HEALTH_RELATIVE_PATH in lib/config.mjs. Coherence enforced by pwa-config-coherence.sh.",
+    "relativePath": "cursor-cockpit/health.json",
+    "endpoint": "/me/drive/root:/cursor-cockpit/health.json",
+    "pollIntervalSeconds": 60
+  },
   "ideTabs": {
     "_comment": "M2.1 read-only mirror of live Cursor IDE chat tabs, written by flows/mobile-cockpit/ide-mirror/poll.mjs. PWA fetches GET-only; ETag tracking is not required here. The relativePath MUST match IDE_TABS_RELATIVE_PATH in ide-mirror/poll.mjs (which derives from ONEDRIVE.folderName + 'ide-tabs.json'). pollIntervalSeconds is independent of pwa.pollIntervalSeconds so the lighter read-only path can refresh faster than the sessions list.",
     "relativePath": "cursor-cockpit/ide-tabs.json",

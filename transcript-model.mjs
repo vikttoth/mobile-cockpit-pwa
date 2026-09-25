@@ -33,6 +33,22 @@ const TITLE_MAX_LEN = 60;
 // constant rather than a shared import because this module has zero
 // dependencies on daemon/ by design (pure model, no daemon-loop coupling).
 const VALID_MODES = Object.freeze(["agent", "plan", "ask"]);
+// SPEC task 7 (S-010/S-011, AC-025/026/027): the two hosts that can hold an
+// exclusive write lease. "daemon" is the unleased default and is never a
+// take-over target -- handBackLease is how a record returns to it.
+//
+// Restored 2026-09-25 after a same-night removal (2026-09-24): for Viktor's
+// own one-operator, one-device-at-a-time usage this stays deliberately
+// DORMANT -- no UI anywhere calls takeOverLease, so `owner` never leaves
+// `"daemon"` in practice. Kept in the backend (not deleted a second time)
+// for a real, if rare, future case: sharing write access to this OneDrive
+// path with a second real person (e.g. a demo/pairing session) turns "two
+// writers" from theoretical into real, and this is exactly the mechanism
+// that would let one of them hold control while the other only watches.
+// Do not wire this back into pwa/app.js or local-ui/app.js without a fresh
+// go-ahead -- see SPEC.md's "Lease restored, dormant" note.
+const LEASABLE_OWNERS = Object.freeze(["laptop", "phone"]);
+const DEFAULT_LEASE_EXPIRY_MS = 90_000;
 
 function isoNow(nowMs) {
   return new Date(nowMs).toISOString();
@@ -473,14 +489,121 @@ export function deriveNextAction(record, opts) {
   };
 }
 
-// Lease take-over/hand-back/heartbeat/expiry (task 7, S-010/S-011) were
-// removed 2026-09-24: for Viktor's actual single-operator, one-device-at-
-// a-time usage, "another host might write conflicting turns" never
-// happens, so the whole mechanism was pure UI noise with no real
-// protection behind it. `owner`/`lease` stay in the record/index shape
-// below as inert constants ("daemon"/null, forever) rather than a deeper
-// schema migration touching every existing shape assertion for no
-// behavioral gain -- nothing ever sets them to anything else anymore.
+/**
+ * Pure lease take-over (SPEC task 7, S-010, AC-025/AC-027): "the transition
+ * shall be atomic under eTag, and never leave two writers." This function
+ * has no opinion about the CURRENT holder -- take-over always wins, by
+ * design (a user explicitly clicking "take over" is preempting whoever has
+ * it, not negotiating with them). Atomicity itself comes from the caller
+ * writing the result through the record's own etag (session-store.mjs),
+ * the same retry-on-412 contract every other mutation here already uses.
+ *
+ * @param {object} record
+ * @param {{owner: "laptop"|"phone", now: number, expiryWindowMs?: number}} opts
+ * @returns {object} new session record
+ */
+export function takeOverLease(record, opts) {
+  if (!LEASABLE_OWNERS.includes(opts?.owner)) {
+    throw new Error(
+      `takeOverLease: owner '${opts?.owner}' is not leasable; expected one of: ${LEASABLE_OWNERS.join(", ")}`,
+    );
+  }
+  if (!Number.isFinite(opts?.now)) {
+    throw new Error("takeOverLease: now must be a finite epoch-ms number");
+  }
+  const expiryWindowMs = Number.isFinite(opts.expiryWindowMs) ? opts.expiryWindowMs : DEFAULT_LEASE_EXPIRY_MS;
+  const nowIso = isoNow(opts.now);
+  return {
+    ...record,
+    owner: opts.owner,
+    lease: { owner: opts.owner, heartbeatAt: nowIso, expiresAt: isoNow(opts.now + expiryWindowMs) },
+    updatedAt: nowIso,
+  };
+}
+
+/**
+ * Pure hand-back (SPEC task 7, AC-025/AC-027): returns ownership to the
+ * daemon, clearing the lease. Symmetric with `takeOverLease`.
+ *
+ * @param {object} record
+ * @param {{now: number}} opts
+ * @returns {object} new session record
+ */
+export function handBackLease(record, opts) {
+  if (!Number.isFinite(opts?.now)) {
+    throw new Error("handBackLease: now must be a finite epoch-ms number");
+  }
+  return { ...record, owner: "daemon", lease: null, updatedAt: isoNow(opts.now) };
+}
+
+/**
+ * Pure heartbeat renewal (SPEC task 7, AC-026's counterpart -- what keeps a
+ * lease from expiring while its holder is still alive). Requires the
+ * caller to name the owner it believes it is, and throws
+ * `code: "LEASE_OWNER_MISMATCH"` if that does not match the lease's actual
+ * holder -- a stale or wrong host renewing someone else's lease is exactly
+ * the "two writers" AC-027 warns against, so this fails loudly rather than
+ * silently extending the wrong lease.
+ *
+ * @param {object} record
+ * @param {{owner: "laptop"|"phone", now: number, expiryWindowMs?: number}} opts
+ * @returns {object} new session record
+ */
+export function renewLeaseHeartbeat(record, opts) {
+  if (!record.lease) {
+    const err = new Error("renewLeaseHeartbeat: no active lease to renew");
+    err.code = "NO_ACTIVE_LEASE";
+    throw err;
+  }
+  if (record.lease.owner !== opts?.owner) {
+    const err = new Error(
+      `renewLeaseHeartbeat: caller claims owner '${opts?.owner}' but the lease is held by '${record.lease.owner}'`,
+    );
+    err.code = "LEASE_OWNER_MISMATCH";
+    throw err;
+  }
+  if (!Number.isFinite(opts?.now)) {
+    throw new Error("renewLeaseHeartbeat: now must be a finite epoch-ms number");
+  }
+  const expiryWindowMs = Number.isFinite(opts.expiryWindowMs) ? opts.expiryWindowMs : DEFAULT_LEASE_EXPIRY_MS;
+  const nowIso = isoNow(opts.now);
+  return {
+    ...record,
+    lease: { owner: record.lease.owner, heartbeatAt: nowIso, expiresAt: isoNow(opts.now + expiryWindowMs) },
+    updatedAt: nowIso,
+  };
+}
+
+/**
+ * Pure expiry check (SPEC task 7, S-011, AC-026): "If a lease heartbeat is
+ * missed beyond the expiry window, then the lease shall lapse and
+ * ownership shall return to the daemon, recorded as `lease expired`."
+ * A safe no-op when there is no lease, or the lease is still within its
+ * window -- the daemon calls this on every tick for every leased session
+ * without needing to pre-check whether one exists.
+ *
+ * @param {object} record
+ * @param {{now: number}} opts
+ * @returns {{expired: boolean, record: object}}
+ */
+export function expireLeaseIfStale(record, opts) {
+  if (!Number.isFinite(opts?.now)) {
+    throw new Error("expireLeaseIfStale: now must be a finite epoch-ms number");
+  }
+  if (!record.lease || opts.now <= Date.parse(record.lease.expiresAt)) {
+    return { expired: false, record: { ...record } };
+  }
+  const previousOwner = record.lease.owner;
+  const withNote = appendMessage(record, {
+    role: "system",
+    text: `Lease expired for ${previousOwner}; ownership returned to daemon.`,
+    now: opts.now,
+  });
+  return {
+    expired: true,
+    record: { ...withNote, owner: "daemon", lease: null },
+  };
+}
 
 /**
  * SPEC task 6/7 v2-action-tick wiring (2026-09-24): pop `queue[0]` and start
@@ -604,6 +727,42 @@ export function resolveFinishedTurn(record, opts) {
     return { ...appended, status: "running", startedAt: isoNow(opts.now) };
   }
   return decision.record;
+}
+
+/**
+ * Daemon-restart recovery (2026-09-25): if the daemon process dies (or is
+ * restarted) while a v2 session is mid-turn, `daemon/lib/child-registry.mjs`'s
+ * in-memory map -- the ONLY place "a process is actually running for this
+ * session" is tracked -- is empty on the next process, but the session
+ * record on Graph still says `status: "running"`. Nothing else ever un-sticks
+ * that: `deriveNextAction`'s start-check only considers non-running sessions,
+ * and the kill-check only looks at registry entries, so a record stuck this
+ * way would otherwise stay "running" forever with no real process behind it.
+ *
+ * A safe no-op if the record isn't actually `"running"` (the caller is
+ * expected to have already filtered by the registry's own `.has(id)`, but
+ * this stays defensive rather than trusting that). Reuses
+ * `resolveFinishedTurn` rather than duplicating its queued-follow-up logic --
+ * marking the record `"failed"` and letting `deriveNextAction` decide from
+ * there is exactly the same shape as a normal kill-with-no-output finish.
+ *
+ * @param {object} record
+ * @param {{now: number}} opts
+ * @returns {object} new session record
+ */
+export function recoverOrphanedRunningSession(record, opts) {
+  if (!Number.isFinite(opts?.now)) {
+    throw new Error("recoverOrphanedRunningSession: now must be a finite epoch-ms number");
+  }
+  if (record.status !== "running") {
+    return { ...record };
+  }
+  const withNote = appendMessage(record, {
+    role: "system",
+    text: "Recovered after a daemon restart; the previous run's process was lost and this turn is marked failed.",
+    now: opts.now,
+  });
+  return resolveFinishedTurn(withNote, { resultDelta: { status: "failed" }, now: opts.now });
 }
 
 /**

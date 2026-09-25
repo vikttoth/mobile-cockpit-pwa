@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-25 08:10 CEST 4c877ad`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-25 08:10 CEST 4c877ad";
+// `2026-09-25 10:30 CEST 07b8f67`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-25 10:30 CEST 07b8f67";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -2194,6 +2194,52 @@ async function handleV2ModeChange() {
 }
 
 // =============================================================================
+// 7c. Health badge (SPEC task 12, AC-008 -- wired 2026-09-25)
+// =============================================================================
+//
+// GET .../cursor-cockpit/health.json -- the SAME file the daemon publishes
+// to on every tick where silent MSAL auth just succeeded (see
+// daemon/poll.mjs#publishDaemonHealth). Read-only here; the phone never
+// writes this file. Never more than one status shown, matching
+// buildHealthStatus's own "exactly one {state, remediation, checkedAt}"
+// contract -- this function only renders whatever that one object says.
+
+/** Renders one health status into #health-badge. Never throws. */
+function renderHealthBadge(status) {
+  const el = document.getElementById("health-badge");
+  if (!el) return;
+  if (!status || !status.state || status.state === "unknown") {
+    el.hidden = true;
+    return;
+  }
+  el.dataset.state = status.state;
+  el.title = status.remediation || "";
+  const labels = {
+    ok: "auth ok",
+    cache_missing: "auth: not signed in on laptop",
+    cache_corrupt: "auth: cache corrupt",
+    auth_failing: "auth: sign-in failing",
+    expired: "auth: token expired",
+    expiring_soon: "auth: expiring soon",
+  };
+  el.textContent = labels[status.state] || `auth: ${status.state}`;
+  el.hidden = status.state === "ok";
+}
+
+/** Fetches the daemon-published health status and renders it. Never throws. */
+async function loadHealth() {
+  if (!CONFIG.health) return;
+  try {
+    const { json } = await loadJson(CONFIG.health.endpoint);
+    renderHealthBadge(json);
+  } catch {
+    // Read-only, best-effort -- a failed fetch just leaves the badge as it
+    // was (or hidden, if it never loaded), same "don't crash the rest of
+    // the app over a secondary signal" posture as the IDE-tabs mirror.
+  }
+}
+
+// =============================================================================
 // 8. Bootstrap
 // =============================================================================
 
@@ -2223,8 +2269,8 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS] = await Promise.all([
-      import("./write-helpers.mjs?v=4c877ad"),
-      import("./ide-helpers.mjs?v=4c877ad"),
+      import("./write-helpers.mjs?v=07b8f67"),
+      import("./ide-helpers.mjs?v=07b8f67"),
       import("./refresh-helpers.mjs"),
       import("./transcript-model.mjs"),
       import("./scrollback-helpers.mjs"),
@@ -2250,6 +2296,13 @@ async function bootstrap() {
 
   setStatusBadge(`signed in: ${activeAccount.username} (read-write)`, "ok");
   if (connEl) connEl.textContent = "online";
+
+  // SPEC task 12 (AC-008): fire-and-forget, does not block the rest of
+  // bootstrap -- a slow/failed health fetch must never delay sign-in.
+  loadHealth();
+  if (CONFIG.health && Number.isFinite(CONFIG.health.pollIntervalSeconds)) {
+    setInterval(loadHealth, CONFIG.health.pollIntervalSeconds * 1000);
+  }
 
   // Wire navigation + write-path buttons.
   const btnRefresh = document.getElementById("btn-refresh");
