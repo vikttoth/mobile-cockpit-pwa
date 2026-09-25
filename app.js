@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-24 23:25 CEST 80aedc0`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-24 23:25 CEST 80aedc0";
+// `2026-09-25 08:10 CEST 4c877ad`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-25 08:10 CEST 4c877ad";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -2223,8 +2223,8 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS] = await Promise.all([
-      import("./write-helpers.mjs?v=80aedc0"),
-      import("./ide-helpers.mjs?v=80aedc0"),
+      import("./write-helpers.mjs?v=4c877ad"),
+      import("./ide-helpers.mjs?v=4c877ad"),
       import("./refresh-helpers.mjs"),
       import("./transcript-model.mjs"),
       import("./scrollback-helpers.mjs"),

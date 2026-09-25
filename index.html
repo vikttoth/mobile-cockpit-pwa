@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-24 23:25 CEST 80aedc0 in config.json + app.js).
+  script (replaces 2026-09-25 08:10 CEST 4c877ad in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=80aedc0")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=4c877ad")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -165,12 +165,19 @@
       <h2 id="detail-title">…</h2>
       <dl class="cockpit-detail-meta">
         <dt>Status</dt><dd id="detail-status">…</dd>
-        <dt>Session ID</dt><dd id="detail-session-id">…</dd>
-        <dt>Cursor agent</dt><dd id="detail-agent-id">…</dd>
         <dt>Model</dt><dd id="detail-model">…</dd>
         <dt>Created</dt><dd id="detail-created">…</dd>
         <dt>Last updated</dt><dd id="detail-updated">…</dd>
       </dl>
+      <!-- IDs nobody reads day to day -- same disclosure pattern already used
+           by the IDE-tab detail view above, not a new component. -->
+      <details class="cockpit-detail-meta-collapse">
+        <summary>Session details</summary>
+        <dl class="cockpit-detail-meta">
+          <dt>Session ID</dt><dd id="detail-session-id">…</dd>
+          <dt>Cursor agent</dt><dd id="detail-agent-id">…</dd>
+        </dl>
+      </details>
       <section class="cockpit-detail-prompt">
         <h3>Prompt</h3>
         <pre id="detail-prompt-text">…</pre>
@@ -453,6 +460,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=80aedc0" defer></script>
+  <script src="./app.js?v=4c877ad" defer></script>
 </body>
 </html>
