@@ -89,6 +89,11 @@ function requireNonEmptyString(value, label) {
  *   No `childIds[]` either: the UI derives "children of X" by filtering
  *   the light index for `parentId === X` rather than maintaining a second,
  *   invertible list that could drift from the records it describes.
+ * @param {number} [opts.sequenceNumber]  1-based position among the creating
+ *   host's sessions at creation time (2026-09-26, "Chat1/Chat2/..." default
+ *   naming) -- defaults to 1 when omitted so every pre-existing caller/test
+ *   stays valid. Best-effort, not a strict global counter: see
+ *   `SPEC-DELTA-2026-09-26-ui-cleanup-and-ide-open-tabs.md` open question 1.
  * @param {number} opts.now           epoch ms
  * @returns {object} session record
  */
@@ -107,6 +112,10 @@ export function buildSessionRecord(opts) {
     throw new Error("buildSessionRecord: now must be a finite epoch-ms number");
   }
   const nowIso = isoNow(opts.now);
+  const sequenceNumber =
+    Number.isFinite(opts.sequenceNumber) && opts.sequenceNumber > 0
+      ? Math.floor(opts.sequenceNumber)
+      : 1;
   return {
     schemaVersion: 1,
     id: opts.id,
@@ -126,6 +135,8 @@ export function buildSessionRecord(opts) {
     worktree: opts.worktree ?? null,
     sharedWith: [],
     sharingEnabled: false,
+    sequenceNumber,
+    customTitle: null,
     createdAt: nowIso,
     updatedAt: nowIso,
   };
@@ -188,20 +199,53 @@ export function appendMessage(record, msg) {
 }
 
 /**
- * Human-friendly title, derived from the first user message. Falls back to
- * "(untitled)" before any user message exists (e.g. right after
- * buildSessionRecord, before the first prompt lands).
+ * Human-friendly title. Precedence (2026-09-26, SPEC-DELTA-2026-09-26-ui-cleanup):
+ *   1. `record.customTitle`, if the host set one via the rename control --
+ *      always wins, even once a first message exists.
+ *   2. Derived from the first user message, once one exists.
+ *   3. `Chat${sequenceNumber}` -- replaces the old bare "(untitled)" fallback
+ *      so a brand-new chat gets a Claude-style sequential default name
+ *      instead of an empty-looking placeholder or a hand-typed id.
  *
  * @param {object} record
  * @returns {string}
  */
 export function deriveTitle(record) {
+  if (typeof record?.customTitle === "string" && record.customTitle.trim().length > 0) {
+    return record.customTitle.trim();
+  }
   const messages = Array.isArray(record?.messages) ? record.messages : [];
   const firstUser = messages.find((m) => m && m.role === "user" && typeof m.text === "string");
-  if (!firstUser) return "(untitled)";
-  const text = firstUser.text.trim();
-  if (text.length <= TITLE_MAX_LEN) return text;
-  return text.slice(0, TITLE_MAX_LEN - 3) + "...";
+  if (firstUser) {
+    const text = firstUser.text.trim();
+    if (text.length <= TITLE_MAX_LEN) return text;
+    return text.slice(0, TITLE_MAX_LEN - 3) + "...";
+  }
+  const n = Number.isFinite(record?.sequenceNumber) && record.sequenceNumber > 0 ? Math.floor(record.sequenceNumber) : 1;
+  return `Chat${n}`;
+}
+
+/**
+ * Pure rename: sets (or clears) `customTitle`, which `deriveTitle` prefers
+ * over everything else once non-empty. Passing an empty/whitespace-only
+ * string clears the override, reverting display to the derived title --
+ * mirrors `archiveSession`/`unarchiveSession`'s "one field, symmetric
+ * on/off" shape.
+ *
+ * @param {object} record
+ * @param {{customTitle: string|null, now: number}} opts
+ * @returns {object} new session record
+ */
+export function setCustomTitle(record, opts) {
+  if (!Number.isFinite(opts?.now)) {
+    throw new Error("setCustomTitle: now must be a finite epoch-ms number");
+  }
+  const trimmed = typeof opts?.customTitle === "string" ? opts.customTitle.trim() : "";
+  return {
+    ...record,
+    customTitle: trimmed.length > 0 ? trimmed : null,
+    updatedAt: isoNow(opts.now),
+  };
 }
 
 /**

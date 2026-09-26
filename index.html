@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-25 12:11 CEST 14fb909 in config.json + app.js).
+  script (replaces 2026-09-26 16:32 CEST 9bed028 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,13 +45,13 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=14fb909")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=9bed028")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
   <link rel="stylesheet" href="./style.css" />
 </head>
-<body data-view="list">
+<body data-view="v2-list">
   <header class="cockpit-header" role="banner">
     <h1>Mobile cockpit</h1>
     <span class="cockpit-status-badge" id="status-badge" data-status="unknown" aria-live="polite">
@@ -61,193 +61,30 @@
   </header>
 
   <!--
-    Top-level mode toggle: switch between read-write Sessions (mobile-spawned)
-    and read-only IDE tabs (mirror of live Cursor IDE chat tabs). app.js wires
-    the buttons to setView('list') / setView('ide-tabs') / setView('app-info')
-    and updates the aria-current attribute. The toggle is hidden in detail /
-    new / ide-tab detail views (app.js#setView toggles `body[data-view]` and
-    CSS hides .cockpit-mode-toggle when body[data-view] is anything except
-    "list", "ide-tabs", or "app-info").
+    Top-level mode toggle. app.js wires the buttons to setView(...) and
+    updates the aria-current attribute. The toggle is hidden in detail / new
+    / ide-tab detail views (app.js#setView toggles `body[data-view]` and CSS
+    hides .cockpit-mode-toggle when body[data-view] is anything except
+    "v2-list", "ide-tabs", or "shared-list").
+
+    v1's "Sessions" and "App" tabs were removed 2026-09-26
+    (SPEC-DELTA-2026-09-26-ui-cleanup, item A) -- no in-flight v1 session
+    needed migrating, so this was a clean deletion, same shape as the
+    2026-09-21 extension/ amputation. "IDE tabs" moves to the END of the nav
+    (item G) -- Viktor's ask, after "Shared".
   -->
   <nav class="cockpit-mode-toggle" role="tablist" aria-label="View mode">
-    <button type="button" id="btn-mode-sessions" class="cockpit-mode-btn"
-            role="tab" data-target-view="list" aria-current="true">Sessions</button>
-    <button type="button" id="btn-mode-ide-tabs" class="cockpit-mode-btn"
-            role="tab" data-target-view="ide-tabs">IDE tabs</button>
     <button type="button" id="btn-mode-v2" class="cockpit-mode-btn"
-            role="tab" data-target-view="v2-list"
+            role="tab" data-target-view="v2-list" aria-current="true"
             title="Mobile follow-along: chat-model sessions with live streaming, queue/force, model switch, sub-agents">Chat</button>
-    <button type="button" id="btn-mode-app-info" class="cockpit-mode-btn"
-            role="tab" data-target-view="app-info"
-            title="Android app — Cursor costs, API usage, stack">App</button>
     <button type="button" id="btn-mode-shared" class="cockpit-mode-btn"
             role="tab" data-target-view="shared-list"
             title="Sessions someone else shared with you, read-only (SPEC-DELTA-2026-09-25-session-sharing-stage1)">Shared</button>
+    <button type="button" id="btn-mode-ide-tabs" class="cockpit-mode-btn"
+            role="tab" data-target-view="ide-tabs">IDE tabs</button>
   </nav>
 
   <main>
-    <!-- View 1: list of sessions (default). -->
-    <section id="view-list" class="cockpit-view" data-view-id="list">
-      <div class="cockpit-list-toolbar">
-        <button type="button" id="btn-new-session" class="cockpit-btn cockpit-btn-primary">+ New session</button>
-        <button type="button" id="btn-refresh" class="cockpit-btn" aria-label="Refresh list">↻</button>
-      </div>
-      <ul id="session-list" class="cockpit-session-list" role="list">
-        <!-- Populated by app.js#renderList() with:
-             <li class="cockpit-session-row" data-session-id="...">
-               <span class="cockpit-row-title">…</span>
-               <span class="cockpit-row-status" data-status="...">…</span>
-               <time class="cockpit-row-time" datetime="…">…</time>
-             </li>
-        -->
-      </ul>
-      <p id="list-empty-state" class="cockpit-empty" hidden>
-        No sessions yet. Tap <strong>+ New session</strong> to create one.
-      </p>
-      <p id="list-error-state" class="cockpit-error" hidden role="alert"></p>
-    </section>
-
-    <!--
-      View 1b: standing cost + stack notice (mobile / Android first-class).
-      Static copy + official links — amounts change; cursor.com is canonical.
-      Deep link: #info (see write-helpers formatViewHash / parseLocationHash).
-    -->
-    <section id="view-app-info" class="cockpit-view cockpit-app-info" data-view-id="app-info" hidden>
-      <h2 class="cockpit-app-info-title">App — costs &amp; stack</h2>
-      <p class="cockpit-hint" role="note">
-        Cursor lists current plan prices on the web. This screen is a permanent reminder of <strong>what consumes your quota</strong> when you use mobile-cockpit sessions from Android / Edge mobile.
-      </p>
-
-      <article class="cockpit-app-info-block" lang="hu">
-        <h3>HU — Állandó költség tájékoztatás</h3>
-        <p>
-          A <strong>Sessions</strong> nézetben indított / jóváhagyott futások a laptopodon futó
-          <strong>cursor-agent</strong> CLI-n keresztül mennek a Cursor felhő API-jára
-          (<code>CURSOR_API_KEY</code>, lásd <code>daemon/setup-cursor-api-key.ps1</code>).
-          A díj a <strong>Cursor előfizetésed + modell / API-használat</strong> szerint alakul — konkrét összegekért mindig a Cursor honlap a mérvadó.
-        </p>
-        <p>
-          A promptok és kimenetek <strong>OneDrive-on</strong> landolnak (<code>cursor-cockpit/state.json</code>).
-          Ne küldj ide titkos / Nokia üzleti adatot (bér, ügyelet, ügyfél kód, stb.).
-        </p>
-      </article>
-
-      <article class="cockpit-app-info-block" lang="en">
-        <h3>EN — Standing cost notice</h3>
-        <p>
-          <strong>Sessions</strong> you create or approve here are executed on your laptop by the
-          <strong>cursor-agent</strong> CLI against Cursor&rsquo;s cloud API (<code>CURSOR_API_KEY</code>).
-          Billing follows your <strong>Cursor subscription and model / API usage</strong> — see the official pricing page for numbers.
-        </p>
-        <p>
-          Prompts and outputs are mirrored to <strong>OneDrive</strong> (<code>cursor-cockpit/state.json</code>).
-          Do not put salary, standby, customer code, or other sensitive Nokia data in prompts.
-        </p>
-      </article>
-
-      <section class="cockpit-app-info-links" aria-label="Official Cursor links">
-        <h3>Official links</h3>
-        <ul>
-          <li><a href="https://cursor.com/pricing" target="_blank" rel="noopener noreferrer">cursor.com/pricing</a> — current plans</li>
-          <li><a href="https://cursor.com/dashboard" target="_blank" rel="noopener noreferrer">cursor.com/dashboard</a> — account</li>
-          <li><a href="https://cursor.com/dashboard/integrations" target="_blank" rel="noopener noreferrer">cursor.com/dashboard/integrations</a> — API keys</li>
-        </ul>
-      </section>
-
-      <p class="cockpit-app-info-foot muted">
-        IDE tab titles may show <em>Android app for …</em> when the chat was opened from Cursor&rsquo;s Android client — same cloud usage rules apply.
-      </p>
-    </section>
-
-    <!-- View 2: detail of a single session. -->
-    <section id="view-detail" class="cockpit-view" data-view-id="detail" hidden>
-      <div class="cockpit-detail-header">
-        <button type="button" class="cockpit-back-btn" data-target-view="list" aria-label="Back to list">← Back</button>
-        <button type="button" id="btn-detail-refresh" class="cockpit-btn" aria-label="Refresh session">↻</button>
-      </div>
-      <h2 id="detail-title">…</h2>
-      <dl class="cockpit-detail-meta">
-        <dt>Status</dt><dd id="detail-status">…</dd>
-        <dt>Model</dt><dd id="detail-model">…</dd>
-        <dt>Created</dt><dd id="detail-created">…</dd>
-        <dt>Last updated</dt><dd id="detail-updated">…</dd>
-      </dl>
-      <!-- IDs nobody reads day to day -- same disclosure pattern already used
-           by the IDE-tab detail view above, not a new component. -->
-      <details class="cockpit-detail-meta-collapse">
-        <summary>Session details</summary>
-        <dl class="cockpit-detail-meta">
-          <dt>Session ID</dt><dd id="detail-session-id">…</dd>
-          <dt>Cursor agent</dt><dd id="detail-agent-id">…</dd>
-        </dl>
-      </details>
-      <section class="cockpit-detail-prompt">
-        <h3>Prompt</h3>
-        <pre id="detail-prompt-text">…</pre>
-      </section>
-      <section class="cockpit-detail-output">
-        <h3 id="detail-output-heading">Output</h3>
-        <pre id="detail-output-text">…</pre>
-      </section>
-      <section id="detail-follow-up-panel" class="cockpit-detail-follow-up" hidden>
-        <h3>Follow-up prompt</h3>
-        <p class="cockpit-hint">Continues the same Cursor agent chat (<code>--resume</code>).</p>
-        <form id="follow-up-form" class="cockpit-form">
-          <label>
-            Prompt
-            <textarea id="follow-up-prompt" name="prompt" required maxlength="8000" rows="4"
-                      placeholder="What should the agent do next?"></textarea>
-          </label>
-          <div class="cockpit-form-actions">
-            <button type="submit" id="btn-follow-up-submit" class="cockpit-btn cockpit-btn-primary">Queue follow-up</button>
-            <button type="button" id="btn-follow-up-cancel" class="cockpit-btn">Cancel</button>
-          </div>
-        </form>
-      </section>
-      <div class="cockpit-detail-actions">
-        <!-- Stage A2: app.js#renderDetail() toggles visibility based on status + autoApprove. -->
-        <button type="button" id="btn-approve" class="cockpit-btn cockpit-btn-primary" hidden>Approve</button>
-        <button type="button" id="btn-cancel" class="cockpit-btn cockpit-btn-warning" hidden>Cancel</button>
-        <button type="button" id="btn-follow-up" class="cockpit-btn" hidden>Follow-up</button>
-      </div>
-      <p id="detail-error-state" class="cockpit-error" hidden role="alert"></p>
-    </section>
-
-    <!-- View 3: new-session composer (Stage A2). -->
-    <section id="view-new" class="cockpit-view" data-view-id="new" hidden>
-      <button type="button" class="cockpit-back-btn" data-target-view="list" aria-label="Back to list">← Back</button>
-      <h2>New session</h2>
-      <p class="cockpit-warning" role="note">
-        Do not include salary, talent, performance, standby, leave, or any
-        customer code / data in prompts. mobile-cockpit logs prompts and
-        outputs to OneDrive (cursor-cockpit/state.json).
-      </p>
-      <form id="new-session-form" class="cockpit-form">
-        <label>
-          Model
-          <!-- Options populated from CONFIG.session.modelOptions in app.js#populateModelSelect(). -->
-          <select id="new-model" name="model"></select>
-        </label>
-        <label>
-          Working directory
-          <!-- Options populated from CONFIG.session.allowedCwds in app.js#populateCwdSelect(). -->
-          <select id="new-cwd" name="cwd" required>
-            <option value="" selected>(daemon default)</option>
-          </select>
-        </label>
-        <label>
-          Prompt
-          <textarea id="new-prompt" name="prompt" required maxlength="8000" rows="6"
-                    placeholder="What should the agent do? Plain text only."></textarea>
-        </label>
-        <div class="cockpit-form-actions">
-          <button type="submit" id="btn-new-submit" class="cockpit-btn cockpit-btn-primary">Send</button>
-          <button type="button" id="btn-new-cancel" class="cockpit-btn">Cancel</button>
-        </div>
-      </form>
-      <p id="new-error-state" class="cockpit-error" hidden role="alert"></p>
-    </section>
-
     <!--
       View 4: IDE tabs list (read-only mirror, v2).
       Mirror of live Cursor IDE chat tabs from cursor-cockpit/ide-tabs.json
@@ -262,8 +99,12 @@
       <nav class="cockpit-ide-list-toggle" role="tablist" aria-label="IDE tab list">
         <button type="button" id="btn-ide-list-open" class="cockpit-ide-list-btn"
                 role="tab" data-ide-list-mode="open" aria-current="true">Open</button>
+        <!-- SPEC-DELTA-2026-09-26-ui-cleanup, item G: user-visible label only
+             -- data-ide-list-mode stays "history" and the internal
+             array/variable names in app.js are unchanged (renaming those
+             everywhere would be needless churn for a label-only ask). -->
         <button type="button" id="btn-ide-list-history" class="cockpit-ide-list-btn"
-                role="tab" data-ide-list-mode="history">History</button>
+                role="tab" data-ide-list-mode="history">Archive</button>
       </nav>
       <p id="ide-tabs-source-warning" class="cockpit-hint" hidden role="status"></p>
       <div class="cockpit-ide-summary" id="ide-summary" aria-live="polite">
@@ -334,11 +175,27 @@
         <button type="button" id="btn-v2-new-session" class="cockpit-btn cockpit-btn-primary">+ New chat</button>
         <button type="button" id="btn-v2-refresh" class="cockpit-btn" aria-label="Refresh v2 session list">↻</button>
       </div>
+      <!--
+        Active/Archive grouping (SPEC-DELTA-2026-09-26-ui-cleanup, item D).
+        The backend already fully supports this (archived: boolean,
+        archiveSession/unarchiveSession, PATCH .../archived) -- app.js#renderV2List
+        used to just filter archived sessions out entirely (dead end, no way
+        to see/restore them). Now renders two grouped sections instead of one
+        flat list.
+      -->
+      <h3 class="v2-list-section-title">Active</h3>
       <ul id="v2-session-list" class="cockpit-session-list" role="list">
         <!-- Populated by app.js#renderV2List(). -->
       </ul>
       <p id="v2-list-empty-state" class="cockpit-empty" hidden>
         No chat sessions yet. Tap <strong>+ New chat</strong> to start one.
+      </p>
+      <h3 class="v2-list-section-title">Archive</h3>
+      <ul id="v2-archive-list" class="cockpit-session-list" role="list">
+        <!-- Populated by app.js#renderV2List(). -->
+      </ul>
+      <p id="v2-archive-empty-state" class="cockpit-empty" hidden>
+        No archived chats.
       </p>
       <p id="v2-list-error-state" class="cockpit-error" hidden role="alert"></p>
     </section>
@@ -352,45 +209,99 @@
       only appears while a turn is running.
     -->
     <section id="view-v2-detail" class="cockpit-view" data-view-id="v2-detail" hidden>
+      <!--
+        Header redesign (SPEC-DELTA-2026-09-26-ui-cleanup, item B). Was:
+        raw-arrow-char Back + raw record.id as the title + refresh + an
+        always-broken "..." button (see item E -- .v2-detail-menu's CSS
+        [hidden] bug) opening an always-visible-anyway block. Now: an
+        icon-based Back, a tappable friendly title (opens the chat switcher
+        below), one settings-gear button (opens #v2-settings-sheet; shows a
+        dot when sharingEnabled), and refresh stays rightmost. The raw
+        chatId/record.id is never the primary displayed text anywhere in
+        this header -- see the labeled "Chat id" diagnostic row inside the
+        settings sheet's General section instead (same disclosure pattern as
+        the IDE-tab detail view's Composer ID row).
+      -->
       <div class="cockpit-detail-header">
-        <button type="button" class="cockpit-back-btn" data-target-view="v2-list" aria-label="Back to chat list">← Back</button>
-        <h2 id="v2-detail-title" class="v2-detail-title-inline">…</h2>
+        <button type="button" class="cockpit-back-btn cockpit-icon-btn" data-target-view="v2-list" aria-label="Back to chat list">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M5 12l14 0" />
+            <path d="M5 12l6 6" />
+            <path d="M5 12l6 -6" />
+          </svg>
+        </button>
+        <button type="button" id="btn-v2-detail-title" class="v2-detail-title-btn" aria-haspopup="listbox" aria-expanded="false" aria-label="Switch chat">
+          <span id="v2-detail-title" class="v2-detail-title-inline">…</span>
+        </button>
+        <button type="button" id="btn-v2-detail-settings" class="cockpit-btn cockpit-icon-btn v2-settings-btn" aria-label="Chat settings" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z" />
+            <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
+          </svg>
+          <!-- AC-042: visible without opening the sheet, whenever record.sharingEnabled === true. -->
+          <span id="v2-settings-dot" class="v2-settings-dot" hidden aria-hidden="true"></span>
+        </button>
         <button type="button" id="btn-v2-detail-refresh" class="cockpit-btn" aria-label="Refresh session">↻</button>
-        <button type="button" id="btn-v2-detail-menu" class="cockpit-btn" aria-label="Session options" aria-expanded="false">⋯</button>
       </div>
 
-      <!-- Overflow sheet: everything that isn't "read the conversation" or
-           "send a message" -- toggled by btn-v2-detail-menu. Model/Mode/Stop
-           used to sit in the always-visible header; on a phone screen that
-           was permanent chrome competing with the conversation for space,
-           for controls used rarely. -->
-      <div id="v2-detail-menu" class="v2-detail-menu" hidden>
-        <dl class="cockpit-detail-meta">
-          <dt>Status</dt><dd id="v2-detail-status">…</dd>
-          <dt>Chat id</dt><dd id="v2-detail-chat-id">…</dd>
-        </dl>
-        <label class="v2-inline-control">
-          Model
-          <!-- Options populated from CONFIG.session.modelOptions in app.js#populateModelSelect(). -->
-          <select id="v2-detail-model-input"></select>
-        </label>
-        <label class="v2-inline-control">
-          Mode
-          <select id="v2-detail-mode-select">
-            <option value="agent">agent</option>
-            <option value="plan">plan</option>
-            <option value="ask">ask</option>
-          </select>
-        </label>
-        <button type="button" id="btn-v2-stop" class="cockpit-btn cockpit-btn-warning" hidden>Stop</button>
+      <!-- Chat switcher (AC-040): tapping the title opens a list of the
+           host's OTHER open/recent v2 chats to jump to -- Viktor explicitly
+           chose this over a horizontal tab-strip, which he judged too
+           cramped on a phone screen. -->
+      <div id="v2-chat-switcher" class="v2-chat-switcher" hidden role="listbox" aria-label="Switch chat">
+        <ul id="v2-chat-switcher-list" class="cockpit-session-list" role="list">
+          <!-- Populated by app.js#renderChatSwitcher(). -->
+        </ul>
+        <p id="v2-chat-switcher-empty" class="cockpit-hint" hidden>No other chats yet.</p>
+      </div>
+
+      <!-- Settings sheet (AC-041): everything that isn't "read the
+           conversation" or "send a message" -- toggled by
+           btn-v2-detail-settings. Not visible by default -- see
+           css-hidden-override-guard.sh for the regression guard on this
+           exact class of bug (this element replaces the old, buggy
+           .v2-detail-menu). -->
+      <div id="v2-settings-sheet" class="v2-settings-sheet" hidden>
+        <section class="v2-settings-section">
+          <h3 class="v2-settings-section-title">General</h3>
+          <div class="v2-settings-row">
+            <span id="v2-settings-title-readout" class="v2-settings-row-value">…</span>
+            <!-- Simple rename control (AC-044): app.js#handleV2RenameClick
+                 uses window.prompt(), same "simple" posture as the existing
+                 window.confirm() usage elsewhere in this file -- no new
+                 modal component for a rarely-used control. -->
+            <button type="button" id="btn-v2-rename" class="cockpit-btn cockpit-btn-icon" aria-label="Rename chat">✎</button>
+          </div>
+          <div class="v2-settings-row-pair">
+            <span class="v2-inline-control">Status <strong id="v2-detail-status">…</strong></span>
+            <span class="v2-inline-control">Chat id <strong id="v2-detail-chat-id">…</strong></span>
+          </div>
+          <div class="v2-settings-row-pair">
+            <label class="v2-inline-control">
+              Model
+              <!-- Options populated from CONFIG.session.modelOptions in app.js#populateModelSelect() -- two optgroups, IDE models first (AC-049/AC-050). -->
+              <select id="v2-detail-model-input"></select>
+            </label>
+            <label class="v2-inline-control">
+              Mode
+              <select id="v2-detail-mode-select">
+                <option value="agent">agent</option>
+                <option value="plan">plan</option>
+                <option value="ask">ask</option>
+              </select>
+            </label>
+          </div>
+          <button type="button" id="btn-v2-stop" class="cockpit-btn cockpit-btn-warning" hidden>Stop</button>
+        </section>
 
         <!-- SPEC-DELTA-2026-09-25-session-sharing-stage1: session-level,
-             read-only sharing. The toggle is separate from the invite list
-             on purpose -- turning it off revokes real Graph access but
-             remembers who was invited, so turning it back on needs no
-             re-typing (AC-032/AC-037). Per-person removal is explicitly
-             out of scope for Stage 1 -- the toggle affects everyone at once. -->
-        <div class="v2-share-panel">
+             read-only sharing, relocated into the settings sheet 2026-09-26
+             (same behavior, just no longer always-visible). The toggle is
+             separate from the invite list on purpose -- turning it off
+             revokes real Graph access but remembers who was invited, so
+             turning it back on needs no re-typing (AC-032/AC-037). -->
+        <section class="v2-settings-section v2-share-panel">
+          <h3 class="v2-settings-section-title">Sharing</h3>
           <label class="v2-inline-control">
             Sharing
             <input type="checkbox" id="v2-detail-sharing-toggle" />
@@ -404,7 +315,16 @@
             <button type="submit" id="btn-v2-share-invite" class="cockpit-btn">Invite</button>
           </form>
           <p id="v2-share-error-state" class="cockpit-error" hidden role="alert"></p>
-        </div>
+        </section>
+
+        <!-- Stage 2 (take-over mode) is not built yet -- this row makes the
+             UI shape final now without any functionality behind it. -->
+        <section class="v2-settings-section v2-takeover-section">
+          <h3 class="v2-settings-section-title">Take over</h3>
+          <p class="v2-settings-row v2-settings-row-disabled" aria-disabled="true">
+            Take over — coming soon
+          </p>
+        </section>
       </div>
 
       <div id="v2-messages" class="v2-messages" role="log" aria-live="polite">
@@ -432,16 +352,17 @@
     <section id="view-v2-new" class="cockpit-view" data-view-id="v2-new" hidden>
       <button type="button" class="cockpit-back-btn" data-target-view="v2-list" aria-label="Back to chat list">← Back</button>
       <h2>New chat</h2>
-      <p class="cockpit-warning" role="note">
-        Do not include salary, talent, performance, standby, leave, or any
-        customer code / data in prompts. mobile-cockpit logs prompts and
-        outputs to OneDrive (cursor-cockpit/sessions/&lt;id&gt;.json).
-      </p>
+      <!--
+        SPEC-DELTA-2026-09-26-ui-cleanup, item A: the salary/talent/... warning
+        paragraph moved with v1's composer view -- removed here too, matching
+        the brief ("it also existed on the v1 New session view but that whole
+        view is being deleted anyway"). item C: no more required "Session id"
+        field -- app.js#v2CreateSession generates an internal id automatically
+        (see generateInternalSessionId()); the displayed name is the
+        Chat1/Chat2/... sequential default (or the first-message-derived title
+        once a message exists), never a hand-typed id.
+      -->
       <form id="v2-new-session-form" class="cockpit-form">
-        <label>
-          Session id
-          <input type="text" id="v2-new-id" name="id" maxlength="80" autocomplete="off" required />
-        </label>
         <label>
           Model
           <!-- Options populated from CONFIG.session.modelOptions in app.js#populateModelSelect(). -->
@@ -526,6 +447,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=14fb909" defer></script>
+  <script src="./app.js?v=9bed028" defer></script>
 </body>
 </html>

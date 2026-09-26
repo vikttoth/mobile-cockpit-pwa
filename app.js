@@ -1,33 +1,33 @@
-// mobile-cockpit / pwa / app.js — Stage A2 (read-write).
+// mobile-cockpit / pwa / app.js
 //
-// What works in Stage A2:
+// v1's "Sessions" (list/detail/new, state.json-backed) and "App" (static
+// cost-notice) surfaces were removed 2026-09-26
+// (SPEC-DELTA-2026-09-26-ui-cleanup, item A) -- no in-flight v1 session
+// needed migrating, so this was a clean deletion, same shape as the
+// 2026-09-21 extension/ amputation (see SPEC.md). What's live now:
 //   - Load config.json
 //   - MSAL.js v4 PKCE auth (silent first; redirect on cache miss)
-//   - GET cursor-cockpit/state.json from Graph (read path)
-//   - PUT cursor-cockpit/state.json with If-Match ETag (write path,
-//     one retry on 412 — mirrors daemon/append-test-session.mjs)
-//   - createSession() from the composer (view-new form)
-//   - approveSession() / cancelSession() from the detail view
-//   - Render sessions in #session-list
-//   - Refresh button + auto-refresh every CONFIG.pwa.pollIntervalSeconds
-//   - setView('list'|'detail'|'new') with back navigation
-//
-// Phase 2 (2026-06-10):
-//   - Faster detail poll while status=running (streaming output from daemon)
-//   - Follow-up / resume on done sessions (mergeQueueFollowUp + daemon --resume)
-//   - Hash routing (#list / #new / #detail/<id>) for Teams deep links + bookmarks
-//   - Teams push is daemon-side (MC_TEAMS_NOTIFY_WEBHOOK_URL); not in PWA yet
-//   - Service worker / offline cache still deferred
+//   - The v2 (chat-model) surface: cursor-cockpit/sessions.json (light
+//     index) + cursor-cockpit/sessions/<id>.json (full record), scrollback,
+//     live streaming, queue/force/stop, model/mode switch, sharing,
+//     archive/unarchive, chat naming + rename (lib/transcript-model.mjs)
+//   - The read-only IDE-tabs mirror (M2.1, AC-022)
+//   - "Shared with me" (SPEC-DELTA-2026-09-25-session-sharing-stage1)
+//   - Hash routing (#v2-list / #v2-new / #v2-detail/<id> / ...) for
+//     deep links + bookmarks
+//   - Refresh button + auto-refresh, per-view poll intervals
 //
 // Reference order while reading this file:
-//   1. ../design.md §3-§6 — OneDrive Graph schema + ETag conflict resolution
-//   2. ../daemon/append-test-session.mjs — canonical write-path blueprint
-//   3. ./write-helpers.mjs — pure validators / mergers / id-gen (unit-tested)
+//   1. ../SPEC.md — state model, acceptance criteria, scenario history
+//   2. ./transcript-model.mjs — the pure v2 record/index model (byte-mirror
+//      of ../lib/transcript-model.mjs)
+//   3. ./write-helpers.mjs — pure hash-routing helpers + cryptoRandomBytes
 //
 // Style: vanilla JS, no framework, no bundler. ES2020. Single file. MSAL
 // is loaded from ./vendor/msal-browser.min.js (defer-ordered before this).
-// Pure helpers live in a sibling ESM module ./write-helpers.mjs; we pull
-// them in via dynamic import() inside bootstrap() so this file stays a
+// Pure helpers live in sibling ESM modules (./write-helpers.mjs,
+// ./transcript-model.mjs, ./scrollback-helpers.mjs, ./ide-helpers.mjs); we
+// pull them in via dynamic import() inside bootstrap() so this file stays a
 // classic script and the MSAL UMD bundle keeps its source-order guarantee.
 
 "use strict";
@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-25 12:11 CEST 14fb909`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-25 12:11 CEST 14fb909";
+// `2026-09-26 16:32 CEST 9bed028`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-26 16:32 CEST 9bed028";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -48,21 +48,6 @@ let msalClient = null;
 
 /** Cached after the first successful sign-in. */
 let activeAccount = null;
-
-/** Cached last-known state.json (for instant render on refresh). */
-let cachedState = null;
-
-/** Cached driveItem ETag for state.json. Required by PUT (If-Match). */
-let cachedStateEtag = null;
-
-/** Auto-refresh handle from setInterval(). */
-let refreshTimerId = null;
-
-/** Faster poll while viewing a running session detail (Phase 2 streaming). */
-let runningDetailTimerId = null;
-
-/** Session id currently open in detail view (for running poll). */
-let activeDetailSessionId = null;
 
 /**
  * Dynamically imported write-helpers module. Populated by bootstrap()
@@ -120,7 +105,12 @@ let cachedV2IndexEtag = null;
 /** Session id currently open in v2 detail view (for the fast poll + composer). */
 let activeV2DetailSessionId = null;
 
-/** Faster poll while viewing a v2 session detail (mirrors runningDetailTimerId). */
+/** Last-rendered full record for the open v2 detail view -- used by the
+ *  rename control (handleV2RenameClick) to read the current title without
+ *  an extra Graph round-trip. */
+let activeV2DetailRecord = null;
+
+/** Faster poll while viewing a v2 session detail (mirrors ideDetailFastTimerId). */
 let v2DetailTimerId = null;
 
 /** Auto-refresh handle for the v2 list view (independent of v1's refreshTimerId). */
@@ -240,70 +230,6 @@ async function graphFetch(path, init = {}, opts = {}) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-/**
- * Load the OneDrive state.json. Returns { state, etag } on success.
- * Throws on HTTP errors other than 404 (treats 404 as empty state).
- *
- * Side-effect: refreshes the module-level cachedState / cachedStateEtag.
- * Callers that only need a one-shot snapshot can use the returned object
- * directly; the cache is for instant-render-on-refresh.
- */
-async function loadState() {
-  // First call: get driveItem (with eTag); second call: content stream.
-  const meta = await graphFetch(`${CONFIG.state.endpoint}`);
-  if (meta.status === 404) {
-    const fresh = { state: { schemaVersion: 1, sessions: [] }, etag: null };
-    cachedState = fresh.state;
-    cachedStateEtag = fresh.etag;
-    return fresh;
-  }
-  if (!meta.ok) {
-    throw new Error(`Graph driveItem GET failed: ${meta.status} ${meta.statusText}`);
-  }
-  const metaJson = await meta.json();
-  const etag = metaJson.eTag || metaJson["@odata.etag"] || null;
-  const contentRes = await graphFetch(`${CONFIG.state.endpoint}:/content`);
-  if (!contentRes.ok) {
-    throw new Error(`Graph content GET failed: ${contentRes.status} ${contentRes.statusText}`);
-  }
-  const state = await contentRes.json();
-  cachedState = state;
-  cachedStateEtag = etag;
-  return { state, etag };
-}
-
-/**
- * Write the OneDrive state.json with optimistic-concurrency If-Match.
- * Returns the parsed driveItem JSON (which includes the fresh eTag).
- * Throws `{ code: "PRECONDITION_FAILED", status: 412 }` on stale ETag —
- * the caller's retry loop is responsible for re-reading and re-merging.
- *
- * Why two-arg signature instead of a single options bag: matches
- * daemon/lib/graph-state.mjs#writeState() shape so the two surfaces stay
- * trivially comparable in code review.
- */
-async function putState(stateObj, etagOrNull) {
-  const headers = new Headers({ "Content-Type": "application/json" });
-  if (etagOrNull) headers.set("If-Match", etagOrNull);
-  const body = JSON.stringify(stateObj, null, 2) + "\n";
-  const res = await graphFetch(`${CONFIG.state.endpoint}:/content`, {
-    method: "PUT",
-    body,
-    headers,
-  });
-  if (res.status === 412) {
-    const err = new Error("state.json changed since last read (412)");
-    err.code = "PRECONDITION_FAILED";
-    err.status = 412;
-    throw err;
-  }
-  if (!res.ok) {
-    const bodyText = await res.text().catch(() => "");
-    throw new Error(`putState: PUT failed ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
-  }
-  return res.json().catch(() => null);
 }
 
 /**
@@ -508,21 +434,37 @@ async function v2WriteRecordAndMirrorIndex(id, transformFn) {
  * "Mobile PWA v2 groundwork"). `parentId` is the sub-agent wiring: set when
  * this session is a delegated parallel task started from an existing
  * session's detail view.
+ *
+ * `id` (SPEC-DELTA-2026-09-26-ui-cleanup, item C): no longer a required
+ * user-typed field -- an internal id is generated automatically
+ * (generateInternalSessionId()) when the caller doesn't supply one. The
+ * DISPLAYED name is always the derived/sequential/custom title, never this
+ * internal id.
  */
 async function v2CreateSession({ id, cwd, model, mode, parentId, firstMessage }) {
   const now = Date.now();
+  const finalId = id && id.trim() ? id.trim() : generateInternalSessionId(now);
+  // SPEC-DELTA-2026-09-26-ui-cleanup: "Chat1/Chat2/..." default naming needs
+  // a 1-based position at creation time -- read the index once, up front,
+  // purely to count. Best-effort, not a strict global counter (see the
+  // delta's open question 1: a rare race across hosts/deletions can produce
+  // a duplicate or non-contiguous number; cosmetic only, title is never a
+  // unique key).
+  const { index: indexForCount } = await loadV2Index();
+  const sequenceNumber = Array.isArray(indexForCount?.sessions) ? indexForCount.sessions.length + 1 : 1;
   const record = V2_MODEL.buildSessionRecord({
-    id,
+    id: finalId,
     chatId: null,
     model: model || null,
     mode: mode || null,
     cwd: cwd || null,
     worktree: null,
     parentId: parentId || null,
+    sequenceNumber,
     now,
   });
   // Fresh id -- no retry needed, mirrors session-store.mjs#createSession.
-  await putV2Record(id, record, null);
+  await putV2Record(finalId, record, null);
   for (let attempt = 0; attempt < 2; attempt++) {
     const { index, etag } = await loadV2Index();
     const nextIndex = V2_MODEL.upsertIndexEntry(index, V2_MODEL.buildIndexEntry(record));
@@ -537,11 +479,24 @@ async function v2CreateSession({ id, cwd, model, mode, parentId, firstMessage })
     // Nothing is running yet -- Queue is the correct primitive here
     // (Force's "kill the in-flight turn" has nothing to kill on a
     // brand-new session).
-    await v2WriteRecordWithRetry(id, (r) =>
+    await v2WriteRecordWithRetry(finalId, (r) =>
       V2_MODEL.enqueueMessage(r, { text: firstMessage.trim(), now: Date.now() }),
     );
   }
   return record;
+}
+
+/**
+ * Internal session id, never shown to the user (item C) -- same shape as
+ * write-helpers.mjs#generateSessionId's `pwa-` prefix convention, but kept
+ * local to this file since it has no validation/merge counterpart to share
+ * a module with anymore (v1's write-helpers.mjs exports were removed
+ * alongside the rest of the v1 surface).
+ */
+function generateInternalSessionId(now) {
+  const t = Math.floor(now).toString(36).padStart(8, "0");
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `mcv2-${t}-${rand}`;
 }
 
 async function v2EnqueueMessage(id, text) {
@@ -562,6 +517,24 @@ async function v2SetModel(id, model) {
 
 async function v2SetMode(id, mode) {
   return v2WriteRecordWithRetry(id, (record) => V2_MODEL.setMode(record, { mode, now: Date.now() }));
+}
+
+// SPEC-DELTA-2026-09-26-ui-cleanup: `archived` and `title` (derived from
+// `customTitle`) are BOTH index-mirrored fields (buildIndexEntry), so these
+// two use v2WriteRecordAndMirrorIndex -- the same helper v2SetModel/v2SetMode
+// above deliberately do NOT need, since model/mode never leak into the index.
+async function v2SetArchived(id, archived) {
+  return v2WriteRecordAndMirrorIndex(id, (record) =>
+    archived
+      ? V2_MODEL.archiveSession(record, { now: Date.now() })
+      : V2_MODEL.unarchiveSession(record, { now: Date.now() }),
+  );
+}
+
+async function v2SetCustomTitle(id, customTitle) {
+  return v2WriteRecordAndMirrorIndex(id, (record) =>
+    V2_MODEL.setCustomTitle(record, { customTitle, now: Date.now() }),
+  );
 }
 
 // v2TakeOverLease/v2HandBackLease/v2RenewLeaseHeartbeat were removed
@@ -647,26 +620,6 @@ async function writeRefreshNudge(scope) {
 }
 
 /**
- * Poll state.json until ETag changes or wait budget elapses.
- * @param {string|null} beforeEtag
- */
-async function waitForFreshSessions(beforeEtag) {
-  const cfg = CONFIG && CONFIG.refreshSignals;
-  const maxMs = (cfg && cfg.waitMaxMs) || 15000;
-  const pollMs = (cfg && cfg.waitPollMs) || 500;
-  const minMs = (cfg && cfg.waitMinMs) || 2000;
-  const start = Date.now();
-  const deadline = start + maxMs;
-  while (Date.now() < deadline) {
-    const { etag } = await loadState();
-    if (etag !== beforeEtag) return true;
-    if (Date.now() - start >= minMs) return false;
-    await sleepMs(pollMs);
-  }
-  return false;
-}
-
-/**
  * Poll ide-tabs.json until snapshotAt changes or wait budget elapses.
  * @param {string|null} beforeSnapshotAt
  */
@@ -698,12 +651,7 @@ async function waitForFreshIdeTabs(beforeSnapshotAt, beforeFingerprint) {
 
 function setRefreshButtonsBusy(busy) {
   refreshInFlight = busy;
-  for (const id of [
-    "btn-refresh",
-    "btn-detail-refresh",
-    "btn-ide-refresh",
-    "btn-ide-detail-refresh",
-  ]) {
+  for (const id of ["btn-ide-refresh", "btn-ide-detail-refresh"]) {
     const el = document.getElementById(id);
     if (!el) continue;
     el.disabled = busy;
@@ -721,18 +669,7 @@ async function refreshCurrentView() {
   const view = document.body.dataset.view;
   setRefreshButtonsBusy(true);
   try {
-    if (view === "list") {
-      const beforeEtag = cachedStateEtag;
-      await writeRefreshNudge("sessions");
-      await waitForFreshSessions(beforeEtag);
-      await renderList();
-    } else if (view === "detail" && activeDetailSessionId) {
-      const beforeEtag = cachedStateEtag;
-      await writeRefreshNudge("sessions");
-      await waitForFreshSessions(beforeEtag);
-      await loadState();
-      renderDetail(activeDetailSessionId);
-    } else if (view === "ide-tabs") {
+    if (view === "ide-tabs") {
       const beforeAt = cachedIdeSnapshot && cachedIdeSnapshot.snapshotAt;
       const beforeFp = cachedIdeSnapshot && cachedIdeSnapshot.contentFingerprint;
       await writeRefreshNudge("ideTabs");
@@ -748,16 +685,9 @@ async function refreshCurrentView() {
       await waitForFreshIdeTabs(beforeAt, beforeFp);
       await loadIdeTabs();
       if (composerId) renderIdeTabDetail(composerId, { preserveCompose: true });
-    } else if (view === "app-info") {
-      // Static help view — nothing to refresh.
     }
   } catch (err) {
-    if (view === "detail") showDetailError(err.message);
-    else if (view === "ide-tabs" || view === "ide-tab-detail") {
-      showIdeTabsError(err.message);
-    } else {
-      showListError(err.message);
-    }
+    showIdeTabsError(err.message);
   } finally {
     setRefreshButtonsBusy(false);
   }
@@ -766,17 +696,6 @@ async function refreshCurrentView() {
 // =============================================================================
 // 3. Pure helpers (sortable / testable)
 // =============================================================================
-
-/** Return sessions sorted by `lastUpdated` desc, capped to limit. */
-function sortSessions(sessions, limit) {
-  if (!Array.isArray(sessions)) return [];
-  const sorted = [...sessions].sort((a, b) => {
-    const aT = Date.parse(a.lastUpdated || a.createdAt || a.created || "") || 0;
-    const bT = Date.parse(b.lastUpdated || b.createdAt || b.created || "") || 0;
-    return bT - aT;
-  });
-  return sorted.slice(0, Math.max(0, limit | 0));
-}
 
 /** "12 s ago", "4 min ago", "2 h ago", "3 d ago" — for the list row. */
 function relativeTime(isoString) {
@@ -794,143 +713,6 @@ function relativeTime(isoString) {
 function statusClass(status) {
   const known = ["pending", "running", "approved", "done", "failed", "cancelled"];
   return known.includes(status) ? `status-${status}` : "status-unknown";
-}
-
-// =============================================================================
-// 4. Write actions — read-modify-write with one retry on 412
-// =============================================================================
-//
-// All three actions follow the same shape (mirror of daemon/append-test-session.mjs):
-//   1. loadState() to get { state, etag }.
-//   2. Pure merge via WRITE_HELPERS (mergeAppendSession / mergeUpdateStatus).
-//   3. putState(next, etag) → on 412, retry ONCE: re-load + re-merge + re-put.
-//   4. On second 412 → throw; caller surfaces error.
-//
-// The pure-helper layer (write-helpers.mjs) is unit-tested without DOM;
-// these wrappers add the side-effect plumbing (Graph I/O, status badge,
-// view transitions) and live ONLY here.
-
-/**
- * Validate + create a new session, persist via PUT-with-If-Match.
- * Returns { sessionId } on success. Throws on validation / network / 412×2.
- */
-async function createSession({ prompt, cwd, model }) {
-  if (!WRITE_HELPERS) throw new Error("write-helpers module not loaded yet (bootstrap order bug)");
-  const allowedCwds = (CONFIG.session && CONFIG.session.allowedCwds) || [];
-  const validation = WRITE_HELPERS.validateCreateInputs({ prompt, cwd, model }, allowedCwds);
-  if (!validation.valid) {
-    throw new Error(`Invalid input: ${validation.errors.join("; ")}`);
-  }
-
-  setStatusBadge("saving…", "saving");
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const { state, etag } = await loadState();
-    const sessionId = WRITE_HELPERS.generateSessionId(Date.now(), WRITE_HELPERS.cryptoRandomBytes);
-    const nowIso = new Date().toISOString();
-    const session = {
-      sessionId,
-      status: "pending",
-      title: (prompt || "").slice(0, 60),
-      prompt,
-      model: model || null,
-      cwd: cwd || null,
-      createdAt: nowIso,
-      lastUpdated: nowIso,
-      createdBy: "pwa/app.js",
-    };
-    const next = WRITE_HELPERS.mergeAppendSession(state, session);
-    try {
-      await putState(next, etag);
-      flashSavedBadge();
-      return { sessionId };
-    } catch (err) {
-      if (err.code !== "PRECONDITION_FAILED" || attempt > 0) {
-        setStatusBadge(`save failed: ${err.message}`, "error");
-        throw err;
-      }
-      // fall through to retry — re-read state in next iteration
-    }
-  }
-  // Defensive: should be unreachable; the throw above covers both legs.
-  setStatusBadge("save failed: retries exhausted", "error");
-  throw new Error("createSession: retries exhausted");
-}
-
-/**
- * Approve a pending session: status → "approved" + lastUpdated → now.
- * Same retry-once-on-412 shape as createSession.
- */
-async function approveSession(sessionId) {
-  if (!WRITE_HELPERS) throw new Error("write-helpers module not loaded yet (bootstrap order bug)");
-  return updateSessionStatus(sessionId, "approved");
-}
-
-/**
- * Cancel an in-flight session: status → "cancelled" + lastUpdated → now.
- * Same retry-once-on-412 shape as createSession.
- */
-async function cancelSession(sessionId) {
-  if (!WRITE_HELPERS) throw new Error("write-helpers module not loaded yet (bootstrap order bug)");
-  return updateSessionStatus(sessionId, "cancelled");
-}
-
-/**
- * Queue a follow-up on a finished session (resume same cursor-agent chat).
- * Returns { sessionId, status } on success.
- */
-async function queueFollowUp(sessionId, prompt) {
-  if (!WRITE_HELPERS) throw new Error("write-helpers module not loaded yet (bootstrap order bug)");
-  const trimmed = typeof prompt === "string" ? prompt.trim() : "";
-  if (!trimmed) throw new Error("Follow-up prompt is required");
-
-  const autoApprove = !!(CONFIG.session && CONFIG.session.autoApprove);
-  setStatusBadge("saving…", "saving");
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const { state, etag } = await loadState();
-    const next = WRITE_HELPERS.mergeQueueFollowUp(state, sessionId, {
-      prompt: trimmed,
-      now: new Date(),
-      autoApprove,
-    });
-    try {
-      await putState(next, etag);
-      flashSavedBadge();
-      const row = next.sessions.find((x) => x.sessionId === sessionId);
-      return { sessionId, status: row ? row.status : "pending" };
-    } catch (err) {
-      if (err.code !== "PRECONDITION_FAILED" || attempt > 0) {
-        setStatusBadge(`save failed: ${err.message}`, "error");
-        throw err;
-      }
-    }
-  }
-  setStatusBadge("save failed: retries exhausted", "error");
-  throw new Error("queueFollowUp: retries exhausted");
-}
-
-/** Shared retry skeleton for approve / cancel. NOT exported; consumers go
- *  through the typed wrappers above so the daemon-visible status set stays
- *  centralised in this file. */
-async function updateSessionStatus(sessionId, newStatus) {
-  setStatusBadge("saving…", "saving");
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const { state, etag } = await loadState();
-    const next = WRITE_HELPERS.mergeUpdateStatus(state, sessionId, newStatus, new Date());
-    try {
-      await putState(next, etag);
-      flashSavedBadge();
-      return { sessionId, status: newStatus };
-    } catch (err) {
-      if (err.code !== "PRECONDITION_FAILED" || attempt > 0) {
-        setStatusBadge(`save failed: ${err.message}`, "error");
-        throw err;
-      }
-    }
-  }
-  setStatusBadge("save failed: retries exhausted", "error");
-  throw new Error(`updateSessionStatus(${sessionId}, ${newStatus}): retries exhausted`);
 }
 
 // =============================================================================
@@ -958,12 +740,7 @@ function applyHashRoute() {
   if (!route) return;
   suppressHashSync = true;
   try {
-    if (route.view === "list") setView("list");
-    else if (route.view === "new") setView("new");
-    else if (route.view === "app-info") setView("app-info");
-    else if (route.view === "detail" && route.sessionId) {
-      setView("detail", { sessionId: route.sessionId });
-    } else if (route.view === "v2-list") setView("v2-list");
+    if (route.view === "v2-list") setView("v2-list");
     else if (route.view === "v2-new") setView("v2-new");
     else if (route.view === "v2-detail" && route.sessionId) {
       setView("v2-detail", { sessionId: route.sessionId });
@@ -987,19 +764,9 @@ function setView(viewId, payload) {
       btn.dataset.targetView === viewId ? "true" : "false",
     );
   }
-  if (viewId === "list") {
-    renderList().catch((err) => showListError(err.message));
-  } else if (viewId === "detail" && payload && payload.sessionId) {
-    activeDetailSessionId = payload.sessionId;
-    renderDetail(payload.sessionId);
-    syncRunningDetailPoll();
-  } else if (viewId === "new") {
-    renderNew();
-  } else if (viewId === "ide-tabs") {
+  if (viewId === "ide-tabs") {
     syncIdeListModeToggle();
     renderIdeTabsList().catch((err) => showIdeTabsError(err.message));
-  } else if (viewId === "app-info") {
-    // Static copy in index.html — no network render.
   } else if (viewId === "ide-tab-detail" && payload && payload.composerId) {
     renderIdeTabDetail(payload.composerId);
   } else if (viewId === "v2-list") {
@@ -1020,27 +787,20 @@ function setView(viewId, payload) {
   if (viewId !== "ide-tab-detail") {
     activeIdeTabComposerId = null;
   }
-  if (viewId !== "detail") {
-    activeDetailSessionId = null;
-    stopRunningDetailPoll();
-  }
   if (viewId !== "ide-tab-detail") {
     stopIdeDetailFastPoll();
   }
   if (viewId !== "v2-detail") {
     activeV2DetailSessionId = null;
+    activeV2DetailRecord = null;
     stopV2DetailPoll();
   }
   if (viewId !== "shared-detail") {
     activeSharedItem = null;
   }
   if (
-    viewId === "list" ||
-    viewId === "new" ||
-    viewId === "app-info" ||
     viewId === "v2-list" ||
     viewId === "v2-new" ||
-    (viewId === "detail" && payload && payload.sessionId) ||
     (viewId === "v2-detail" && payload && payload.sessionId)
   ) {
     syncHashForView(viewId, payload);
@@ -1075,219 +835,6 @@ function translateErrorMessage(raw) {
   return message;
 }
 
-function showListError(message) {
-  const el = document.getElementById("list-error-state");
-  if (!el) return;
-  el.textContent = translateErrorMessage(message);
-  el.hidden = false;
-}
-
-function clearListError() {
-  const el = document.getElementById("list-error-state");
-  if (el) el.hidden = true;
-}
-
-function showDetailError(message) {
-  const el = document.getElementById("detail-error-state");
-  if (!el) return;
-  el.textContent = translateErrorMessage(message);
-  el.hidden = false;
-}
-
-function clearDetailError() {
-  const el = document.getElementById("detail-error-state");
-  if (el) el.hidden = true;
-}
-
-function showNewError(message) {
-  const el = document.getElementById("new-error-state");
-  if (!el) return;
-  el.textContent = translateErrorMessage(message);
-  el.hidden = false;
-}
-
-function clearNewError() {
-  const el = document.getElementById("new-error-state");
-  if (el) el.hidden = true;
-}
-
-async function renderList() {
-  clearListError();
-  const ul = document.getElementById("session-list");
-  const empty = document.getElementById("list-empty-state");
-  if (!ul || !empty) return;
-
-  try {
-    await loadState(); // populates cachedState / cachedStateEtag
-  } catch (err) {
-    showListError(err.message);
-    return;
-  }
-
-  const sessions = sortSessions(cachedState.sessions, CONFIG.pwa.recentSessionsCount);
-  ul.innerHTML = "";
-  if (sessions.length === 0) {
-    empty.hidden = false;
-    return;
-  }
-  empty.hidden = true;
-  for (const s of sessions) {
-    const li = document.createElement("li");
-    li.className = "cockpit-session-row";
-    li.dataset.sessionId = s.sessionId || "";
-    li.tabIndex = 0;
-    li.addEventListener("click", () => setView("detail", { sessionId: s.sessionId }));
-    li.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter" || ev.key === " ") {
-        ev.preventDefault();
-        setView("detail", { sessionId: s.sessionId });
-      }
-    });
-
-    const title = document.createElement("span");
-    title.className = "cockpit-row-title";
-    title.textContent = s.title || s.prompt || "(untitled)";
-    li.appendChild(title);
-
-    const status = document.createElement("span");
-    status.className = `cockpit-row-status ${statusClass(s.status)}`;
-    status.dataset.status = s.status || "unknown";
-    status.textContent = s.status || "unknown";
-    li.appendChild(status);
-
-    const time = document.createElement("time");
-    time.className = "cockpit-row-time";
-    const stamp = s.lastUpdated || s.createdAt || s.created;
-    if (stamp) time.dateTime = stamp;
-    time.textContent = relativeTime(stamp);
-    li.appendChild(time);
-
-    ul.appendChild(li);
-  }
-}
-
-function renderDetail(sessionId) {
-  clearDetailError();
-  if (!cachedState || !Array.isArray(cachedState.sessions)) return;
-  const s = cachedState.sessions.find((x) => x.sessionId === sessionId);
-  if (!s) {
-    showListError(`Session not found locally: ${sessionId}`);
-    setView("list");
-    return;
-  }
-  const set = (id, text) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = text == null ? "—" : String(text);
-  };
-  set("detail-title", s.title || s.prompt || "(untitled)");
-  set("detail-status", s.status);
-  set("detail-session-id", s.sessionId);
-  set("detail-agent-id", s.cursorAgentId || s.agentId);
-  set("detail-model", s.model);
-  set("detail-created", s.createdAt || s.created);
-  set("detail-updated", s.lastUpdated);
-  set("detail-prompt-text", s.prompt);
-  set("detail-output-text", s.output || (s.status === "running" ? "(streaming…)" : ""));
-
-  const outputHeading = document.getElementById("detail-output-heading");
-  if (outputHeading) {
-    outputHeading.textContent = s.status === "running" ? "Output (streaming…)" : "Output";
-  }
-
-  const followUpPanel = document.getElementById("detail-follow-up-panel");
-  if (followUpPanel) followUpPanel.hidden = true;
-
-  // Stage A2: action buttons. Approve only when pending AND autoApprove off.
-  // Cancel when status is pending / approved / running (NOT done/cancelled/failed).
-  const autoApprove = !!(CONFIG.session && CONFIG.session.autoApprove);
-  const btnApprove = document.getElementById("btn-approve");
-  const btnCancel = document.getElementById("btn-cancel");
-  const btnFollowUp = document.getElementById("btn-follow-up");
-
-  if (btnApprove) {
-    const showApprove = s.status === "pending" && !autoApprove;
-    btnApprove.hidden = !showApprove;
-    btnApprove.disabled = !showApprove;
-    btnApprove.onclick = showApprove
-      ? () => handleApproveClick(s.sessionId)
-      : null;
-  }
-  if (btnCancel) {
-    const cancellable = ["pending", "approved", "running"].includes(s.status);
-    btnCancel.hidden = !cancellable;
-    btnCancel.disabled = !cancellable;
-    btnCancel.onclick = cancellable
-      ? () => handleCancelClick(s.sessionId)
-      : null;
-  }
-  if (btnFollowUp) {
-    const agentId = s.cursorAgentId || s.agentId;
-    const showFollowUp = s.status === "done" && !!agentId;
-    btnFollowUp.hidden = !showFollowUp;
-    btnFollowUp.disabled = !showFollowUp;
-    btnFollowUp.onclick = showFollowUp
-      ? () => showFollowUpPanel(s.sessionId)
-      : null;
-  }
-
-  syncRunningDetailPoll();
-}
-
-function showFollowUpPanel(sessionId) {
-  const panel = document.getElementById("detail-follow-up-panel");
-  const ta = document.getElementById("follow-up-prompt");
-  if (panel) {
-    panel.hidden = false;
-    panel.dataset.sessionId = sessionId;
-  }
-  if (ta) {
-    ta.value = "";
-    ta.focus();
-  }
-}
-
-function hideFollowUpPanel() {
-  const panel = document.getElementById("detail-follow-up-panel");
-  if (panel) panel.hidden = true;
-}
-
-function renderNew() {
-  clearNewError();
-  // Clear stale form state BEFORE populating -- form.reset() reverts a
-  // <select> to its first <option> in DOM order, which would silently
-  // undo populateModelSelect's last-used-model default if it ran first.
-  const form = document.getElementById("new-session-form");
-  if (form) form.reset();
-  populateCwdSelect();
-  populateModelSelect("new-model");
-  const modelSelect = document.getElementById("new-model");
-  if (modelSelect) modelSelect.value = getLastUsedModel();
-}
-
-function populateCwdSelect() {
-  const select = document.getElementById("new-cwd");
-  if (!select) return;
-  const allowed = (CONFIG.session && CONFIG.session.allowedCwds) || [];
-  // Rebuild: one <option> per allowedCwd (first one pre-selected -- a
-  // concrete, always-valid path beats an ambiguous "(daemon default)"
-  // that gives no visible confirmation it resolved to anything real,
-  // 2026-09-24), then "(daemon default)" last for anyone who explicitly
-  // wants to defer to the daemon's own fallback. Idempotent -- safe to
-  // call on every render.
-  select.innerHTML = "";
-  for (const cwd of allowed) {
-    const opt = document.createElement("option");
-    opt.value = cwd;
-    opt.textContent = cwd;
-    select.appendChild(opt);
-  }
-  const defaultOpt = document.createElement("option");
-  defaultOpt.value = "";
-  defaultOpt.textContent = "(daemon default)";
-  select.appendChild(defaultOpt);
-  if (allowed.length > 0) select.value = allowed[0];
-}
-
 // Model picker (2026-09-24): Viktor asked for "the full list of all
 // selectable models, like it is in the [Cursor] UI" rather than a free-text
 // guess-the-id field, defaulting to "Auto" or whatever was picked last.
@@ -1312,52 +859,95 @@ function setLastUsedModel(model) {
 }
 
 /**
- * Populate a <select> with CONFIG.session.modelOptions. Idempotent (skips
- * the rebuild once the option count already matches) so calling this on
- * every poll-driven re-render of the detail view doesn't fight an open
- * dropdown or discard the caller's subsequent `.value` assignment.
+ * The exact "IDE models" Cursor's own IDE model picker offers today
+ * (SPEC-DELTA-2026-09-26-ui-cleanup, item F -- captured from a live
+ * screenshot Viktor sent, labelled "Cursor Models" with a "NEW" badge on
+ * Grok 4.7 High). Everything else in CONFIG.session.modelOptions is
+ * `cursor-agent`-only, from `cursor-agent --list-models` -- the CLI list is
+ * meant to be the superset of what the IDE offers. Hardcoded here (not
+ * config-driven) for the same reason the old modelGroupFor() was purely
+ * derived rather than a schema field: this is a small, rarely-changing,
+ * UI-only classification, not worth typing into 3 mirrored config copies.
+ * Order matters -- this is the exact display order for the "IDE models"
+ * optgroup (AC-049). Mirror in local-ui/app.js if that surface ever gets
+ * the same two-group treatment (out of scope for this delta).
  */
-/**
- * Purely derived from the id string, not a schema field -- adding a
- * `group` to every MODEL_OPTIONS entry would mean typing it 57 times
- * across 3 mirrored copies (lib/config.mjs, pwa/config.json,
- * local-ui/app.js) for something a 6-line prefix check already gives for
- * free. Mirrored as-is in local-ui/app.js (same reasoning as that file's
- * other small duplicated helpers -- it depends on nothing under pwa/).
- */
-function modelGroupFor(id) {
-  if (id === "auto") return null; // ungrouped, always first
-  if (id.startsWith("claude-")) return "Claude";
-  if (id.startsWith("gpt-")) return "GPT";
-  if (id.startsWith("cursor-grok-")) return "Grok";
-  if (id.startsWith("gemini-")) return "Gemini";
-  return "Other";
+const IDE_APPROVED_MODEL_IDS = ["auto", "composer-2.5", "cursor-grok-4.6-xhigh", "cursor-grok-4.7-high"];
+
+function isIdeApprovedModel(id) {
+  return IDE_APPROVED_MODEL_IDS.includes(id);
 }
 
+/**
+ * Populate a <select> with CONFIG.session.modelOptions, split into two
+ * `<optgroup>`s: "IDE models" first (AC-049's exact order), then "CLI
+ * models (not IDE-approved)" for everything else, in the config's own
+ * order. Idempotent (skips the rebuild once the option count already
+ * matches) so calling this on every poll-driven re-render of the detail
+ * view doesn't fight an open dropdown or discard the caller's subsequent
+ * `.value` assignment.
+ */
 function populateModelSelect(selectId) {
   const select = document.getElementById(selectId);
   if (!select) return;
   const options = (CONFIG.session && CONFIG.session.modelOptions) || [];
   if (select.options.length === options.length) return;
   select.innerHTML = "";
-  const groups = new Map();
+
+  const byId = new Map(options.map((o) => [o.id, o]));
+  const ideGroup = document.createElement("optgroup");
+  ideGroup.label = "IDE models";
+  for (const id of IDE_APPROVED_MODEL_IDS) {
+    const o = byId.get(id);
+    if (!o) continue; // config drift -- don't render a phantom option
+    const opt = document.createElement("option");
+    opt.value = o.id;
+    opt.textContent = o.label;
+    ideGroup.appendChild(opt);
+  }
+  if (ideGroup.childElementCount > 0) select.appendChild(ideGroup);
+
+  const cliGroup = document.createElement("optgroup");
+  cliGroup.label = "CLI models (not IDE-approved)";
   for (const { id, label } of options) {
+    if (isIdeApprovedModel(id)) continue;
     const opt = document.createElement("option");
     opt.value = id;
     opt.textContent = label;
-    const groupName = modelGroupFor(id);
-    if (!groupName) {
-      select.appendChild(opt);
-      continue;
-    }
-    if (!groups.has(groupName)) {
-      const og = document.createElement("optgroup");
-      og.label = groupName;
-      groups.set(groupName, og);
-      select.appendChild(og);
-    }
-    groups.get(groupName).appendChild(opt);
+    cliGroup.appendChild(opt);
   }
+  if (cliGroup.childElementCount > 0) select.appendChild(cliGroup);
+}
+
+/**
+ * Change-guard for the model <select> (AC-050): picking a model from the
+ * "CLI models (not IDE-approved)" group asks for confirmation before
+ * committing; declining reverts the select to its prior value. Callers
+ * track "prior value" themselves via `select.dataset.priorValue` (set on
+ * every render and on every accepted change) rather than this function
+ * owning any state, so it stays a pure DOM helper.
+ *
+ * @param {HTMLSelectElement|null} selectEl
+ * @returns {boolean} true if the caller should proceed with the new value
+ */
+function guardModelSelectionChange(selectEl) {
+  if (!selectEl) return true;
+  const prior = selectEl.dataset.priorValue ?? "";
+  const next = selectEl.value;
+  if (next === prior || isIdeApprovedModel(next)) {
+    selectEl.dataset.priorValue = next;
+    return true;
+  }
+  const ok =
+    typeof window !== "undefined" && typeof window.confirm === "function"
+      ? window.confirm("This model isn't officially approved for the IDE — are you sure?")
+      : true;
+  if (!ok) {
+    selectEl.value = prior;
+    return false;
+  }
+  selectEl.dataset.priorValue = next;
+  return true;
 }
 
 // -----------------------------------------------------------------------------
@@ -1659,10 +1249,66 @@ function clearV2NewError() {
   if (el) el.hidden = true;
 }
 
+/**
+ * Builds one <li> chat-list row, shared by the Active and Archive sections
+ * (SPEC-DELTA-2026-09-26-ui-cleanup, item D) and previously duplicated
+ * inline. `archived` picks the row's own archive/unarchive control label.
+ */
+function buildV2ListRow(s, { archived }) {
+  const li = document.createElement("li");
+  li.className = "cockpit-session-row";
+  li.dataset.sessionId = s.id || "";
+  li.tabIndex = 0;
+  const goToDetail = () => setView("v2-detail", { sessionId: s.id });
+  li.addEventListener("click", (ev) => {
+    if (ev.target.closest("button")) return; // let the archive button handle its own click
+    goToDetail();
+  });
+  li.addEventListener("keydown", (ev) => {
+    if (ev.target.closest("button")) return;
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      goToDetail();
+    }
+  });
+
+  const title = document.createElement("span");
+  title.className = "cockpit-row-title";
+  title.textContent = (s.parentId ? "↳ " : "") + (s.title || "(untitled)");
+  li.appendChild(title);
+
+  const status = document.createElement("span");
+  status.className = `cockpit-row-status ${statusClass(s.status)}`;
+  status.dataset.status = s.status || "unknown";
+  status.textContent = s.chatId ? (s.status || "unknown") : "provisioning…";
+  li.appendChild(status);
+
+  const time = document.createElement("time");
+  time.className = "cockpit-row-time";
+  if (s.updatedAt) time.dateTime = s.updatedAt;
+  time.textContent = relativeTime(s.updatedAt);
+  li.appendChild(time);
+
+  const archiveBtn = document.createElement("button");
+  archiveBtn.type = "button";
+  archiveBtn.className = "cockpit-btn cockpit-row-archive-btn";
+  archiveBtn.textContent = archived ? "Unarchive" : "Archive";
+  archiveBtn.setAttribute("aria-label", `${archived ? "Unarchive" : "Archive"} ${s.title || "chat"}`);
+  archiveBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    handleV2ArchiveToggle(s.id, !archived).catch((err) => showV2ListError(err.message));
+  });
+  li.appendChild(archiveBtn);
+
+  return li;
+}
+
 async function renderV2List() {
   clearV2ListError();
   const ul = document.getElementById("v2-session-list");
   const empty = document.getElementById("v2-list-empty-state");
+  const archiveUl = document.getElementById("v2-archive-list");
+  const archiveEmpty = document.getElementById("v2-archive-empty-state");
   if (!ul || !empty) return;
   try {
     await loadV2Index();
@@ -1671,46 +1317,35 @@ async function renderV2List() {
     return;
   }
   const all = (cachedV2Index && cachedV2Index.sessions) || [];
-  const visible = all.filter((s) => s && !s.archived);
-  const sorted = [...visible].sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0));
+  const byRecency = (a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0);
+
+  // Active/Archive grouping (item D): the backend already fully supports
+  // this (archived: boolean, archiveSession/unarchiveSession, PATCH
+  // .../archived) -- this used to just filter archived sessions out
+  // entirely (dead end, no way to see/restore them).
+  const active = all.filter((s) => s && !s.archived).sort(byRecency);
   ul.innerHTML = "";
-  if (sorted.length === 0) {
-    empty.hidden = false;
+  empty.hidden = active.length > 0;
+  for (const s of active) ul.appendChild(buildV2ListRow(s, { archived: false }));
+
+  if (archiveUl) {
+    const archived = all.filter((s) => s && s.archived).sort(byRecency);
+    archiveUl.innerHTML = "";
+    if (archiveEmpty) archiveEmpty.hidden = archived.length > 0;
+    for (const s of archived) archiveUl.appendChild(buildV2ListRow(s, { archived: true }));
+  }
+}
+
+/** Per-row Archive/Unarchive control handler (AC-047). */
+async function handleV2ArchiveToggle(id, archived) {
+  clearV2ListError();
+  try {
+    await v2SetArchived(id, archived);
+  } catch (err) {
+    showV2ListError(err.message);
     return;
   }
-  empty.hidden = true;
-  for (const s of sorted) {
-    const li = document.createElement("li");
-    li.className = "cockpit-session-row";
-    li.dataset.sessionId = s.id || "";
-    li.tabIndex = 0;
-    li.addEventListener("click", () => setView("v2-detail", { sessionId: s.id }));
-    li.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter" || ev.key === " ") {
-        ev.preventDefault();
-        setView("v2-detail", { sessionId: s.id });
-      }
-    });
-
-    const title = document.createElement("span");
-    title.className = "cockpit-row-title";
-    title.textContent = (s.parentId ? "↳ " : "") + (s.title || "(untitled)");
-    li.appendChild(title);
-
-    const status = document.createElement("span");
-    status.className = `cockpit-row-status ${statusClass(s.status)}`;
-    status.dataset.status = s.status || "unknown";
-    status.textContent = s.chatId ? (s.status || "unknown") : "provisioning…";
-    li.appendChild(status);
-
-    const time = document.createElement("time");
-    time.className = "cockpit-row-time";
-    if (s.updatedAt) time.dateTime = s.updatedAt;
-    time.textContent = relativeTime(s.updatedAt);
-    li.appendChild(time);
-
-    ul.appendChild(li);
-  }
+  await renderV2List().catch((err) => showV2ListError(err.message));
 }
 
 // applyV2LeaseGating was removed 2026-09-24 along with the whole lease
@@ -1747,10 +1382,8 @@ async function renderV2Detail(sessionId) {
   // Always start collapsed when (re-)entering a session's detail view --
   // it staying open from a PREVIOUS session would be confusing, and the
   // poll tick below never touches this itself.
-  const menuPanel = document.getElementById("v2-detail-menu");
-  const menuBtn = document.getElementById("btn-v2-detail-menu");
-  if (menuPanel) menuPanel.hidden = true;
-  if (menuBtn) menuBtn.setAttribute("aria-expanded", "false");
+  closeV2SettingsSheet();
+  closeChatSwitcher();
   activeV2DetailSessionId = sessionId;
   let record;
   try {
@@ -1765,18 +1398,28 @@ async function renderV2Detail(sessionId) {
     setView("v2-list");
     return;
   }
+  activeV2DetailRecord = record;
 
   const set = (id, text) => {
     const el = document.getElementById(id);
     if (el) el.textContent = text == null ? "—" : String(text);
   };
-  set("v2-detail-title", record.id);
+  // AC-039: the friendly title, never the raw record.id/chatId slug, is the
+  // primary displayed text -- both in the header and the settings sheet's
+  // rename readout. "Chat id" (below) is a labeled diagnostic field, same
+  // disclosure pattern as the IDE-tab detail view's Composer ID row.
+  const title = V2_MODEL ? V2_MODEL.deriveTitle(record) : record.id;
+  set("v2-detail-title", title);
+  set("v2-settings-title-readout", title);
   set("v2-detail-status", record.status);
   set("v2-detail-chat-id", record.chatId || "(provisioning…)");
 
   populateModelSelect("v2-detail-model-input");
   const modelInput = document.getElementById("v2-detail-model-input");
-  if (modelInput) modelInput.value = record.model || "auto";
+  if (modelInput) {
+    modelInput.value = record.model || "auto";
+    modelInput.dataset.priorValue = modelInput.value;
+  }
   const modeSelect = document.getElementById("v2-detail-mode-select");
   if (modeSelect) modeSelect.value = record.mode || "agent";
 
@@ -1788,10 +1431,91 @@ async function renderV2Detail(sessionId) {
   }
   const btnForce = document.getElementById("btn-v2-composer-force");
   if (btnForce) btnForce.hidden = record.status !== "running";
+  // AC-042: the settings-gear shows a dot whenever sharing is on, visible
+  // without opening the sheet.
+  const settingsDot = document.getElementById("v2-settings-dot");
+  if (settingsDot) settingsDot.hidden = !record.sharingEnabled;
   renderV2Messages(record);
   renderSharePanel(record);
 
   syncV2DetailPoll();
+}
+
+/** Collapses the settings sheet (AC-041) and resets its toggle affordance. */
+function closeV2SettingsSheet() {
+  const sheet = document.getElementById("v2-settings-sheet");
+  const btn = document.getElementById("btn-v2-detail-settings");
+  if (sheet) sheet.hidden = true;
+  if (btn) btn.setAttribute("aria-expanded", "false");
+}
+
+/** Collapses the chat switcher (AC-040) and resets its toggle affordance. */
+function closeChatSwitcher() {
+  const panel = document.getElementById("v2-chat-switcher");
+  const btn = document.getElementById("btn-v2-detail-title");
+  if (panel) panel.hidden = true;
+  if (btn) btn.setAttribute("aria-expanded", "false");
+}
+
+/**
+ * Tapping the title (AC-040): a list of the host's OTHER open/recent v2
+ * chats to jump to. Viktor explicitly chose this over a horizontal
+ * tab-strip, which he judged too cramped on a phone screen.
+ */
+function renderChatSwitcher() {
+  const list = document.getElementById("v2-chat-switcher-list");
+  const empty = document.getElementById("v2-chat-switcher-empty");
+  if (!list) return;
+  list.innerHTML = "";
+  const all = (cachedV2Index && cachedV2Index.sessions) || [];
+  const others = all
+    .filter((s) => s && s.id !== activeV2DetailSessionId && !s.archived)
+    .sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0));
+  if (empty) empty.hidden = others.length > 0;
+  for (const s of others) {
+    const li = document.createElement("li");
+    li.className = "cockpit-session-row";
+    li.tabIndex = 0;
+    const title = document.createElement("span");
+    title.className = "cockpit-row-title";
+    title.textContent = (s.parentId ? "↳ " : "") + (s.title || "(untitled)");
+    li.appendChild(title);
+    const goToChat = () => {
+      closeChatSwitcher();
+      setView("v2-detail", { sessionId: s.id });
+    };
+    li.addEventListener("click", goToChat);
+    li.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        goToChat();
+      }
+    });
+    list.appendChild(li);
+  }
+}
+
+/** Simple rename control (AC-044): window.prompt(), same "simple" posture
+ *  as the existing window.confirm() usage elsewhere in this file -- no new
+ *  modal component for a rarely-used control. Submitting a blank value
+ *  clears the override (setCustomTitle's own contract), reverting display
+ *  to the derived title. */
+async function handleV2RenameClick() {
+  const id = activeV2DetailSessionId;
+  if (!id || typeof window === "undefined" || typeof window.prompt !== "function") return;
+  const current = activeV2DetailRecord ? V2_MODEL.deriveTitle(activeV2DetailRecord) : "";
+  const next = window.prompt("Rename chat", current);
+  if (next === null) return; // cancelled
+  clearV2DetailError();
+  setV2Busy(true);
+  try {
+    await v2SetCustomTitle(id, next);
+  } catch (err) {
+    showV2DetailError(err.message);
+  } finally {
+    await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
+    setV2Busy(false);
+  }
 }
 
 /** SPEC-DELTA-2026-09-25-session-sharing-stage1: renders the Share panel's
@@ -1878,15 +1602,19 @@ function renderV2Messages(record) {
 
 function renderV2New() {
   clearV2NewError();
-  const idInput = document.getElementById("v2-new-id");
   const cwdSelect = document.getElementById("v2-new-cwd");
   const modelInput = document.getElementById("v2-new-model");
   const modeSelect = document.getElementById("v2-new-mode");
   const messageInput = document.getElementById("v2-new-message");
 
-  if (idInput) idInput.value = `mcv2-${Date.now().toString(36)}`;
+  // Item C: no more "Session id" field -- v2CreateSession generates an
+  // internal id automatically; the displayed name is the Chat1/Chat2/...
+  // sequential default (or the first-message-derived title once one exists).
   populateModelSelect("v2-new-model");
-  if (modelInput) modelInput.value = getLastUsedModel();
+  if (modelInput) {
+    modelInput.value = getLastUsedModel();
+    modelInput.dataset.priorValue = modelInput.value;
+  }
   if (modeSelect) modeSelect.value = "agent";
   if (messageInput) messageInput.value = "";
   populateV2CwdSelect();
@@ -1924,26 +1652,6 @@ function setStatusBadge(text, status) {
   el.dataset.status = status;
 }
 
-/**
- * Brief "saved" flash after a successful write, then revert to the
- * standard signed-in (read-write) badge. 2-second hold by default.
- */
-function flashSavedBadge(holdMs = 2000) {
-  setStatusBadge("saved", "ok");
-  setTimeout(() => {
-    if (activeAccount) {
-      setStatusBadge(`signed in: ${activeAccount.username} (read-write)`, "ok");
-    }
-  }, holdMs);
-}
-
-function stopRunningDetailPoll() {
-  if (runningDetailTimerId !== null) {
-    clearInterval(runningDetailTimerId);
-    runningDetailTimerId = null;
-  }
-}
-
 function stopIdeDetailFastPoll() {
   if (ideDetailFastTimerId !== null) {
     clearInterval(ideDetailFastTimerId);
@@ -1969,23 +1677,6 @@ function syncIdeDetailFastPoll() {
         renderIdeTabDetail(activeIdeTabComposerId, { preserveCompose: true });
       })
       .catch((err) => console.warn("ide detail fast poll failed:", err));
-  }, intervalMs);
-}
-
-function syncRunningDetailPoll() {
-  stopRunningDetailPoll();
-  if (document.body.dataset.view !== "detail" || !activeDetailSessionId || !cachedState) return;
-  const s = (cachedState.sessions || []).find((x) => x.sessionId === activeDetailSessionId);
-  if (!s || s.status !== "running") return;
-  const sec = (CONFIG.pwa && CONFIG.pwa.runningPollIntervalSeconds) || 5;
-  const intervalMs = Math.max(3, sec | 0) * 1000;
-  runningDetailTimerId = setInterval(() => {
-    if (document.body.dataset.view !== "detail" || !activeDetailSessionId) return;
-    loadState()
-      .then(() => {
-        renderDetail(activeDetailSessionId);
-      })
-      .catch((err) => showDetailError(err.message));
   }, intervalMs);
 }
 
@@ -2037,14 +1728,6 @@ function syncV2DetailPoll() {
 }
 
 function startAutoRefresh() {
-  if (refreshTimerId === null) {
-    const intervalMs = Math.max(5, (CONFIG.pwa.pollIntervalSeconds | 0)) * 1000;
-    refreshTimerId = setInterval(() => {
-      if (document.body.dataset.view === "list") {
-        renderList().catch((err) => showListError(err.message));
-      }
-    }, intervalMs);
-  }
   // Independent timer for the read-only IDE-tabs view — typically faster
   // (CONFIG.ideTabs.pollIntervalSeconds = 20 vs 30) because the GET path
   // is lighter (no ETag dance, single content stream, daemon batches
@@ -2088,81 +1771,6 @@ function startAutoRefresh() {
 // 7. UI handlers (button → action glue)
 // =============================================================================
 
-async function handleNewSubmit(ev) {
-  ev.preventDefault();
-  clearNewError();
-  const promptEl = document.getElementById("new-prompt");
-  const cwdEl = document.getElementById("new-cwd");
-  const modelEl = document.getElementById("new-model");
-  const submitBtn = document.getElementById("btn-new-submit");
-  const prompt = promptEl ? promptEl.value : "";
-  const cwd = cwdEl ? cwdEl.value : "";
-  const model = modelEl ? modelEl.value : "";
-
-  if (submitBtn) submitBtn.disabled = true;
-  try {
-    await createSession({ prompt, cwd, model });
-    setLastUsedModel(model);
-    setView("list");
-  } catch (err) {
-    showNewError(err.message);
-  } finally {
-    if (submitBtn) submitBtn.disabled = false;
-  }
-}
-
-async function handleApproveClick(sessionId) {
-  clearDetailError();
-  try {
-    await approveSession(sessionId);
-    await renderList();
-    renderDetail(sessionId);
-  } catch (err) {
-    showDetailError(err.message);
-  }
-}
-
-async function handleCancelClick(sessionId) {
-  clearDetailError();
-  // Soft confirm — single tap is too easy to miss-click on mobile.
-  if (typeof window !== "undefined" && typeof window.confirm === "function") {
-    const ok = window.confirm("Cancel this session? The daemon will stop it on its next poll.");
-    if (!ok) return;
-  }
-  try {
-    await cancelSession(sessionId);
-    await renderList();
-    renderDetail(sessionId);
-  } catch (err) {
-    showDetailError(err.message);
-  }
-}
-
-async function handleFollowUpSubmit(ev) {
-  ev.preventDefault();
-  clearDetailError();
-  const panel = document.getElementById("detail-follow-up-panel");
-  const sessionId = panel && panel.dataset.sessionId;
-  const ta = document.getElementById("follow-up-prompt");
-  const submitBtn = document.getElementById("btn-follow-up-submit");
-  const prompt = ta ? ta.value : "";
-  if (!sessionId) {
-    showDetailError("No session selected for follow-up");
-    return;
-  }
-  if (submitBtn) submitBtn.disabled = true;
-  try {
-    await queueFollowUp(sessionId, prompt);
-    hideFollowUpPanel();
-    await renderList();
-    renderDetail(sessionId);
-  } catch (err) {
-    showDetailError(err.message);
-  } finally {
-    if (submitBtn) submitBtn.disabled = false;
-  }
-}
-
 // -----------------------------------------------------------------------------
 // v2 UI handlers (mobile follow-along, 2026-09-24)
 // -----------------------------------------------------------------------------
@@ -2170,21 +1778,16 @@ async function handleFollowUpSubmit(ev) {
 async function handleV2NewSubmit(ev) {
   ev.preventDefault();
   clearV2NewError();
-  const idEl = document.getElementById("v2-new-id");
   const cwdEl = document.getElementById("v2-new-cwd");
   const modelEl = document.getElementById("v2-new-model");
   const modeEl = document.getElementById("v2-new-mode");
   const messageEl = document.getElementById("v2-new-message");
   const submitBtn = document.getElementById("btn-v2-new-submit");
-  const id = idEl ? idEl.value.trim() : "";
-  if (!id) {
-    showV2NewError("Session id is required");
-    return;
-  }
+  // Item C: no "Session id" field to validate -- v2CreateSession mints an
+  // internal id automatically.
   if (submitBtn) submitBtn.disabled = true;
   try {
     const record = await v2CreateSession({
-      id,
       cwd: cwdEl ? cwdEl.value : "",
       model: modelEl ? modelEl.value.trim() : "",
       mode: modeEl ? modeEl.value : "",
@@ -2261,6 +1864,7 @@ async function handleV2ModelChange() {
   const id = activeV2DetailSessionId;
   const modelInput = document.getElementById("v2-detail-model-input");
   if (!id || !modelInput) return;
+  if (!guardModelSelectionChange(modelInput)) return; // AC-050: reverted, no-op
   const model = modelInput.value.trim();
   if (!model) return;
   clearV2DetailError();
@@ -2460,8 +2064,19 @@ async function renderSharedList() {
     li.tabIndex = 0;
     const title = document.createElement("span");
     title.className = "cockpit-row-title";
-    title.textContent = item.name.replace(/\.json$/, "");
+    // AC-039: never the raw OneDrive filename (== the session id in
+    // disguise) as the row's primary text -- fetch the real record and show
+    // its derived/custom title instead, filled in asynchronously so the
+    // list still paints immediately.
+    title.textContent = "…";
     li.appendChild(title);
+    loadSharedRecord(item.driveId, item.itemId)
+      .then((record) => {
+        title.textContent = (V2_MODEL && V2_MODEL.deriveTitle(record)) || "(shared session)";
+      })
+      .catch(() => {
+        title.textContent = "(shared session)";
+      });
     const goToDetail = () => setView("shared-detail", { driveId: item.driveId, itemId: item.itemId });
     li.addEventListener("click", goToDetail);
     li.addEventListener("keydown", (ev) => {
@@ -2495,7 +2110,9 @@ async function renderSharedDetail(driveId, itemId) {
     return;
   }
   const titleEl = document.getElementById("shared-detail-title");
-  if (titleEl) titleEl.textContent = record.id || "(shared session)";
+  // AC-039: never the raw record.id -- the derived/custom title (or a
+  // neutral fallback) is always the primary displayed text.
+  if (titleEl) titleEl.textContent = (V2_MODEL && V2_MODEL.deriveTitle(record)) || "(shared session)";
   renderSharedMessages(record);
 }
 
@@ -2558,8 +2175,8 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS] = await Promise.all([
-      import("./write-helpers.mjs?v=14fb909"),
-      import("./ide-helpers.mjs?v=14fb909"),
+      import("./write-helpers.mjs?v=9bed028"),
+      import("./ide-helpers.mjs?v=9bed028"),
       import("./refresh-helpers.mjs"),
       import("./transcript-model.mjs"),
       import("./scrollback-helpers.mjs"),
@@ -2594,39 +2211,15 @@ async function bootstrap() {
   }
 
   // Wire navigation + write-path buttons.
-  const btnRefresh = document.getElementById("btn-refresh");
-  if (btnRefresh) {
-    btnRefresh.addEventListener("click", () => {
-      refreshCurrentView().catch((err) => showListError(err.message));
-    });
-  }
-  const btnDetailRefresh = document.getElementById("btn-detail-refresh");
-  if (btnDetailRefresh) {
-    btnDetailRefresh.addEventListener("click", () => {
-      refreshCurrentView().catch((err) => showDetailError(err.message));
-    });
-  }
-  const btnNewSession = document.getElementById("btn-new-session");
-  if (btnNewSession) {
-    btnNewSession.addEventListener("click", () => setView("new"));
-  }
-  const btnNewCancel = document.getElementById("btn-new-cancel");
-  if (btnNewCancel) btnNewCancel.addEventListener("click", () => setView("list"));
-  const form = document.getElementById("new-session-form");
-  if (form) form.addEventListener("submit", handleNewSubmit);
-  const followUpForm = document.getElementById("follow-up-form");
-  if (followUpForm) followUpForm.addEventListener("submit", handleFollowUpSubmit);
-  const btnFollowUpCancel = document.getElementById("btn-follow-up-cancel");
-  if (btnFollowUpCancel) btnFollowUpCancel.addEventListener("click", hideFollowUpPanel);
   // Back buttons use their `data-target-view` attribute so the IDE-tab
-  // detail returns to the IDE-tabs list (not to sessions).
+  // detail returns to the IDE-tabs list (not to the chat list).
   for (const back of document.querySelectorAll(".cockpit-back-btn")) {
-    const target = back.dataset.targetView || "list";
+    const target = back.dataset.targetView || "v2-list";
     back.addEventListener("click", () => setView(target));
   }
 
-  // Mode toggle (Sessions / IDE tabs) — read data-target-view so we don't
-  // hard-code the mapping here.
+  // Mode toggle (Chat / Shared / IDE tabs) — read data-target-view so we
+  // don't hard-code the mapping here.
   for (const btn of document.querySelectorAll(".cockpit-mode-btn")) {
     btn.addEventListener("click", () => {
       const target = btn.dataset.targetView;
@@ -2686,6 +2279,15 @@ async function bootstrap() {
   if (btnV2NewCancel) btnV2NewCancel.addEventListener("click", () => setView("v2-list"));
   const v2NewForm = document.getElementById("v2-new-session-form");
   if (v2NewForm) v2NewForm.addEventListener("submit", handleV2NewSubmit);
+  const v2NewModelInput = document.getElementById("v2-new-model");
+  if (v2NewModelInput) {
+    // AC-050: same confirm-before-switch guard as the settings sheet's model
+    // select -- nothing to persist yet (the value is only read at submit),
+    // so this just guards the <select>'s own value.
+    v2NewModelInput.addEventListener("change", () => {
+      guardModelSelectionChange(v2NewModelInput);
+    });
+  }
   const btnV2ComposerSend = document.getElementById("btn-v2-composer-send");
   if (btnV2ComposerSend) {
     btnV2ComposerSend.addEventListener("click", () => {
@@ -2698,13 +2300,34 @@ async function bootstrap() {
       handleV2ComposerForce().catch((err) => showV2DetailError(err.message));
     });
   }
-  const btnV2DetailMenu = document.getElementById("btn-v2-detail-menu");
-  const v2DetailMenuPanel = document.getElementById("v2-detail-menu");
-  if (btnV2DetailMenu && v2DetailMenuPanel) {
-    btnV2DetailMenu.addEventListener("click", () => {
-      const open = v2DetailMenuPanel.hidden;
-      v2DetailMenuPanel.hidden = !open;
-      btnV2DetailMenu.setAttribute("aria-expanded", String(open));
+  // Header redesign (item B): settings-gear opens #v2-settings-sheet;
+  // tapping the title opens the chat switcher. Mutually exclusive -- opening
+  // one closes the other, same posture as the old single overflow sheet.
+  const btnV2Settings = document.getElementById("btn-v2-detail-settings");
+  const v2SettingsSheet = document.getElementById("v2-settings-sheet");
+  if (btnV2Settings && v2SettingsSheet) {
+    btnV2Settings.addEventListener("click", () => {
+      const open = v2SettingsSheet.hidden;
+      closeChatSwitcher();
+      v2SettingsSheet.hidden = !open;
+      btnV2Settings.setAttribute("aria-expanded", String(open));
+    });
+  }
+  const btnV2Title = document.getElementById("btn-v2-detail-title");
+  const v2ChatSwitcher = document.getElementById("v2-chat-switcher");
+  if (btnV2Title && v2ChatSwitcher) {
+    btnV2Title.addEventListener("click", () => {
+      const open = v2ChatSwitcher.hidden;
+      closeV2SettingsSheet();
+      if (open) renderChatSwitcher();
+      v2ChatSwitcher.hidden = !open;
+      btnV2Title.setAttribute("aria-expanded", String(open));
+    });
+  }
+  const btnV2Rename = document.getElementById("btn-v2-rename");
+  if (btnV2Rename) {
+    btnV2Rename.addEventListener("click", () => {
+      handleV2RenameClick().catch((err) => showV2DetailError(err.message));
     });
   }
   const v2ModelInput = document.getElementById("v2-detail-model-input");
@@ -2752,21 +2375,25 @@ if (typeof document !== "undefined") {
 // 9. Test surface
 // =============================================================================
 //
-// Pure helpers used by app.js live in two sibling ESM modules and ARE Node-
-// importable:
-//   - ./write-helpers.mjs    (Stage A2 write-path; unit-tested by
-//                             tests/flows/mobile-cockpit/pwa-write-helpers-unit.sh)
-//   - ./ide-helpers.mjs      (M2.1 read-only IDE-tabs view; unit-tested by
-//                             tests/flows/mobile-cockpit/pwa-ide-helpers-unit.sh)
+// Pure helpers used by app.js live in several sibling ESM modules and ARE
+// Node-importable:
+//   - ./write-helpers.mjs        (hash routing + cryptoRandomBytes; unit-tested
+//                                 by tests/flows/mobile-cockpit/pwa-write-helpers-unit.sh)
+//   - ./ide-helpers.mjs          (M2.1 read-only IDE-tabs view; unit-tested by
+//                                 tests/flows/mobile-cockpit/pwa-ide-helpers-unit.sh)
+//   - ./transcript-model.mjs     (the v2 record/index model; unit-tested by
+//                                 tests/flows/mobile-cockpit/transcript-model-unit.sh)
+//   - ./scrollback-helpers.mjs   (message ordering/formatting)
 //
-// The local pure helpers in this file (sortSessions, relativeTime,
-// statusClass) are intentionally NOT module-exported here — they stay
-// internal to the browser script. Promote them to write-helpers.mjs if
-// you ever want to assert them from Node.
+// The local pure helpers in this file (relativeTime, statusClass,
+// modelGroupFor-successor isIdeApprovedModel) are intentionally NOT
+// module-exported here — they stay internal to the browser script. Promote
+// them to write-helpers.mjs if you ever want to assert them from Node.
 //
-// The DOM-coupled write paths (createSession / approveSession /
-// cancelSession + their button handlers + setView + renderList /
-// renderDetail / renderNew + renderIdeTabsList / renderIdeTabDetail) are
-// NOT unit-testable in isolation; they are covered by live-validation
-// runs against the OneDrive state.json + ide-tabs.json (see
-// START_HERE.md §8 once that section lands).
+// The DOM-coupled paths (setView / renderV2List / renderV2Detail /
+// renderIdeTabsList / renderIdeTabDetail / renderSharedList /
+// renderSharedDetail + their button handlers) are NOT unit-testable in
+// isolation; they are covered by structural presence/wiring assertions
+// (tests/flows/mobile-cockpit/pwa-v2-structural.sh, pwa-html-structural.sh)
+// and, for the write paths, by live-validation runs against the real
+// OneDrive sessions.json / sessions/<id>.json.

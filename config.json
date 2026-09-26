@@ -48,12 +48,11 @@
     "waitMinMs": 2000
   },
   "session": {
-    "_comment": "Mirrors ALLOWED_CWDS + AUTO_APPROVE_DEFAULT + MODEL_OPTIONS from lib/config.mjs (design.md §7 L2 + L3). Coherence enforced by pwa-config-coherence.sh.",
+    "_comment": "Mirrors ALLOWED_CWDS + MODEL_OPTIONS from lib/config.mjs (design.md §7 L2 + L3). Coherence enforced by pwa-config-coherence.sh. `autoApprove` was removed 2026-09-26 (SPEC-DELTA-2026-09-26-ui-cleanup, item A) -- it was v1-only (gated v1's Approve button); AUTO_APPROVE_DEFAULT itself survives in lib/config.mjs since daemon/poll.mjs's own v1 tick loop still reads it (out of scope for this PWA-only cleanup).",
     "allowedCwds": [
       "/home/vikttoth/gitrepos/management_automation",
       "/home/vikttoth/gitrepos/testproject-viktor"
     ],
-    "autoApprove": false,
     "modelOptions": [
       { "id": "auto", "label": "Auto (default)" },
       { "id": "composer-2.5", "label": "Composer 2.5" },
@@ -69,6 +68,7 @@
       { "id": "cursor-grok-4.6-medium", "label": "Grok 4.6 Medium" },
       { "id": "cursor-grok-4.6-high", "label": "Grok 4.6" },
       { "id": "cursor-grok-4.6-xhigh", "label": "Grok 4.6 Extra High" },
+      { "id": "cursor-grok-4.7-high", "label": "Grok 4.7 High" },
       { "id": "claude-opus-5-5-low", "label": "Claude Opus 5.5 1M Low" },
       { "id": "claude-opus-5-5-medium", "label": "Claude Opus 5.5 1M" },
       { "id": "claude-opus-5-5-high", "label": "Claude Opus 5.5 1M High" },

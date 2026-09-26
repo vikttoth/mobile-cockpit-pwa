@@ -165,7 +165,7 @@ main { padding: var(--cp-gap); }
 }
 
 /* ----------------------------------------------------------------------------
-   M2.1 — mode toggle (Sessions / IDE tabs) + IDE-tabs view
+   Mode toggle (Chat / Shared / IDE tabs, item G order) + IDE-tabs view
    ----------------------------------------------------------------------------
    The toggle sits between the header and main, and is hidden in detail/new
    sub-views via the body[data-view] selectors below. */
@@ -193,54 +193,17 @@ main { padding: var(--cp-gap); }
   font-weight: 600;
 }
 
-/* Hide the toggle inside detail / new / ide-tab-detail (mobile real-estate). */
-body[data-view="detail"] .cockpit-mode-toggle,
-body[data-view="new"] .cockpit-mode-toggle,
+/* Hide the toggle inside any detail/composer sub-view (mobile real-estate).
+   SPEC-DELTA-2026-09-26-ui-cleanup: v1's "detail"/"new" data-view values
+   were dead here already (v2-detail/v2-new existed well before this delta
+   but were never added to this list) -- fixed alongside the header
+   redesign since it's the same "mobile screen real estate" concern this
+   rule exists for. */
+body[data-view="v2-detail"] .cockpit-mode-toggle,
+body[data-view="v2-new"] .cockpit-mode-toggle,
 body[data-view="ide-tab-detail"] .cockpit-mode-toggle,
 body[data-view="shared-detail"] .cockpit-mode-toggle {
   display: none;
-}
-
-/* ----------------------------------------------------------------------------
-   App info view (#info) — standing Cursor cost / stack copy (2026-06-12)
-   ---------------------------------------------------------------------------- */
-
-.cockpit-app-info-title {
-  margin: 0 0 var(--cp-gap);
-  font-size: 1.15rem;
-}
-.cockpit-app-info-block {
-  margin-bottom: calc(var(--cp-gap) * 1.25);
-  padding: var(--cp-gap);
-  border: 1px solid var(--cp-border);
-  border-radius: var(--cp-radius);
-}
-.cockpit-app-info-block h3 {
-  margin: 0 0 8px;
-  font-size: 1rem;
-}
-.cockpit-app-info-block p {
-  margin: 0 0 8px;
-  font-size: 0.95rem;
-}
-.cockpit-app-info-block p:last-child {
-  margin-bottom: 0;
-}
-.cockpit-app-info-links ul {
-  margin: 0;
-  padding-left: 1.2rem;
-}
-.cockpit-app-info-links li {
-  margin-bottom: 6px;
-  word-break: break-word;
-}
-.cockpit-app-info-foot {
-  font-size: 0.85rem;
-  margin-top: var(--cp-gap);
-}
-.cockpit-app-info-foot.muted,
-.muted {
-  color: var(--cp-muted);
 }
 
 .cockpit-ide-list-toggle {
@@ -361,7 +324,10 @@ body[data-view="shared-detail"] .cockpit-mode-toggle {
    identical. Add minimal row-internal layout that matches sessions: */
 .cockpit-session-row {
   display: grid;
-  grid-template-columns: 1fr max-content max-content;
+  /* 4th column is a no-op for rows with only 3 children (IDE tabs / shared /
+     chat switcher); the v2 Active+Archive list rows add a 4th, the
+     archive/unarchive button (item D). */
+  grid-template-columns: 1fr max-content max-content max-content;
   gap: var(--cp-gap);
   align-items: baseline;
   padding: 12px var(--cp-gap);
@@ -382,6 +348,24 @@ body[data-view="shared-detail"] .cockpit-mode-toggle {
 }
 .cockpit-row-status { font-size: 0.85rem; }
 .cockpit-row-time { font-size: 0.8rem; color: var(--cp-muted); }
+.cockpit-row-archive-btn {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+}
+
+/* Active/Archive section headings above each grouped list (item D). */
+.v2-list-section-title {
+  margin: var(--cp-gap) 0 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cp-muted);
+}
+.v2-list-section-title:first-of-type {
+  margin-top: 0;
+}
 
 /* ----------------------------------------------------------------------------
    M2.2.3 write-back UI: send-message compose, new-agent + close-tab modals,
@@ -411,22 +395,74 @@ body[data-view="shared-detail"] .cockpit-mode-toggle {
 }
 .cockpit-detail-header .cockpit-back-btn { flex: 1; }
 
-/* v2 detail header (2026-09-24 polish): back + title + refresh + "⋯" all
-   on one line -- the title (not the back button) grows/truncates here,
-   since this header carries a fourth control the other two detail
-   headers above don't have. */
+/* v2 detail header redesign (SPEC-DELTA-2026-09-26-ui-cleanup, item B): back
+   (icon) + tappable title (opens the chat switcher) + settings-gear (opens
+   the settings sheet, dot when sharingEnabled) + refresh, all on one line --
+   the title grows/truncates. */
 #view-v2-detail .cockpit-detail-header .cockpit-back-btn { flex: 0 0 auto; }
-.v2-detail-title-inline {
+
+.cockpit-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px;
+}
+
+.v2-detail-title-btn {
   flex: 1 1 auto;
   min-width: 0;
+  display: block;
+  text-align: left;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 8px 4px;
+  cursor: pointer;
+}
+.v2-detail-title-inline {
+  display: block;
   margin: 0;
   font-size: 1rem;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.v2-detail-menu {
+.v2-settings-btn {
+  position: relative;
+}
+.v2-settings-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cp-success);
+}
+
+/* Chat switcher (AC-040) -- same box treatment as the settings sheet below. */
+.v2-chat-switcher {
+  margin-bottom: var(--cp-gap);
+  padding: var(--cp-gap);
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+  background: rgba(127, 127, 127, 0.06);
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.v2-chat-switcher[hidden] {
+  display: none;
+}
+
+/* Settings sheet (AC-041) -- replaces the old, buggy .v2-detail-menu (see
+   css-hidden-override-guard.sh for the [hidden] regression guard this
+   element's own bug produced). */
+.v2-settings-sheet {
   display: flex;
   flex-direction: column;
   gap: var(--cp-gap);
@@ -436,20 +472,69 @@ body[data-view="shared-detail"] .cockpit-mode-toggle {
   border-radius: var(--cp-radius);
   background: rgba(127, 127, 127, 0.06);
 }
+.v2-settings-sheet[hidden] {
+  display: none;
+}
+.v2-settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--cp-gap) / 2);
+}
+.v2-settings-section + .v2-settings-section {
+  padding-top: var(--cp-gap);
+  border-top: 1px solid var(--cp-border);
+}
+.v2-settings-section-title {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cp-muted);
+}
+.v2-settings-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--cp-gap) / 2);
+}
+.v2-settings-row-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.v2-settings-row-pair {
+  display: flex;
+  gap: var(--cp-gap);
+}
+.v2-settings-row-pair > * {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.v2-settings-row-disabled {
+  margin: 0;
+  color: var(--cp-muted);
+  font-style: italic;
+}
+.cockpit-btn-icon {
+  min-height: 32px;
+  min-width: 32px;
+  padding: 4px 8px;
+}
 
 .cockpit-btn-refreshing {
   opacity: 0.65;
   animation: cockpit-refresh-spin 0.8s linear infinite;
 }
 
-/* SPEC-DELTA-2026-09-25-session-sharing-stage1 */
+/* SPEC-DELTA-2026-09-25-session-sharing-stage1, relocated into the settings
+   sheet 2026-09-26 -- .v2-settings-section already supplies the separator. */
 .v2-share-panel {
   display: flex;
   flex-direction: column;
   gap: calc(var(--cp-gap) / 2);
-  padding-top: var(--cp-gap);
-  border-top: 1px solid var(--cp-border);
-  margin-top: calc(var(--cp-gap) / 2);
 }
 .v2-share-list {
   list-style: none;
