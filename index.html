@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-27 18:29 CEST c90dc66 in config.json + app.js).
+  script (replaces 2026-09-27 19:09 CEST c3ee883 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=c90dc66")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=c3ee883")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -300,7 +300,6 @@
               </select>
             </label>
           </div>
-          <button type="button" id="btn-v2-stop" class="cockpit-btn cockpit-btn-warning" hidden>Stop</button>
         </section>
 
         <!-- SPEC-DELTA-2026-09-25-session-sharing-stage1: session-level,
@@ -342,11 +341,18 @@
 
       <div class="v2-composer">
         <textarea id="v2-composer-text" class="v2-composer-text" rows="3" placeholder="Message"></textarea>
-        <!-- Force only ever shown while a turn is running -- interrupting
+        <!-- Stop/Force only ever shown while a turn is running -- interrupting
              an idle session has no meaning, so there is nothing to show
              the rest of the time (Viktor's ask, 2026-09-24: mirror how
              Claude's own composer behaves instead of a permanent
-             Queue/Force mode selector). -->
+             Queue/Force mode selector). Stop moved here from the settings
+             sheet 2026-09-27 (Viktor's ask: a running turn's stop control
+             should be directly visible, not buried behind a ⚙ tap) -- kept
+             as a genuinely separate control from Force, not merged: Stop
+             just kills the turn, Force kills it AND immediately submits
+             whatever is in the composer as the next turn -- two different
+             actions, confirmed with Viktor this distinction should stay. -->
+        <button type="button" id="btn-v2-stop" class="cockpit-btn cockpit-btn-warning" hidden title="Stop the running turn">⏹ Stop</button>
         <button type="button" id="btn-v2-composer-force" class="cockpit-btn cockpit-btn-warning" hidden title="Interrupt the running turn and send this now">⚡ Force</button>
         <button type="button" id="btn-v2-composer-send" class="cockpit-btn cockpit-btn-primary">Send</button>
       </div>
@@ -474,6 +480,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=c90dc66" defer></script>
+  <script src="./app.js?v=c3ee883" defer></script>
 </body>
 </html>
