@@ -164,6 +164,27 @@ main { padding: var(--cp-gap); }
   text-align: center;
 }
 
+/* SPEC-DELTA-2026-09-27-daemon-control-watchdog: always-visible footer
+   strip (no `display` declaration of its own -- inherits .cockpit-footer's
+   block flow, so it never risks the css-hidden-override-guard bug class,
+   and it is never itself toggled via `hidden`). */
+.cockpit-daemon-control {
+  display: block;
+  margin-top: 4px;
+}
+#daemon-control-badge[data-state="running"] { color: var(--cp-muted); }
+#daemon-control-badge[data-state="stopped"] { color: var(--cp-warning); }
+#daemon-control-badge[data-state="error"] { color: var(--cp-error); }
+#daemon-control-badge[data-state="unknown"] { color: var(--cp-warning); }
+#daemon-control-checked-ago { margin-left: 4px; }
+.cockpit-btn-small {
+  min-height: 28px;
+  min-width: 0;
+  padding: 2px 10px;
+  margin-left: 6px;
+  font-size: 0.8rem;
+}
+
 /* ----------------------------------------------------------------------------
    Mode toggle (Chat / Shared / IDE tabs, item G order) + IDE-tabs view
    ----------------------------------------------------------------------------

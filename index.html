@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-26 16:32 CEST 9bed028 in config.json + app.js).
+  script (replaces 2026-09-27 10:21 CEST 89e067b in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=9bed028")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=89e067b")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -445,8 +445,26 @@
            and the visible text, never more than one status at a time. -->
       <span id="health-badge" data-state="unknown" aria-live="polite" hidden></span>
     </small>
+    <!--
+      SPEC-DELTA-2026-09-27-daemon-control-watchdog: always-visible (no
+      extra taps -- Viktor's explicit ask), NOT gated behind the settings
+      sheet. app.js#renderDaemonControlBadge sets data-state (one of
+      running/stopped/error/unknown) + the visible text + the "checked Ns
+      ago" readout from the watchdog's own daemon-status.json. Start/Stop
+      buttons write a fresh requestId to daemon-control.json; Stop asks for
+      confirmation first when any v2 session is currently `running`
+      (app.js#handleDaemonStopClick) -- that confirmation is the ONLY gate,
+      the watchdog itself always does a hard kill (Viktor: "force stop
+      mehet").
+    -->
+    <small class="cockpit-daemon-control" id="daemon-control-strip">
+      <span id="daemon-control-badge" data-state="unknown" aria-live="polite">daemon: checking…</span>
+      <span id="daemon-control-checked-ago" aria-live="polite"></span>
+      <button type="button" id="btn-daemon-start" class="cockpit-btn cockpit-btn-small" hidden>Start</button>
+      <button type="button" id="btn-daemon-stop" class="cockpit-btn cockpit-btn-small" hidden>Stop</button>
+    </small>
   </footer>
 
-  <script src="./app.js?v=9bed028" defer></script>
+  <script src="./app.js?v=89e067b" defer></script>
 </body>
 </html>

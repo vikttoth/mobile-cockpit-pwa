@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-26 16:32 CEST 9bed028`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-26 16:32 CEST 9bed028";
+// `2026-09-27 10:21 CEST 89e067b`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-27 10:21 CEST 89e067b";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -62,6 +62,15 @@ let IDE_HELPERS = null;
 
 /** Pure helpers for refresh-signals.json nudge + wait logic. */
 let REFRESH_HELPERS = null;
+
+/** Dynamically imported pure helpers for the daemon start/stop control
+ *  strip (SPEC-DELTA-2026-09-27-daemon-control-watchdog) -- byte-for-byte
+ *  mirror of ../lib/daemon-control-model.mjs (see
+ *  pwa-daemon-control-coherence.sh). */
+let DAEMON_CONTROL_MODEL = null;
+
+/** True while a Start/Stop request write is in flight (prevents double-tap). */
+let daemonControlRequestInFlight = false;
 
 /** True while a manual ↻ refresh is in flight (prevents double-tap). */
 let refreshInFlight = false;
@@ -1981,6 +1990,162 @@ async function loadHealth() {
 }
 
 // =============================================================================
+// 7c-2. Daemon start/stop control strip (SPEC-DELTA-2026-09-27-
+//        daemon-control-watchdog)
+// =============================================================================
+//
+// Background this exists to fix: the daemon's only prior health signal
+// (health.json, above) is written BY the daemon itself, so a dead daemon
+// can never report its own death -- the badge just kept showing the last
+// known "ok" forever. daemon-status.json is written by a SEPARATE watchdog
+// process (a Windows Scheduled Task, \Cursor\MobileCockpitControlWatchdog,
+// every ~1 min) on EVERY tick regardless of whether a start/stop request
+// came in, so its own absence/staleness is itself informative -- see
+// DAEMON_CONTROL_MODEL#deriveControlDisplayState.
+//
+// Viktor's stated design (verbatim, translated): "it should warn me if
+// something is still running and ask if I'm sure before stopping, then
+// force-stop." The confirmation dialog below is the ONLY gate -- once a
+// stop request reaches the watchdog, it always hard-kills, no separate
+// graceful-vs-force request type.
+
+/** Renders one daemon-control status into the always-visible footer strip
+ *  (never gated behind the settings sheet -- Viktor wants this visible
+ *  without extra taps). Never throws. */
+function renderDaemonControlBadge(status) {
+  const badgeEl = document.getElementById("daemon-control-badge");
+  const agoEl = document.getElementById("daemon-control-checked-ago");
+  const startBtn = document.getElementById("btn-daemon-start");
+  const stopBtn = document.getElementById("btn-daemon-stop");
+  if (!badgeEl || !DAEMON_CONTROL_MODEL) return;
+
+  const nowMs = Date.now();
+  const staleAfterMs =
+    ((CONFIG && CONFIG.daemonControl && CONFIG.daemonControl.staleAfterSeconds) || 180) * 1000;
+  const state = DAEMON_CONTROL_MODEL.deriveControlDisplayState({ status, nowMs, staleAfterMs });
+
+  const labels = {
+    running: "daemon: running",
+    stopped: "daemon: stopped",
+    error: "daemon: error",
+    unknown: "daemon: unknown",
+  };
+  badgeEl.dataset.state = state;
+  badgeEl.textContent = labels[state] || `daemon: ${state}`;
+  badgeEl.title =
+    status && status.lastAction && status.lastAction.result === "error" && status.lastAction.error
+      ? status.lastAction.error
+      : "";
+
+  if (agoEl) {
+    const secs = DAEMON_CONTROL_MODEL.secondsSinceChecked(status, nowMs);
+    agoEl.textContent = secs === null ? "" : `(checked ${secs}s ago)`;
+  }
+
+  // Start when we're confidently NOT running; Stop when we're confidently
+  // running. "unknown"/"error" show neither -- guessing which action makes
+  // sense when the watchdog itself hasn't reported anything trustworthy
+  // yet would be the same silent-guess failure mode this feature exists to
+  // avoid.
+  if (startBtn) startBtn.hidden = state !== "stopped";
+  if (stopBtn) stopBtn.hidden = state !== "running";
+}
+
+/** Fetches the watchdog-published daemon-status.json and renders it.
+ *  Never throws (same best-effort posture as loadHealth). */
+async function loadDaemonControlStatus() {
+  if (!CONFIG || !CONFIG.daemonControl) return;
+  try {
+    const { json } = await loadJson(CONFIG.daemonControl.statusEndpoint);
+    renderDaemonControlBadge(json);
+  } catch {
+    renderDaemonControlBadge(null);
+  }
+}
+
+/** Internal request id, never shown to the user -- same shape as
+ *  generateInternalSessionId's `mcv2-` prefix convention above. */
+function generateControlRequestId(now) {
+  const t = Math.floor(now).toString(36).padStart(8, "0");
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `mcctl-${t}-${rand}`;
+}
+
+/** Plain overwrite of daemon-control.json -- single writer (the PWA),
+ *  nothing to merge, same reasoning writeRefreshNudge's sibling health.json
+ *  write already documents. */
+async function writeDaemonControlRequest(action) {
+  const cfg = CONFIG && CONFIG.daemonControl;
+  if (!cfg || !cfg.controlEndpoint) return;
+  const request = DAEMON_CONTROL_MODEL.buildControlRequest({
+    action,
+    requestId: generateControlRequestId(Date.now()),
+    nowIso: new Date().toISOString(),
+  });
+  const res = await graphFetch(`${cfg.controlEndpoint}:/content`, {
+    method: "PUT",
+    body: JSON.stringify(request, null, 2) + "\n",
+  });
+  if (!res.ok) {
+    throw new Error(`daemon-control PUT failed: ${res.status}`);
+  }
+}
+
+/** True if any v2 session in the current index is currently `running` --
+ *  the "N session(s) currently running -- stop anyway?" confirm gate. */
+async function anyV2SessionRunning() {
+  try {
+    const { index } = await loadV2Index();
+    return (index.sessions || []).filter((s) => s.status === "running");
+  } catch {
+    // Best-effort: if the index can't be read, don't block the stop
+    // request on it -- fail open on the CONFIRMATION copy (worst case the
+    // user isn't warned about a running session), not on the action itself.
+    return [];
+  }
+}
+
+async function handleDaemonStartClick() {
+  if (daemonControlRequestInFlight) return;
+  daemonControlRequestInFlight = true;
+  try {
+    await writeDaemonControlRequest("start");
+    setTimeout(loadDaemonControlStatus, 1500);
+  } catch (err) {
+    window.alert(`Failed to send start request: ${err.message}`);
+  } finally {
+    daemonControlRequestInFlight = false;
+  }
+}
+
+async function handleDaemonStopClick() {
+  if (daemonControlRequestInFlight) return;
+  daemonControlRequestInFlight = true;
+  try {
+    const running = await anyV2SessionRunning();
+    if (running.length > 0) {
+      const proceed = window.confirm(
+        `${running.length} session(s) currently running — stop anyway?`,
+      );
+      if (!proceed) return;
+    }
+    await writeDaemonControlRequest("stop");
+    setTimeout(loadDaemonControlStatus, 1500);
+  } catch (err) {
+    window.alert(`Failed to send stop request: ${err.message}`);
+  } finally {
+    daemonControlRequestInFlight = false;
+  }
+}
+
+function wireDaemonControlButtons() {
+  const startBtn = document.getElementById("btn-daemon-start");
+  const stopBtn = document.getElementById("btn-daemon-stop");
+  if (startBtn) startBtn.addEventListener("click", handleDaemonStartClick);
+  if (stopBtn) stopBtn.addEventListener("click", handleDaemonStopClick);
+}
+
+// =============================================================================
 // 7d. "Shared with me" -- read-only guest view (SPEC-DELTA-2026-09-25-
 //     session-sharing-stage1, AC-034/AC-035)
 // =============================================================================
@@ -2174,12 +2339,13 @@ async function bootstrap() {
   // ide-helpers module is sibling; both are loaded in parallel because
   // they have no inter-dependency.
   try {
-    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS] = await Promise.all([
-      import("./write-helpers.mjs?v=9bed028"),
-      import("./ide-helpers.mjs?v=9bed028"),
+    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL] = await Promise.all([
+      import("./write-helpers.mjs?v=89e067b"),
+      import("./ide-helpers.mjs?v=89e067b"),
       import("./refresh-helpers.mjs"),
       import("./transcript-model.mjs"),
       import("./scrollback-helpers.mjs"),
+      import("./daemon-control-model.mjs"),
     ]);
   } catch (err) {
     setStatusBadge(`helpers import error: ${err.message}`, "error");
@@ -2209,6 +2375,14 @@ async function bootstrap() {
   if (CONFIG.health && Number.isFinite(CONFIG.health.pollIntervalSeconds)) {
     setInterval(loadHealth, CONFIG.health.pollIntervalSeconds * 1000);
   }
+
+  // SPEC-DELTA-2026-09-27-daemon-control-watchdog: same fire-and-forget,
+  // never-blocks-boot posture as loadHealth above.
+  loadDaemonControlStatus();
+  if (CONFIG.daemonControl && Number.isFinite(CONFIG.daemonControl.pollIntervalSeconds)) {
+    setInterval(loadDaemonControlStatus, CONFIG.daemonControl.pollIntervalSeconds * 1000);
+  }
+  wireDaemonControlButtons();
 
   // Wire navigation + write-path buttons.
   // Back buttons use their `data-target-view` attribute so the IDE-tab
