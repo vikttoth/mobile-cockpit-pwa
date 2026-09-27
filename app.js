@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-27 10:21 CEST 89e067b`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-27 10:21 CEST 89e067b";
+// `2026-09-27 18:29 CEST c90dc66`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-27 18:29 CEST c90dc66";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -512,6 +512,16 @@ async function v2EnqueueMessage(id, text) {
   return v2WriteRecordWithRetry(id, (record) => V2_MODEL.enqueueMessage(record, { text, now: Date.now() }));
 }
 
+/**
+ * SPEC-DELTA-2026-09-27-queue-remove-and-session-delete (S-006, AC-015
+ * "remove"): remove one not-yet-sent message from `queue[]`. No index
+ * mirroring -- `queue[]` isn't part of `buildIndexEntry`'s shape, same
+ * reasoning as v2EnqueueMessage above.
+ */
+async function v2RemoveQueuedMessage(id, queueItemId) {
+  return v2WriteRecordWithRetry(id, (record) => V2_MODEL.removeQueuedMessage(record, { id: queueItemId }));
+}
+
 async function v2RequestForce(id, text) {
   return v2WriteRecordWithRetry(id, (record) => V2_MODEL.requestForce(record, { text, now: Date.now() }));
 }
@@ -544,6 +554,47 @@ async function v2SetCustomTitle(id, customTitle) {
   return v2WriteRecordAndMirrorIndex(id, (record) =>
     V2_MODEL.setCustomTitle(record, { customTitle, now: Date.now() }),
   );
+}
+
+/**
+ * SPEC-DELTA-2026-09-27-queue-remove-and-session-delete (AC-030): permanent
+ * whole-session delete, browser-side mirror of
+ * lib/session-store.mjs#deleteSession. Deletes the record's own driveItem
+ * FIRST (mirrors graphRevokePermission's DELETE-call shape, but against the
+ * record endpoint itself rather than a `:/permissions/<id>` sub-resource --
+ * same as scripts/delete-onedrive-pwa.mjs's `DELETE /me/drive/items/<id>`
+ * pattern for removing a whole item, not its content), tolerating an
+ * already-gone file (404) as success, THEN removes the row from the light
+ * index with the same read-modify-write-retry-on-412 shape every other
+ * index mutation here uses. Order matters: never claim a session is deleted
+ * if the record file delete itself failed.
+ *
+ * @param {string} id
+ * @returns {Promise<void>}
+ */
+async function v2DeleteSession(id) {
+  const res = await graphFetch(v2RecordEndpoint(id), { method: "DELETE" });
+  if (!res.ok && res.status !== 404) {
+    const bodyText = await res.text().catch(() => "");
+    throw new Error(`v2DeleteSession: DELETE failed ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
+  }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { index, etag } = await loadV2Index();
+    let nextIndex;
+    try {
+      nextIndex = V2_MODEL.removeIndexEntry(index, id);
+    } catch (err) {
+      if (err.code === "SESSION_NOT_FOUND") return; // already gone from the index too
+      throw err;
+    }
+    try {
+      await putV2Index(nextIndex, etag);
+      return;
+    } catch (err) {
+      if (err.code !== "PRECONDITION_FAILED" || attempt > 0) throw err;
+    }
+  }
+  throw new Error(`v2DeleteSession(${id}): index retries exhausted`);
 }
 
 // v2TakeOverLease/v2HandBackLease/v2RenewLeaseHeartbeat were removed
@@ -1309,6 +1360,20 @@ function buildV2ListRow(s, { archived }) {
   });
   li.appendChild(archiveBtn);
 
+  // SPEC-DELTA-2026-09-27-queue-remove-and-session-delete: reachable straight
+  // from the list, same directness as Archive above -- Viktor's whole
+  // complaint was list clutter, so cleanup can't be buried a tap deeper.
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "cockpit-btn cockpit-btn-danger cockpit-row-archive-btn";
+  deleteBtn.textContent = "Delete";
+  deleteBtn.setAttribute("aria-label", `Delete ${s.title || "chat"} permanently`);
+  deleteBtn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    handleV2ListDeleteClick(s.id, s.title).catch((err) => showV2ListError(err.message));
+  });
+  li.appendChild(deleteBtn);
+
   return li;
 }
 
@@ -1350,6 +1415,27 @@ async function handleV2ArchiveToggle(id, archived) {
   clearV2ListError();
   try {
     await v2SetArchived(id, archived);
+  } catch (err) {
+    showV2ListError(err.message);
+    return;
+  }
+  await renderV2List().catch((err) => showV2ListError(err.message));
+}
+
+/**
+ * Per-row Delete control handler (AC-030). Unlike Archive, this is
+ * IRREVERSIBLE, so it always confirms first -- same UX approach as the
+ * daemon-control-watchdog delta's confirm-before-stop dialog, adapted
+ * wording (see SPEC-DELTA-2026-09-27-queue-remove-and-session-delete).
+ */
+async function handleV2ListDeleteClick(id, titleText) {
+  const proceed = window.confirm(
+    `Delete "${titleText || "(untitled)"}" permanently? This cannot be undone.`,
+  );
+  if (!proceed) return;
+  clearV2ListError();
+  try {
+    await v2DeleteSession(id);
   } catch (err) {
     showV2ListError(err.message);
     return;
@@ -1597,7 +1683,21 @@ function renderV2Messages(record) {
     for (const item of record.queue) {
       const row = document.createElement("div");
       row.className = "v2-queue-item";
-      row.textContent = item.text;
+      const text = document.createElement("span");
+      text.className = "v2-queue-item-text";
+      text.textContent = item.text;
+      row.appendChild(text);
+      // S-006 / AC-015 "remove" -- no confirmation needed, fully reversible
+      // (the user can just retype it), unlike Force/Stop/Delete.
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "cockpit-btn cockpit-btn-icon v2-queue-remove-btn";
+      removeBtn.textContent = "✕";
+      removeBtn.setAttribute("aria-label", "Remove queued message");
+      removeBtn.addEventListener("click", () => {
+        handleV2QueueRemoveClick(record.id, item.id).catch((err) => showV2DetailError(err.message));
+      });
+      row.appendChild(removeBtn);
       panel.appendChild(row);
     }
     container.appendChild(panel);
@@ -1866,6 +1966,47 @@ async function handleV2StopClick(id) {
     await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
     setV2Busy(false);
   }
+}
+
+/** Per-queue-item remove control handler (S-006, AC-015 "remove"). */
+async function handleV2QueueRemoveClick(id, queueItemId) {
+  clearV2DetailError();
+  setV2Busy(true);
+  try {
+    await v2RemoveQueuedMessage(id, queueItemId);
+  } catch (err) {
+    showV2DetailError(err.message);
+  } finally {
+    await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
+    setV2Busy(false);
+  }
+}
+
+/**
+ * Settings-sheet Delete control handler (AC-030) -- symmetry with the list
+ * row's own Delete, for a user already inside a session. Reads
+ * activeV2DetailSessionId/activeV2DetailRecord the same way
+ * handleV2RenameClick does. On success, navigates back to the list (this
+ * session's own detail view obviously can't be re-rendered) and refreshes it.
+ */
+async function handleV2DetailDeleteClick() {
+  const id = activeV2DetailSessionId;
+  if (!id) return;
+  const title = activeV2DetailRecord ? V2_MODEL.deriveTitle(activeV2DetailRecord) : "";
+  const proceed = window.confirm(`Delete "${title || "(untitled)"}" permanently? This cannot be undone.`);
+  if (!proceed) return;
+  clearV2DetailError();
+  setV2Busy(true);
+  try {
+    await v2DeleteSession(id);
+  } catch (err) {
+    showV2DetailError(err.message);
+    setV2Busy(false);
+    return;
+  }
+  setV2Busy(false);
+  setView("v2-list");
+  await renderV2List().catch((err) => showV2ListError(err.message));
 }
 
 
@@ -2340,8 +2481,8 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=89e067b"),
-      import("./ide-helpers.mjs?v=89e067b"),
+      import("./write-helpers.mjs?v=c90dc66"),
+      import("./ide-helpers.mjs?v=c90dc66"),
       import("./refresh-helpers.mjs"),
       import("./transcript-model.mjs"),
       import("./scrollback-helpers.mjs"),
@@ -2502,6 +2643,12 @@ async function bootstrap() {
   if (btnV2Rename) {
     btnV2Rename.addEventListener("click", () => {
       handleV2RenameClick().catch((err) => showV2DetailError(err.message));
+    });
+  }
+  const btnV2Delete = document.getElementById("btn-v2-delete");
+  if (btnV2Delete) {
+    btnV2Delete.addEventListener("click", () => {
+      handleV2DetailDeleteClick().catch((err) => showV2DetailError(err.message));
     });
   }
   const v2ModelInput = document.getElementById("v2-detail-model-input");

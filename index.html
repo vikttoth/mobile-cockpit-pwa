@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-27 10:21 CEST 89e067b in config.json + app.js).
+  script (replaces 2026-09-27 18:29 CEST c90dc66 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=89e067b")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=c90dc66")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -272,6 +272,15 @@
                  modal component for a rarely-used control. -->
             <button type="button" id="btn-v2-rename" class="cockpit-btn cockpit-btn-icon" aria-label="Rename chat">✎</button>
           </div>
+          <!-- AC-030: symmetry with the list row's own Delete (view-v2-list
+               above) -- a user already inside a session can delete it from
+               here too, without navigating back to the list first.
+               Irreversible -- app.js#handleV2DetailDeleteClick always
+               confirms first. -->
+          <div class="v2-settings-row">
+            <span class="v2-settings-row-value">Delete this chat</span>
+            <button type="button" id="btn-v2-delete" class="cockpit-btn cockpit-btn-danger" aria-label="Delete chat permanently">Delete</button>
+          </div>
           <div class="v2-settings-row-pair">
             <span class="v2-inline-control">Status <strong id="v2-detail-status">…</strong></span>
             <span class="v2-inline-control">Chat id <strong id="v2-detail-chat-id">…</strong></span>
@@ -465,6 +474,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=89e067b" defer></script>
+  <script src="./app.js?v=c90dc66" defer></script>
 </body>
 </html>

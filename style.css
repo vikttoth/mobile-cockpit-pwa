@@ -345,10 +345,11 @@ body[data-view="shared-detail"] .cockpit-mode-toggle {
    identical. Add minimal row-internal layout that matches sessions: */
 .cockpit-session-row {
   display: grid;
-  /* 4th column is a no-op for rows with only 3 children (IDE tabs / shared /
-     chat switcher); the v2 Active+Archive list rows add a 4th, the
-     archive/unarchive button (item D). */
-  grid-template-columns: 1fr max-content max-content max-content;
+  /* 4th/5th columns are a no-op for rows with only 3 children (IDE tabs /
+     shared / chat switcher); the v2 Active+Archive list rows add a 4th, the
+     archive/unarchive button (item D), and a 5th, the Delete button
+     (SPEC-DELTA-2026-09-27-queue-remove-and-session-delete, AC-030). */
+  grid-template-columns: 1fr max-content max-content max-content max-content;
   gap: var(--cp-gap);
   align-items: baseline;
   padding: 12px var(--cp-gap);
@@ -948,9 +949,28 @@ body[data-view="shared-detail"] .cockpit-mode-toggle {
   margin-bottom: 4px;
 }
 .v2-queue-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 0.9rem;
   padding: 2px 0;
   opacity: 0.85;
+}
+.v2-queue-item-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* SPEC-DELTA-2026-09-27-queue-remove-and-session-delete: a small per-row
+   remove affordance, no confirmation needed (fully reversible). */
+.v2-queue-remove-btn {
+  flex: 0 0 auto;
+  min-height: 24px;
+  min-width: 24px;
+  padding: 0 6px;
+  font-size: 0.75rem;
+  line-height: 1;
 }
 
 .v2-inline-control {
