@@ -396,17 +396,25 @@ export function setMode(record, opts) {
 }
 
 /**
- * Pure archive (SPEC task 11, S-014 area, AC-028): "the session shall leave
- * the active list, keep its transcript, and remain restorable." Sets only
- * `archived` + `updatedAt` -- `messages[]`/`queue[]`/`status` are all left
- * exactly as they are, which IS "keep its transcript": nothing is deleted
- * or summarised, a session is just no longer in the default list view
- * (that filter is a UI concern, not this function's).
+ * Pure archive (SPEC task 11, S-014 area, AC-028/AC-029): "the session shall
+ * leave the active list, keep its transcript, and remain restorable." Sets
+ * `archived` + `updatedAt` -- `messages[]`/`queue[]` are left exactly as
+ * they are, which IS "keep its transcript": nothing is deleted or
+ * summarised, a session is just no longer in the default list view (that
+ * filter is a UI concern, not this function's).
  *
- * Does NOT check `status` (e.g. "is this session running?") -- AC-029's
- * "must stop a running session before archiving it" is deliberately not
- * enforced here; see the SPEC task 11 note for why (it depends on task 6's
- * still-open force/stop daemon-loop design).
+ * AC-029 (closed 2026-09-27, now that task 6's `--v2-tick` daemon loop
+ * actually writes a real `status: "running"` transition -- the blocker this
+ * doc comment used to name): archiving a RUNNING session also requests a
+ * stop, same `pendingAction: "stop"` intent `requestStop` sets, composed
+ * here rather than duplicated -- "a hidden running agent shall never be
+ * possible" means archiving must not just hide a still-running session from
+ * the list, it must also make the daemon's poller actually kill it. This
+ * overrides any other pending action (e.g. a queued force) -- archiving
+ * wins, matching `deriveNextAction`'s own "an explicit Stop always wins"
+ * priority. The confirmation half of AC-029 is a UI concern, same as
+ * AC-030's delete confirmation (see `session-store.mjs#setArchived`'s own
+ * doc comment) -- not enforced here.
  *
  * @param {object} record
  * @param {{now: number}} opts
@@ -416,7 +424,8 @@ export function archiveSession(record, opts) {
   if (!Number.isFinite(opts?.now)) {
     throw new Error("archiveSession: now must be a finite epoch-ms number");
   }
-  return { ...record, archived: true, updatedAt: isoNow(opts.now) };
+  const stopGate = record.status === "running" ? { pendingAction: "stop" } : {};
+  return { ...record, ...stopGate, archived: true, updatedAt: isoNow(opts.now) };
 }
 
 /**
@@ -432,6 +441,52 @@ export function unarchiveSession(record, opts) {
     throw new Error("unarchiveSession: now must be a finite epoch-ms number");
   }
   return { ...record, archived: false, updatedAt: isoNow(opts.now) };
+}
+
+/**
+ * Pure, one-way ownership marker (SPEC-DELTA-2026-09-28-mc-wrapper, AC-068/AC-069):
+ * `scripts/mc` calls this ONCE, right after creating a session, to permanently mark it
+ * laptop-owned. Deliberately NOT `takeOverLease` -- that sets a `lease` object with its
+ * own heartbeat/expiry machinery meant for a TEMPORARY handoff the daemon expects back;
+ * `mc` sessions are never daemon-run at all, so there is nothing to hand back and no
+ * heartbeat loop to maintain. `lease` stays `null`. This alone is enough to make
+ * `v2-action-tick.mjs`'s candidate selection (`owner === "daemon"`) and orphan-recovery
+ * permanently skip the record, and its lease-expiry sweep (`owner !== "daemon"`) is
+ * already a proven safe no-op on a `lease: null` record.
+ *
+ * @param {object} record
+ * @param {{now: number}} opts
+ * @returns {object} new session record
+ */
+export function markLaptopOwned(record, opts) {
+  if (!Number.isFinite(opts?.now)) {
+    throw new Error("markLaptopOwned: now must be a finite epoch-ms number");
+  }
+  return { ...record, owner: "laptop", updatedAt: isoNow(opts.now) };
+}
+
+/**
+ * Pure terminal-status setter for an mc-owned session once its interactive
+ * `cursor-agent` process exits (SPEC-DELTA-2026-09-28-mc-wrapper, AC-071).
+ * Deliberately not `resolveFinishedTurn`/`deriveNextAction` -- those assume a
+ * turn the daemon itself started via `startNextV2Turn` (queue mechanics,
+ * streaming, child-registry bookkeeping); an mc session's `status` never
+ * left `"pending"` in the first place, there is no turn to resolve, just an
+ * honest terminal marker so the record does not sit `"pending"` forever
+ * once the interactive session is actually over.
+ *
+ * @param {object} record
+ * @param {{status: "done"|"stopped", now: number}} opts
+ * @returns {object} new session record
+ */
+export function markLaptopSessionEnded(record, opts) {
+  if (opts?.status !== "done" && opts?.status !== "stopped") {
+    throw new Error(`markLaptopSessionEnded: status must be "done" or "stopped", got '${opts?.status}'`);
+  }
+  if (!Number.isFinite(opts?.now)) {
+    throw new Error("markLaptopSessionEnded: now must be a finite epoch-ms number");
+  }
+  return { ...record, status: opts.status, updatedAt: isoNow(opts.now) };
 }
 
 /**

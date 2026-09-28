@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-27 19:09 CEST c3ee883 in config.json + app.js).
+  script (replaces 2026-09-28 22:33 CEST 098cbea in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=c3ee883")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=098cbea")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -81,7 +81,7 @@
             role="tab" data-target-view="shared-list"
             title="Sessions someone else shared with you, read-only (SPEC-DELTA-2026-09-25-session-sharing-stage1)">Shared</button>
     <button type="button" id="btn-mode-ide-tabs" class="cockpit-mode-btn"
-            role="tab" data-target-view="ide-tabs">IDE tabs</button>
+            role="tab" data-target-view="ide-tabs">IDE Tracker</button>
   </nav>
 
   <main>
@@ -94,8 +94,19 @@
     -->
     <section id="view-ide-tabs" class="cockpit-view" data-view-id="ide-tabs" hidden>
       <div class="cockpit-ide-toolbar">
+        <span id="ide-tabs-workspace-label" class="cockpit-hint" aria-live="polite"></span>
         <button type="button" id="btn-ide-refresh" class="cockpit-btn" aria-label="Refresh IDE tabs">↻</button>
       </div>
+      <!-- SPEC-DELTA-2026-09-28-claude-code-ide-tracker.md: which read-only
+           mirror source this view shows. Both sub-views reuse every render
+           function below unchanged -- only app.js#loadIdeTabs() picks the
+           endpoint based on data-ide-tracker-source. -->
+      <nav class="cockpit-ide-list-toggle" role="tablist" aria-label="IDE Tracker source">
+        <button type="button" id="btn-ide-tracker-cursor" class="cockpit-ide-tracker-btn"
+                role="tab" data-ide-tracker-source="cursor" aria-current="true">Cursor</button>
+        <button type="button" id="btn-ide-tracker-claude-code" class="cockpit-ide-tracker-btn"
+                role="tab" data-ide-tracker-source="claude-code">Claude Code</button>
+      </nav>
       <nav class="cockpit-ide-list-toggle" role="tablist" aria-label="IDE tab list">
         <button type="button" id="btn-ide-list-open" class="cockpit-ide-list-btn"
                 role="tab" data-ide-list-mode="open" aria-current="true">Open</button>
@@ -480,6 +491,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=c3ee883" defer></script>
+  <script src="./app.js?v=098cbea" defer></script>
 </body>
 </html>

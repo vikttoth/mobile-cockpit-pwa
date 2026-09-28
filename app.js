@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-27 19:09 CEST c3ee883`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-27 19:09 CEST c3ee883";
+// `2026-09-28 22:33 CEST 098cbea`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-28 22:33 CEST 098cbea";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -80,6 +80,16 @@ let cachedIdeSnapshot = null;
 
 /** IDE tabs sub-view within the read-only mirror: live open vs chat history. */
 let ideListMode = "open";
+
+/**
+ * IDE Tracker source: which read-only mirror the current view shows.
+ * SPEC-DELTA-2026-09-28-claude-code-ide-tracker.md. "cursor" reads
+ * CONFIG.ideTabs (unchanged); "claude-code" reads CONFIG.claudeCodeTabs (new).
+ * Both write into the SAME cachedIdeSnapshot, so every existing render
+ * function (renderIdeTabsList, renderIdeTabDetail, ...) needs no changes at
+ * all -- only loadIdeTabs() picks which endpoint to fetch.
+ */
+let ideTrackerSource = "cursor";
 
 /** Auto-refresh handle for the ide-tabs view (independent of sessions). */
 let ideRefreshTimerId = null;
@@ -258,9 +268,10 @@ async function graphFetch(path, init = {}, opts = {}) {
  * matter here).
  */
 async function loadIdeTabs() {
-  const endpoint = CONFIG && CONFIG.ideTabs && CONFIG.ideTabs.endpoint;
+  const configKey = ideTrackerSource === "claude-code" ? "claudeCodeTabs" : "ideTabs";
+  const endpoint = CONFIG && CONFIG[configKey] && CONFIG[configKey].endpoint;
   if (!endpoint) {
-    throw new Error("config.ideTabs.endpoint missing -- update pwa/config.json");
+    throw new Error(`config.${configKey}.endpoint missing -- update pwa/config.json`);
   }
   const contentRes = await graphFetch(`${endpoint}:/content`);
   if (contentRes.status === 404) {
@@ -1051,6 +1062,25 @@ function setIdeListMode(mode) {
   renderIdeTabsList().catch((err) => showIdeTabsError(err.message));
 }
 
+/** SPEC-DELTA-2026-09-28-claude-code-ide-tracker.md: sync the Cursor/Claude
+ *  Code switcher's aria-current to the in-memory ideTrackerSource. */
+function syncIdeTrackerSourceToggle() {
+  for (const btn of document.querySelectorAll(".cockpit-ide-tracker-btn")) {
+    btn.setAttribute(
+      "aria-current",
+      btn.dataset.ideTrackerSource === ideTrackerSource ? "true" : "false",
+    );
+  }
+}
+
+function setIdeTrackerSource(source) {
+  if (source !== "cursor" && source !== "claude-code") return;
+  if (source === ideTrackerSource) return;
+  ideTrackerSource = source;
+  syncIdeTrackerSourceToggle();
+  renderIdeTabsList().catch((err) => showIdeTabsError(err.message));
+}
+
 async function renderIdeTabsList() {
   if (!IDE_HELPERS) {
     showIdeTabsError("ide-helpers module not loaded yet (bootstrap order bug)");
@@ -1075,6 +1105,11 @@ async function renderIdeTabsList() {
   const sorted = IDE_HELPERS.orderIdeTabsForDisplay(tabs, cap, {
     openTabsSource: ideListMode === "open" ? snapshot.openTabsSource : null,
   });
+
+  const workspaceLabel = document.getElementById("ide-tabs-workspace-label");
+  if (workspaceLabel) {
+    workspaceLabel.textContent = snapshot.workspacePath ? `Watching: ${snapshot.workspacePath}` : "";
+  }
 
   const sourceWarn = document.getElementById("ide-tabs-source-warning");
   if (sourceWarn) {
@@ -1356,7 +1391,7 @@ function buildV2ListRow(s, { archived }) {
   archiveBtn.setAttribute("aria-label", `${archived ? "Unarchive" : "Archive"} ${s.title || "chat"}`);
   archiveBtn.addEventListener("click", (ev) => {
     ev.stopPropagation();
-    handleV2ArchiveToggle(s.id, !archived).catch((err) => showV2ListError(err.message));
+    handleV2ArchiveToggle(s.id, !archived, s.status).catch((err) => showV2ListError(err.message));
   });
   li.appendChild(archiveBtn);
 
@@ -1410,8 +1445,21 @@ async function renderV2List() {
   }
 }
 
-/** Per-row Archive/Unarchive control handler (AC-047). */
-async function handleV2ArchiveToggle(id, archived) {
+/**
+ * Per-row Archive/Unarchive control handler (AC-047). AC-029: archiving a
+ * RUNNING session requires an explicit confirmation first -- the backend
+ * (`archiveSession`) already stops it (`pendingAction: "stop"`) once
+ * confirmed, this is just the "ask first" half. Unarchiving, and archiving a
+ * non-running session, need no confirmation (matches AC-050's "only guard
+ * when it matters" precedent).
+ */
+async function handleV2ArchiveToggle(id, archived, status) {
+  if (archived && status === "running") {
+    const proceed = window.confirm(
+      "This chat is currently running. Archiving it will stop the agent first. Continue?",
+    );
+    if (!proceed) return;
+  }
   clearV2ListError();
   try {
     await v2SetArchived(id, archived);
@@ -2481,8 +2529,8 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=c3ee883"),
-      import("./ide-helpers.mjs?v=c3ee883"),
+      import("./write-helpers.mjs?v=098cbea"),
+      import("./ide-helpers.mjs?v=098cbea"),
       import("./refresh-helpers.mjs"),
       import("./transcript-model.mjs"),
       import("./scrollback-helpers.mjs"),
@@ -2562,6 +2610,13 @@ async function bootstrap() {
     });
   }
   syncIdeListModeToggle();
+  for (const btn of document.querySelectorAll(".cockpit-ide-tracker-btn")) {
+    btn.addEventListener("click", () => {
+      const source = btn.dataset.ideTrackerSource;
+      if (source) setIdeTrackerSource(source);
+    });
+  }
+  syncIdeTrackerSourceToggle();
 
   // v2 (chat-model) button wiring (mobile follow-along, 2026-09-24). Back
   // buttons + the mode-toggle pill are already generic (data-target-view),

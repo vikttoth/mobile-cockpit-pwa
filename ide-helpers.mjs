@@ -248,10 +248,18 @@ export function findIdeTab(snapshot, composerId) {
  * @param {string|null|undefined} openTabsSource
  * @returns {string|null} null when no warning needed
  */
-export function openTabsSourceHint(openTabsSource) {
-  if (openTabsSource === "extension") return null;
+export function openTabsSourceHint(_openTabsSource) {
+  // 2026-09-28: used to special-case openTabsSource === "extension" as "the
+  // precise source, no hint needed" -- the extension this assumed would one
+  // day exist turned out to be permanently infeasible (Cursor's real Agent
+  // tabs expose no tab.input via the public VS Code Tabs API at all, see
+  // SPEC-DELTA-2026-09-26-ui-cleanup-and-ide-open-tabs.md's dated
+  // correction). mtime-heuristic is the only real source there ever is now,
+  // so this always explains the estimate -- the parameter is kept (rather
+  // than changing every call site) in case a real precise source ever
+  // exists again.
   return (
-    "Open tabs are estimated from recent transcript activity, not the live IDE tab bar " +
-    "(v2 has no in-IDE extension to read that from directly)."
+    "Open tabs are estimated from recent transcript activity (most-recently-touched " +
+    "conversations), not a live IDE tab bar."
   );
 }

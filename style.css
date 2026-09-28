@@ -250,6 +250,25 @@ body[data-view="shared-detail"] .cockpit-mode-toggle {
   color: #fff;
   font-weight: 600;
 }
+/* IDE Tracker source switcher (Cursor / Claude Code) -- a separate class
+   from .cockpit-ide-list-btn (SPEC-DELTA-2026-09-28-claude-code-ide-tracker.md)
+   so syncIdeListModeToggle()'s open/history sync never touches these
+   buttons; same visual treatment, independent JS state. */
+.cockpit-ide-tracker-btn {
+  flex: 1;
+  min-height: 40px;
+  padding: 8px 0;
+  border: none;
+  background: var(--cp-surface);
+  color: var(--cp-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.cockpit-ide-tracker-btn[aria-current="true"] {
+  background: var(--cp-accent);
+  color: #fff;
+  font-weight: 600;
+}
 .cockpit-hint {
   margin: 0 0 var(--cp-gap);
   padding: 8px 10px;

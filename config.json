@@ -27,6 +27,12 @@
     "relativePath": "cursor-cockpit/sessions",
     "endpoint": "/me/drive/root:/cursor-cockpit/sessions"
   },
+  "claudeCodeTabs": {
+    "_comment": "SPEC-DELTA-2026-09-28-claude-code-ide-tracker.md. Read-only mirror of Claude Code's own session transcripts, written by flows/mobile-cockpit/claude-code-mirror/poll.mjs. Same shape as ideTabs -- a SEPARATE file, no schema coupling between the two independently-evolving sources. relativePath MUST match CLAUDE_CODE_TABS_RELATIVE_PATH in claude-code-mirror/poll.mjs.",
+    "relativePath": "cursor-cockpit/claude-code-tabs.json",
+    "endpoint": "/me/drive/root:/cursor-cockpit/claude-code-tabs.json",
+    "pollIntervalSeconds": 20
+  },
   "health": {
     "_comment": "SPEC task 12 (AC-008), wired 2026-09-25. relativePath MUST match HEALTH_RELATIVE_PATH in lib/config.mjs. Coherence enforced by pwa-config-coherence.sh.",
     "relativePath": "cursor-cockpit/health.json",
