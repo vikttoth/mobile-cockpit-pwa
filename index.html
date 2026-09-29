@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-28 22:33 CEST 098cbea in config.json + app.js).
+  script (replaces 2026-09-29 08:19 CEST 7b78a90 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=098cbea")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=7b78a90")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -244,6 +244,8 @@
         <button type="button" id="btn-v2-detail-title" class="v2-detail-title-btn" aria-haspopup="listbox" aria-expanded="false" aria-label="Switch chat">
           <span id="v2-detail-title" class="v2-detail-title-inline">…</span>
         </button>
+        <!-- AC-095: session status at a glance (was only inside the ⚙ sheet). -->
+        <span id="v2-detail-status-chip" class="v2-status-chip" hidden aria-live="polite"></span>
         <button type="button" id="btn-v2-detail-settings" class="cockpit-btn cockpit-icon-btn v2-settings-btn" aria-label="Chat settings" aria-expanded="false">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
             <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z" />
@@ -351,21 +353,27 @@
       </div>
 
       <div class="v2-composer">
-        <textarea id="v2-composer-text" class="v2-composer-text" rows="3" placeholder="Message"></textarea>
-        <!-- Stop/Force only ever shown while a turn is running -- interrupting
-             an idle session has no meaning, so there is nothing to show
-             the rest of the time (Viktor's ask, 2026-09-24: mirror how
-             Claude's own composer behaves instead of a permanent
-             Queue/Force mode selector). Stop moved here from the settings
-             sheet 2026-09-27 (Viktor's ask: a running turn's stop control
-             should be directly visible, not buried behind a ⚙ tap) -- kept
-             as a genuinely separate control from Force, not merged: Stop
-             just kills the turn, Force kills it AND immediately submits
-             whatever is in the composer as the next turn -- two different
-             actions, confirmed with Viktor this distinction should stay. -->
-        <button type="button" id="btn-v2-stop" class="cockpit-btn cockpit-btn-warning" hidden title="Stop the running turn">⏹ Stop</button>
-        <button type="button" id="btn-v2-composer-force" class="cockpit-btn cockpit-btn-warning" hidden title="Interrupt the running turn and send this now">⚡ Force</button>
-        <button type="button" id="btn-v2-composer-send" class="cockpit-btn cockpit-btn-primary">Send</button>
+        <textarea id="v2-composer-text" class="v2-composer-text" rows="1" placeholder="Message" aria-label="Message"></textarea>
+        <!-- Contextual buttons, one row, fixed order Stop / Force / Send-Queue
+             (SPEC-DELTA-2026-09-29-composer-contextual-buttons, Viktor's
+             design). Visibility + enabled state come from
+             composer-state.mjs#deriveComposerButtons via
+             app.js#applyComposerButtons: Stop for the whole run; Force only
+             while running AND the box has text (stop + send this now); Send
+             is always visible, disabled on an empty box, and reads "Queue"
+             while a turn runs (it already enqueues then). -->
+        <div class="v2-composer-actions">
+          <button type="button" id="btn-v2-stop" class="cockpit-btn cockpit-icon-btn v2-composer-btn v2-btn-stop" hidden aria-label="Stop" title="Stop the running turn">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true" focusable="false"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+          </button>
+          <button type="button" id="btn-v2-composer-force" class="cockpit-btn cockpit-icon-btn v2-composer-btn v2-btn-force" hidden aria-label="Force" title="Stop the running turn and send this now">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true" focusable="false"><path d="M13 2L4 14h6l-1 8 9-12h-6z" /></svg>
+          </button>
+          <button type="button" id="btn-v2-composer-send" class="cockpit-btn cockpit-icon-btn v2-composer-btn v2-btn-send" data-mode="send" aria-label="Send" title="Send" disabled>
+            <svg class="v2-icon-send" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12h14" /><path d="M13 6l6 6-6 6" /></svg>
+            <svg class="v2-icon-queue" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 6h11" /><path d="M4 12h11" /><path d="M4 18h7" /><path d="M18 15v6" /><path d="M15 18h6" /></svg>
+          </button>
+        </div>
       </div>
       <!-- Shown while any action (send/stop/model switch/...) is in flight
            -- the controls it names are also disabled for the same span,
@@ -491,6 +499,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=098cbea" defer></script>
+  <script src="./app.js?v=7b78a90" defer></script>
 </body>
 </html>

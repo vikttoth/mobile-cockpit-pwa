@@ -450,6 +450,7 @@ body[data-view="shared-detail"] .cockpit-mode-toggle {
   min-width: 44px;
   padding: 8px;
 }
+.cockpit-icon-btn[hidden] { display: none; }
 
 .v2-detail-title-btn {
   flex: 1 1 auto;
@@ -1010,15 +1011,59 @@ body[data-view="shared-detail"] .cockpit-mode-toggle {
   color: var(--cp-fg);
 }
 
+/* One row: auto-growing box + contextual icon buttons on the right
+   (SPEC-DELTA-2026-09-29-composer-contextual-buttons). */
 .v2-composer {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 6px;
   position: sticky;
   bottom: 0;
   padding: 8px 0;
   background: var(--cp-bg);
 }
+.v2-composer-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+.v2-composer-btn {
+  min-width: 40px;
+  min-height: 40px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  color: #fff;
+}
+.v2-composer-btn[hidden] { display: none; }
+.v2-composer-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.v2-btn-send { background: var(--cp-accent); border-color: var(--cp-accent); }
+.v2-btn-stop { background: var(--cp-error); border-color: var(--cp-error); }
+.v2-btn-force { background: var(--cp-warning); border-color: var(--cp-warning); }
+.v2-btn-send .v2-icon-queue { display: none; }
+.v2-btn-send[data-mode="queue"] .v2-icon-send { display: none; }
+.v2-btn-send[data-mode="queue"] .v2-icon-queue { display: inline; }
+
+/* AC-095: status chip next to the chat title. */
+.v2-status-chip {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--cp-border);
+  color: var(--cp-muted);
+  white-space: nowrap;
+}
+.v2-status-chip[hidden] { display: none; }
+.v2-status-chip[data-tone="running"] { color: var(--cp-accent); border-color: var(--cp-accent); }
+.v2-status-chip[data-tone="ok"] { color: var(--cp-success); border-color: var(--cp-success); }
+.v2-status-chip[data-tone="error"] { color: var(--cp-error); border-color: var(--cp-error); }
 .v2-composer-mode-select {
   padding: 6px 8px;
   border-radius: var(--cp-radius);
@@ -1028,12 +1073,18 @@ body[data-view="shared-detail"] .cockpit-mode-toggle {
   align-self: flex-start;
 }
 .v2-composer-text {
+  flex: 1 1 auto;
+  min-width: 0;
   width: 100%;
+  min-height: 40px;
+  max-height: 140px;
   padding: 8px;
   border-radius: var(--cp-radius);
   border: 1px solid var(--cp-border);
   background: var(--cp-bg);
   color: var(--cp-fg);
   font-family: inherit;
-  resize: vertical;
+  resize: none;
+  overflow-y: auto;
+  box-sizing: border-box;
 }

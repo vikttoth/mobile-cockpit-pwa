@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-28 22:33 CEST 098cbea`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-28 22:33 CEST 098cbea";
+// `2026-09-29 08:19 CEST 7b78a90`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-29 08:19 CEST 7b78a90";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -68,6 +68,15 @@ let REFRESH_HELPERS = null;
  *  mirror of ../lib/daemon-control-model.mjs (see
  *  pwa-daemon-control-coherence.sh). */
 let DAEMON_CONTROL_MODEL = null;
+
+/** Pure helpers for the v2 composer buttons + status chip
+ *  (SPEC-DELTA-2026-09-29-composer-contextual-buttons). */
+let COMPOSER_STATE = null;
+
+/** Last-rendered v2 session status + in-flight flag, the two inputs
+ *  applyComposerButtons() combines with the textbox content. */
+let v2ComposerStatus = null;
+let v2Busy = false;
 
 /** True while a Start/Stop request write is in flight (prevents double-tap). */
 let daemonControlRequestInFlight = false;
@@ -1510,14 +1519,78 @@ function setV2Busy(busy) {
     "v2-detail-model-input",
     "v2-detail-mode-select",
     "v2-composer-text",
-    "btn-v2-composer-send",
-    "btn-v2-composer-force",
-    "btn-v2-stop",
   ];
   for (const id of ids) {
     const el = document.getElementById(id);
     if (el) el.disabled = busy;
   }
+  // Composer buttons are re-derived, never blanket-enabled (AC-094): an
+  // empty box must keep Send disabled after the action finishes.
+  v2Busy = busy;
+  applyComposerButtons();
+}
+
+/**
+ * Show/hide/enable Stop, Force and Send/Queue from the current status, box
+ * content and busy flag (SPEC-DELTA-2026-09-29-composer-contextual-buttons).
+ */
+function applyComposerButtons() {
+  if (!COMPOSER_STATE) return;
+  const textEl = document.getElementById("v2-composer-text");
+  const b = COMPOSER_STATE.deriveComposerButtons({
+    status: v2ComposerStatus,
+    text: textEl ? textEl.value : "",
+    busy: v2Busy,
+  });
+  const btnSend = document.getElementById("btn-v2-composer-send");
+  if (btnSend) {
+    btnSend.disabled = !b.send.enabled;
+    btnSend.dataset.mode = b.send.mode;
+    btnSend.title = b.send.title;
+    btnSend.setAttribute("aria-label", b.send.label);
+  }
+  const btnStop = document.getElementById("btn-v2-stop");
+  if (btnStop) {
+    btnStop.hidden = !b.stop.visible;
+    btnStop.disabled = !b.stop.enabled;
+  }
+  const btnForce = document.getElementById("btn-v2-composer-force");
+  if (btnForce) {
+    btnForce.hidden = !b.force.visible;
+    btnForce.disabled = !b.force.enabled;
+  }
+}
+
+/** Auto-grow the composer box from 1 row up to ~5 rows. */
+function autoGrowComposer() {
+  const textEl = document.getElementById("v2-composer-text");
+  if (!textEl || !COMPOSER_STATE) return;
+  textEl.style.height = "auto";
+  const px = COMPOSER_STATE.clampComposerHeight(textEl.scrollHeight, { minPx: 40, maxPx: 140 });
+  textEl.style.height = `${px}px`;
+}
+
+/** Status chip next to the chat title (AC-095). */
+function applyStatusChip(record) {
+  const chip = document.getElementById("v2-detail-status-chip");
+  if (!chip) return;
+  const c = COMPOSER_STATE ? COMPOSER_STATE.deriveStatusChip(record) : null;
+  chip.hidden = !c;
+  if (c) {
+    chip.textContent = c.label;
+    chip.dataset.tone = c.tone;
+  }
+}
+
+/** Apply a freshly read record to the composer + chip. */
+function syncComposerFromRecord(record) {
+  v2ComposerStatus = record.status;
+  const btnStop = document.getElementById("btn-v2-stop");
+  if (btnStop) {
+    btnStop.onclick = record.status === "running" ? () => handleV2StopClick(record.id) : null;
+  }
+  applyComposerButtons();
+  applyStatusChip(record);
 }
 
 async function renderV2Detail(sessionId) {
@@ -1566,14 +1639,8 @@ async function renderV2Detail(sessionId) {
   const modeSelect = document.getElementById("v2-detail-mode-select");
   if (modeSelect) modeSelect.value = record.mode || "agent";
 
-  const btnStop = document.getElementById("btn-v2-stop");
-  if (btnStop) {
-    const stoppable = record.status === "running";
-    btnStop.hidden = !stoppable;
-    btnStop.onclick = stoppable ? () => handleV2StopClick(record.id) : null;
-  }
-  const btnForce = document.getElementById("btn-v2-composer-force");
-  if (btnForce) btnForce.hidden = record.status !== "running";
+  syncComposerFromRecord(record);
+  autoGrowComposer();
   // AC-042: the settings-gear shows a dot whenever sharing is on, visible
   // without opening the sheet.
   const settingsDot = document.getElementById("v2-settings-dot");
@@ -1866,14 +1933,7 @@ function syncV2DetailPoll() {
         };
         set("v2-detail-status", record.status);
         set("v2-detail-chat-id", record.chatId || "(provisioning…)");
-        const btnStop = document.getElementById("btn-v2-stop");
-        if (btnStop) {
-          const stoppable = record.status === "running";
-          btnStop.hidden = !stoppable;
-          btnStop.onclick = stoppable ? () => handleV2StopClick(id) : null;
-        }
-        const btnForce = document.getElementById("btn-v2-composer-force");
-        if (btnForce) btnForce.hidden = record.status !== "running";
+        syncComposerFromRecord(record);
         const stillChanging =
           record.status === "running" ||
           !record.chatId ||
@@ -2528,13 +2588,14 @@ async function bootstrap() {
   // ide-helpers module is sibling; both are loaded in parallel because
   // they have no inter-dependency.
   try {
-    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=098cbea"),
-      import("./ide-helpers.mjs?v=098cbea"),
+    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE] = await Promise.all([
+      import("./write-helpers.mjs?v=7b78a90"),
+      import("./ide-helpers.mjs?v=7b78a90"),
       import("./refresh-helpers.mjs"),
       import("./transcript-model.mjs"),
       import("./scrollback-helpers.mjs"),
       import("./daemon-control-model.mjs"),
+      import("./composer-state.mjs"),
     ]);
   } catch (err) {
     setStatusBadge(`helpers import error: ${err.message}`, "error");
@@ -2668,6 +2729,21 @@ async function bootstrap() {
   if (btnV2ComposerForce) {
     btnV2ComposerForce.addEventListener("click", () => {
       handleV2ComposerForce().catch((err) => showV2DetailError(err.message));
+    });
+  }
+  // Contextual buttons + auto-grow follow the box content; Ctrl/Cmd+Enter
+  // submits (plain Enter stays a newline).
+  const v2ComposerText = document.getElementById("v2-composer-text");
+  if (v2ComposerText) {
+    v2ComposerText.addEventListener("input", () => {
+      applyComposerButtons();
+      autoGrowComposer();
+    });
+    v2ComposerText.addEventListener("keydown", (ev) => {
+      if (!COMPOSER_STATE || !COMPOSER_STATE.isSubmitShortcut(ev)) return;
+      ev.preventDefault();
+      const send = document.getElementById("btn-v2-composer-send");
+      if (send && !send.disabled) send.click();
     });
   }
   // Header redesign (item B): settings-gear opens #v2-settings-sheet;
