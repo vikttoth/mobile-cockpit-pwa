@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-29 08:19 CEST 7b78a90`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-29 08:19 CEST 7b78a90";
+// `2026-09-29 09:29 CEST c92b136`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-29 09:29 CEST c92b136";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1566,7 +1566,10 @@ function autoGrowComposer() {
   const textEl = document.getElementById("v2-composer-text");
   if (!textEl || !COMPOSER_STATE) return;
   textEl.style.height = "auto";
-  const px = COMPOSER_STATE.clampComposerHeight(textEl.scrollHeight, { minPx: 40, maxPx: 140 });
+  // scrollHeight excludes the border; box-sizing is border-box, so add it
+  // back or a 3-line message already shows a scrollbar.
+  const border = textEl.offsetHeight - textEl.clientHeight;
+  const px = COMPOSER_STATE.clampComposerHeight(textEl.scrollHeight + border, { minPx: 40, maxPx: 140 });
   textEl.style.height = `${px}px`;
 }
 
@@ -2589,8 +2592,8 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE] = await Promise.all([
-      import("./write-helpers.mjs?v=7b78a90"),
-      import("./ide-helpers.mjs?v=7b78a90"),
+      import("./write-helpers.mjs?v=c92b136"),
+      import("./ide-helpers.mjs?v=c92b136"),
       import("./refresh-helpers.mjs"),
       import("./transcript-model.mjs"),
       import("./scrollback-helpers.mjs"),
