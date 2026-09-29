@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-29 10:01 CEST ccc5596`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-29 10:01 CEST ccc5596";
+// `2026-09-29 10:06 CEST 7f2e7a5`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-29 10:06 CEST 7f2e7a5";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -2647,13 +2647,13 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE] = await Promise.all([
-      import("./write-helpers.mjs?v=ccc5596"),
-      import("./ide-helpers.mjs?v=ccc5596"),
-      import("./refresh-helpers.mjs"),
-      import("./transcript-model.mjs"),
-      import("./scrollback-helpers.mjs"),
-      import("./daemon-control-model.mjs"),
-      import("./composer-state.mjs"),
+      import("./write-helpers.mjs?v=7f2e7a5"),
+      import("./ide-helpers.mjs?v=7f2e7a5"),
+      import("./refresh-helpers.mjs?v=7f2e7a5"),
+      import("./transcript-model.mjs?v=7f2e7a5"),
+      import("./scrollback-helpers.mjs?v=7f2e7a5"),
+      import("./daemon-control-model.mjs?v=7f2e7a5"),
+      import("./composer-state.mjs?v=7f2e7a5"),
     ]);
   } catch (err) {
     setStatusBadge(`helpers import error: ${err.message}`, "error");
