@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-29 10:18 CEST 162da9d`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-29 10:18 CEST 162da9d";
+// `2026-09-29 10:33 CEST 59b7d76`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-29 10:33 CEST 59b7d76";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -528,22 +528,27 @@ function generateInternalSessionId(now) {
   return `mcv2-${t}-${rand}`;
 }
 
+/**
+ * Enqueue + Force mirror the index: the daemon tick only re-reads a record
+ * whose index `updatedAt` changed (SPEC-DELTA-2026-09-29-graph-load-and-
+ * backoff), so without the mirror a new message would wait for the tick's
+ * once-a-minute full sweep.
+ */
 async function v2EnqueueMessage(id, text) {
-  return v2WriteRecordWithRetry(id, (record) => V2_MODEL.enqueueMessage(record, { text, now: Date.now() }));
+  return v2WriteRecordAndMirrorIndex(id, (record) => V2_MODEL.enqueueMessage(record, { text, now: Date.now() }));
 }
 
 /**
  * SPEC-DELTA-2026-09-27-queue-remove-and-session-delete (S-006, AC-015
  * "remove"): remove one not-yet-sent message from `queue[]`. No index
- * mirroring -- `queue[]` isn't part of `buildIndexEntry`'s shape, same
- * reasoning as v2EnqueueMessage above.
+ * mirroring -- removing never needs the daemon to pick anything up.
  */
 async function v2RemoveQueuedMessage(id, queueItemId) {
   return v2WriteRecordWithRetry(id, (record) => V2_MODEL.removeQueuedMessage(record, { id: queueItemId }));
 }
 
 async function v2RequestForce(id, text) {
-  return v2WriteRecordWithRetry(id, (record) => V2_MODEL.requestForce(record, { text, now: Date.now() }));
+  return v2WriteRecordAndMirrorIndex(id, (record) => V2_MODEL.requestForce(record, { text, now: Date.now() }));
 }
 
 async function v2RequestStop(id) {
@@ -2649,13 +2654,13 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE] = await Promise.all([
-      import("./write-helpers.mjs?v=162da9d"),
-      import("./ide-helpers.mjs?v=162da9d"),
-      import("./refresh-helpers.mjs?v=162da9d"),
-      import("./transcript-model.mjs?v=162da9d"),
-      import("./scrollback-helpers.mjs?v=162da9d"),
-      import("./daemon-control-model.mjs?v=162da9d"),
-      import("./composer-state.mjs?v=162da9d"),
+      import("./write-helpers.mjs?v=59b7d76"),
+      import("./ide-helpers.mjs?v=59b7d76"),
+      import("./refresh-helpers.mjs?v=59b7d76"),
+      import("./transcript-model.mjs?v=59b7d76"),
+      import("./scrollback-helpers.mjs?v=59b7d76"),
+      import("./daemon-control-model.mjs?v=59b7d76"),
+      import("./composer-state.mjs?v=59b7d76"),
     ]);
   } catch (err) {
     setStatusBadge(`helpers import error: ${err.message}`, "error");
