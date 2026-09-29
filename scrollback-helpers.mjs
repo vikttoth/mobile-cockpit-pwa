@@ -92,3 +92,23 @@ export function formatSessionMessage(message) {
   const ts = typeof message.ts === "number" && Number.isFinite(message.ts) ? message.ts : null;
   return { role, label, text, ts };
 }
+
+/**
+ * What to do with the chat's scroll position after re-rendering the message
+ * list (SPEC-DELTA-2026-09-29-chat-bottom-panel-and-autoscroll, S-080..S-084).
+ * Follow the bottom on first render, on the user's own send, or when the
+ * reader was already at the bottom; otherwise leave the position alone and,
+ * if a new message arrived, surface the "New message" button instead of
+ * jumping (it stays until the bottom is reached).
+ *
+ * @param {{isFirstRender?: boolean, forceBottom?: boolean, wasAtBottom?: boolean,
+ *   newMessageArrived?: boolean, pillVisible?: boolean}} [input]
+ * @returns {{scrollToBottom: boolean, showNewMessagePill: boolean}}
+ */
+export function decideScrollAfterRender(input = { isFirstRender: true }) {
+  const { isFirstRender, forceBottom, wasAtBottom, newMessageArrived, pillVisible } = input;
+  if (isFirstRender || forceBottom || wasAtBottom) {
+    return { scrollToBottom: true, showNewMessagePill: false };
+  }
+  return { scrollToBottom: false, showNewMessagePill: Boolean(newMessageArrived || pillVisible) };
+}

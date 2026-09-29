@@ -20,12 +20,12 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-29 09:29 CEST c92b136 in config.json + app.js).
+  script (replaces 2026-09-29 10:01 CEST ccc5596 in config.json + app.js).
 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
@@ -45,7 +45,7 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=c92b136")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=ccc5596")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
@@ -220,166 +220,173 @@
       only appears while a turn is running.
     -->
     <section id="view-v2-detail" class="cockpit-view" data-view-id="v2-detail" hidden>
-      <!--
-        Header redesign (SPEC-DELTA-2026-09-26-ui-cleanup, item B). Was:
-        raw-arrow-char Back + raw record.id as the title + refresh + an
-        always-broken "..." button (see item E -- .v2-detail-menu's CSS
-        [hidden] bug) opening an always-visible-anyway block. Now: an
-        icon-based Back, a tappable friendly title (opens the chat switcher
-        below), one settings-gear button (opens #v2-settings-sheet; shows a
-        dot when sharingEnabled), and refresh stays rightmost. The raw
-        chatId/record.id is never the primary displayed text anywhere in
-        this header -- see the labeled "Chat id" diagnostic row inside the
-        settings sheet's General section instead (same disclosure pattern as
-        the IDE-tab detail view's Composer ID row).
-      -->
-      <div class="cockpit-detail-header">
-        <button type="button" class="cockpit-back-btn cockpit-icon-btn" data-target-view="v2-list" aria-label="Back to chat list">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-            <path d="M5 12l14 0" />
-            <path d="M5 12l6 6" />
-            <path d="M5 12l6 -6" />
-          </svg>
-        </button>
-        <button type="button" id="btn-v2-detail-title" class="v2-detail-title-btn" aria-haspopup="listbox" aria-expanded="false" aria-label="Switch chat">
-          <span id="v2-detail-title" class="v2-detail-title-inline">…</span>
-        </button>
-        <!-- AC-095: session status at a glance (was only inside the ⚙ sheet). -->
-        <span id="v2-detail-status-chip" class="v2-status-chip" hidden aria-live="polite"></span>
-        <button type="button" id="btn-v2-detail-settings" class="cockpit-btn cockpit-icon-btn v2-settings-btn" aria-label="Chat settings" aria-expanded="false">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-            <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z" />
-            <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
-          </svg>
-          <!-- AC-042: visible without opening the sheet, whenever record.sharingEnabled === true. -->
-          <span id="v2-settings-dot" class="v2-settings-dot" hidden aria-hidden="true"></span>
-        </button>
-        <button type="button" id="btn-v2-detail-refresh" class="cockpit-btn" aria-label="Refresh session">↻</button>
-      </div>
-
-      <!-- Chat switcher (AC-040): tapping the title opens a list of the
-           host's OTHER open/recent v2 chats to jump to -- Viktor explicitly
-           chose this over a horizontal tab-strip, which he judged too
-           cramped on a phone screen. -->
-      <div id="v2-chat-switcher" class="v2-chat-switcher" hidden role="listbox" aria-label="Switch chat">
-        <ul id="v2-chat-switcher-list" class="cockpit-session-list" role="list">
-          <!-- Populated by app.js#renderChatSwitcher(). -->
-        </ul>
-        <p id="v2-chat-switcher-empty" class="cockpit-hint" hidden>No other chats yet.</p>
-      </div>
-
-      <!-- Settings sheet (AC-041): everything that isn't "read the
-           conversation" or "send a message" -- toggled by
-           btn-v2-detail-settings. Not visible by default -- see
-           css-hidden-override-guard.sh for the regression guard on this
-           exact class of bug (this element replaces the old, buggy
-           .v2-detail-menu). -->
-      <div id="v2-settings-sheet" class="v2-settings-sheet" hidden>
-        <section class="v2-settings-section">
-          <h3 class="v2-settings-section-title">General</h3>
-          <div class="v2-settings-row">
-            <span id="v2-settings-title-readout" class="v2-settings-row-value">…</span>
-            <!-- Simple rename control (AC-044): app.js#handleV2RenameClick
-                 uses window.prompt(), same "simple" posture as the existing
-                 window.confirm() usage elsewhere in this file -- no new
-                 modal component for a rarely-used control. -->
-            <button type="button" id="btn-v2-rename" class="cockpit-btn cockpit-btn-icon" aria-label="Rename chat">✎</button>
-          </div>
-          <!-- AC-030: symmetry with the list row's own Delete (view-v2-list
-               above) -- a user already inside a session can delete it from
-               here too, without navigating back to the list first.
-               Irreversible -- app.js#handleV2DetailDeleteClick always
-               confirms first. -->
-          <div class="v2-settings-row">
-            <span class="v2-settings-row-value">Delete this chat</span>
-            <button type="button" id="btn-v2-delete" class="cockpit-btn cockpit-btn-danger" aria-label="Delete chat permanently">Delete</button>
-          </div>
-          <div class="v2-settings-row-pair">
-            <span class="v2-inline-control">Status <strong id="v2-detail-status">…</strong></span>
-            <span class="v2-inline-control">Chat id <strong id="v2-detail-chat-id">…</strong></span>
-          </div>
-          <div class="v2-settings-row-pair">
-            <label class="v2-inline-control">
-              Model
-              <!-- Options populated from CONFIG.session.modelOptions in app.js#populateModelSelect() -- two optgroups, IDE models first (AC-049/AC-050). -->
-              <select id="v2-detail-model-input"></select>
-            </label>
-            <label class="v2-inline-control">
-              Mode
-              <select id="v2-detail-mode-select">
-                <option value="agent">agent</option>
-                <option value="plan">plan</option>
-                <option value="ask">ask</option>
-              </select>
-            </label>
-          </div>
-        </section>
-
-        <!-- SPEC-DELTA-2026-09-25-session-sharing-stage1: session-level,
-             read-only sharing, relocated into the settings sheet 2026-09-26
-             (same behavior, just no longer always-visible). The toggle is
-             separate from the invite list on purpose -- turning it off
-             revokes real Graph access but remembers who was invited, so
-             turning it back on needs no re-typing (AC-032/AC-037). -->
-        <section class="v2-settings-section v2-share-panel">
-          <h3 class="v2-settings-section-title">Sharing</h3>
-          <label class="v2-inline-control">
-            Sharing
-            <input type="checkbox" id="v2-detail-sharing-toggle" />
-          </label>
-          <ul id="v2-detail-shared-list" class="v2-share-list">
-            <!-- Populated by app.js#renderSharePanel(): <li>email — invited &lt;time&gt;</li> -->
-          </ul>
-          <p id="v2-share-empty-state" class="cockpit-hint" hidden>Nobody invited yet.</p>
-          <form id="v2-share-invite-form" class="v2-share-invite-form">
-            <input type="email" id="v2-share-invite-email" placeholder="colleague@nokia.com" required />
-            <button type="submit" id="btn-v2-share-invite" class="cockpit-btn">Invite</button>
-          </form>
-          <p id="v2-share-error-state" class="cockpit-error" hidden role="alert"></p>
-        </section>
-
-        <!-- Stage 2 (take-over mode) is not built yet -- this row makes the
-             UI shape final now without any functionality behind it. -->
-        <section class="v2-settings-section v2-takeover-section">
-          <h3 class="v2-settings-section-title">Take over</h3>
-          <p class="v2-settings-row v2-settings-row-disabled" aria-disabled="true">
-            Take over — coming soon
-          </p>
-        </section>
-      </div>
-
       <div id="v2-messages" class="v2-messages" role="log" aria-live="polite">
         <!-- Populated by app.js#renderV2Messages(). -->
       </div>
 
-      <div class="v2-composer">
-        <textarea id="v2-composer-text" class="v2-composer-text" rows="1" placeholder="Message" aria-label="Message"></textarea>
-        <!-- Contextual buttons, one row, fixed order Stop / Force / Send-Queue
-             (SPEC-DELTA-2026-09-29-composer-contextual-buttons, Viktor's
-             design). Visibility + enabled state come from
-             composer-state.mjs#deriveComposerButtons via
-             app.js#applyComposerButtons: Stop for the whole run; Force only
-             while running AND the box has text (stop + send this now); Send
-             is always visible, disabled on an empty box, and reads "Queue"
-             while a turn runs (it already enqueues then). -->
-        <div class="v2-composer-actions">
-          <button type="button" id="btn-v2-stop" class="cockpit-btn cockpit-icon-btn v2-composer-btn v2-btn-stop" hidden aria-label="Stop" title="Stop the running turn">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true" focusable="false"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+      <!-- Bottom-docked panel (SPEC-DELTA-2026-09-29-chat-bottom-panel-and-autoscroll,
+           AC-100): composer row, then the header row at the very bottom. The
+           chat switcher + settings sheet open upward from it; the "New
+           message" button floats just above it (AC-105). -->
+      <div class="v2-bottom-panel">
+        <!-- Chat switcher (AC-040): tapping the title opens a list of the
+             host's OTHER open/recent v2 chats to jump to -- Viktor explicitly
+             chose this over a horizontal tab-strip, which he judged too
+             cramped on a phone screen. -->
+        <div id="v2-chat-switcher" class="v2-chat-switcher" hidden role="listbox" aria-label="Switch chat">
+          <ul id="v2-chat-switcher-list" class="cockpit-session-list" role="list">
+            <!-- Populated by app.js#renderChatSwitcher(). -->
+          </ul>
+          <p id="v2-chat-switcher-empty" class="cockpit-hint" hidden>No other chats yet.</p>
+        </div>
+
+        <!-- Settings sheet (AC-041): everything that isn't "read the
+             conversation" or "send a message" -- toggled by
+             btn-v2-detail-settings. Not visible by default -- see
+             css-hidden-override-guard.sh for the regression guard on this
+             exact class of bug (this element replaces the old, buggy
+             .v2-detail-menu). -->
+        <div id="v2-settings-sheet" class="v2-settings-sheet" hidden>
+          <section class="v2-settings-section">
+            <h3 class="v2-settings-section-title">General</h3>
+            <div class="v2-settings-row">
+              <span id="v2-settings-title-readout" class="v2-settings-row-value">…</span>
+              <!-- Simple rename control (AC-044): app.js#handleV2RenameClick
+                   uses window.prompt(), same "simple" posture as the existing
+                   window.confirm() usage elsewhere in this file -- no new
+                   modal component for a rarely-used control. -->
+              <button type="button" id="btn-v2-rename" class="cockpit-btn cockpit-btn-icon" aria-label="Rename chat">✎</button>
+            </div>
+            <!-- AC-030: symmetry with the list row's own Delete (view-v2-list
+                 above) -- a user already inside a session can delete it from
+                 here too, without navigating back to the list first.
+                 Irreversible -- app.js#handleV2DetailDeleteClick always
+                 confirms first. -->
+            <div class="v2-settings-row">
+              <span class="v2-settings-row-value">Delete this chat</span>
+              <button type="button" id="btn-v2-delete" class="cockpit-btn cockpit-btn-danger" aria-label="Delete chat permanently">Delete</button>
+            </div>
+            <div class="v2-settings-row-pair">
+              <span class="v2-inline-control">Status <strong id="v2-detail-status">…</strong></span>
+              <span class="v2-inline-control">Chat id <strong id="v2-detail-chat-id">…</strong></span>
+            </div>
+            <div class="v2-settings-row-pair">
+              <label class="v2-inline-control">
+                Model
+                <!-- Options populated from CONFIG.session.modelOptions in app.js#populateModelSelect() -- two optgroups, IDE models first (AC-049/AC-050). -->
+                <select id="v2-detail-model-input"></select>
+              </label>
+              <label class="v2-inline-control">
+                Mode
+                <select id="v2-detail-mode-select">
+                  <option value="agent">agent</option>
+                  <option value="plan">plan</option>
+                  <option value="ask">ask</option>
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <!-- SPEC-DELTA-2026-09-25-session-sharing-stage1: session-level,
+               read-only sharing, relocated into the settings sheet 2026-09-26
+               (same behavior, just no longer always-visible). The toggle is
+               separate from the invite list on purpose -- turning it off
+               revokes real Graph access but remembers who was invited, so
+               turning it back on needs no re-typing (AC-032/AC-037). -->
+          <section class="v2-settings-section v2-share-panel">
+            <h3 class="v2-settings-section-title">Sharing</h3>
+            <label class="v2-inline-control">
+              Sharing
+              <input type="checkbox" id="v2-detail-sharing-toggle" />
+            </label>
+            <ul id="v2-detail-shared-list" class="v2-share-list">
+              <!-- Populated by app.js#renderSharePanel(): <li>email — invited &lt;time&gt;</li> -->
+            </ul>
+            <p id="v2-share-empty-state" class="cockpit-hint" hidden>Nobody invited yet.</p>
+            <form id="v2-share-invite-form" class="v2-share-invite-form">
+              <input type="email" id="v2-share-invite-email" placeholder="colleague@nokia.com" required />
+              <button type="submit" id="btn-v2-share-invite" class="cockpit-btn">Invite</button>
+            </form>
+            <p id="v2-share-error-state" class="cockpit-error" hidden role="alert"></p>
+          </section>
+
+          <!-- Stage 2 (take-over mode) is not built yet -- this row makes the
+               UI shape final now without any functionality behind it. -->
+          <section class="v2-settings-section v2-takeover-section">
+            <h3 class="v2-settings-section-title">Take over</h3>
+            <p class="v2-settings-row v2-settings-row-disabled" aria-disabled="true">
+              Take over — coming soon
+            </p>
+          </section>
+        </div>
+
+        <button type="button" id="btn-v2-new-message" class="cockpit-btn v2-new-message-pill" hidden>↓ New message</button>
+
+        <div class="v2-composer">
+          <textarea id="v2-composer-text" class="v2-composer-text" rows="1" placeholder="Message" aria-label="Message"></textarea>
+          <!-- Contextual buttons, one row, fixed order Stop / Force / Send-Queue
+               (SPEC-DELTA-2026-09-29-composer-contextual-buttons, Viktor's
+               design). Visibility + enabled state come from
+               composer-state.mjs#deriveComposerButtons via
+               app.js#applyComposerButtons: Stop for the whole run; Force only
+               while running AND the box has text (stop + send this now); Send
+               is always visible, disabled on an empty box, and reads "Queue"
+               while a turn runs (it already enqueues then). -->
+          <div class="v2-composer-actions">
+            <button type="button" id="btn-v2-stop" class="cockpit-btn cockpit-icon-btn v2-composer-btn v2-btn-stop" hidden aria-label="Stop" title="Stop the running turn">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true" focusable="false"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+            </button>
+            <button type="button" id="btn-v2-composer-force" class="cockpit-btn cockpit-icon-btn v2-composer-btn v2-btn-force" hidden aria-label="Force" title="Stop the running turn and send this now">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true" focusable="false"><path d="M13 2L4 14h6l-1 8 9-12h-6z" /></svg>
+            </button>
+            <button type="button" id="btn-v2-composer-send" class="cockpit-btn cockpit-icon-btn v2-composer-btn v2-btn-send" data-mode="send" aria-label="Send" title="Send" disabled>
+              <svg class="v2-icon-send" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12h14" /><path d="M13 6l6 6-6 6" /></svg>
+              <svg class="v2-icon-queue" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 6h11" /><path d="M4 12h11" /><path d="M4 18h7" /><path d="M18 15v6" /><path d="M15 18h6" /></svg>
+            </button>
+          </div>
+        </div>
+        <!-- Shown while any action (send/stop/model switch/...) is in flight
+             -- the controls it names are also disabled for the same span,
+             via setV2Busy() in app.js. -->
+        <p id="v2-detail-busy" class="cockpit-hint" hidden>Working…</p>
+        <p id="v2-detail-error-state" class="cockpit-error" hidden role="alert"></p>
+        <!--
+          Header redesign (SPEC-DELTA-2026-09-26-ui-cleanup, item B). Was:
+          raw-arrow-char Back + raw record.id as the title + refresh + an
+          always-broken "..." button (see item E -- .v2-detail-menu's CSS
+          [hidden] bug) opening an always-visible-anyway block. Now: an
+          icon-based Back, a tappable friendly title (opens the chat switcher
+          below), one settings-gear button (opens #v2-settings-sheet; shows a
+          dot when sharingEnabled), and refresh stays rightmost. The raw
+          chatId/record.id is never the primary displayed text anywhere in
+          this header -- see the labeled "Chat id" diagnostic row inside the
+          settings sheet's General section instead (same disclosure pattern as
+          the IDE-tab detail view's Composer ID row).
+        -->
+        <div class="cockpit-detail-header">
+          <button type="button" class="cockpit-back-btn cockpit-icon-btn" data-target-view="v2-list" aria-label="Back to chat list">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M5 12l14 0" />
+              <path d="M5 12l6 6" />
+              <path d="M5 12l6 -6" />
+            </svg>
           </button>
-          <button type="button" id="btn-v2-composer-force" class="cockpit-btn cockpit-icon-btn v2-composer-btn v2-btn-force" hidden aria-label="Force" title="Stop the running turn and send this now">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true" focusable="false"><path d="M13 2L4 14h6l-1 8 9-12h-6z" /></svg>
+          <button type="button" id="btn-v2-detail-title" class="v2-detail-title-btn" aria-haspopup="listbox" aria-expanded="false" aria-label="Switch chat">
+            <span id="v2-detail-title" class="v2-detail-title-inline">…</span>
           </button>
-          <button type="button" id="btn-v2-composer-send" class="cockpit-btn cockpit-icon-btn v2-composer-btn v2-btn-send" data-mode="send" aria-label="Send" title="Send" disabled>
-            <svg class="v2-icon-send" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12h14" /><path d="M13 6l6 6-6 6" /></svg>
-            <svg class="v2-icon-queue" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 6h11" /><path d="M4 12h11" /><path d="M4 18h7" /><path d="M18 15v6" /><path d="M15 18h6" /></svg>
+          <!-- AC-095: session status at a glance (was only inside the ⚙ sheet). -->
+          <span id="v2-detail-status-chip" class="v2-status-chip" hidden aria-live="polite"></span>
+          <button type="button" id="btn-v2-detail-settings" class="cockpit-btn cockpit-icon-btn v2-settings-btn" aria-label="Chat settings" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z" />
+              <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" />
+            </svg>
+            <!-- AC-042: visible without opening the sheet, whenever record.sharingEnabled === true. -->
+            <span id="v2-settings-dot" class="v2-settings-dot" hidden aria-hidden="true"></span>
           </button>
+          <button type="button" id="btn-v2-detail-refresh" class="cockpit-btn" aria-label="Refresh session">↻</button>
         </div>
       </div>
-      <!-- Shown while any action (send/stop/model switch/...) is in flight
-           -- the controls it names are also disabled for the same span,
-           via setV2Busy() in app.js. -->
-      <p id="v2-detail-busy" class="cockpit-hint" hidden>Working…</p>
-      <p id="v2-detail-error-state" class="cockpit-error" hidden role="alert"></p>
     </section>
 
     <!-- View 8: v2 new-session composer (mobile follow-along, 2026-09-24). -->
@@ -499,6 +506,6 @@
     </small>
   </footer>
 
-  <script src="./app.js?v=c92b136" defer></script>
+  <script src="./app.js?v=ccc5596" defer></script>
 </body>
 </html>

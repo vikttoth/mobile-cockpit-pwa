@@ -1088,3 +1088,76 @@ body[data-view="shared-detail"] .cockpit-mode-toggle {
   overflow-y: auto;
   box-sizing: border-box;
 }
+
+/* ---------------------------------------------------------------------------
+   Chat view: full-screen column, messages scroll, bottom-docked panel
+   (SPEC-DELTA-2026-09-29-chat-bottom-panel-and-autoscroll, AC-100/AC-101).
+   --------------------------------------------------------------------------- */
+body[data-view="v2-detail"] .cockpit-header,
+body[data-view="v2-detail"] .cockpit-footer {
+  display: none;
+}
+body[data-view="v2-detail"] main {
+  padding: 0;
+}
+#view-v2-detail:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+}
+#view-v2-detail .v2-messages {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: var(--cp-gap);
+}
+.v2-bottom-panel {
+  flex: 0 0 auto;
+  position: relative;
+  padding: 6px var(--cp-gap) 4px;
+  border-top: 1px solid var(--cp-border);
+  background: var(--cp-bg);
+}
+.v2-bottom-panel .v2-composer {
+  position: static;
+  padding: 0;
+}
+.v2-bottom-panel .cockpit-detail-header {
+  margin: 4px 0 0;
+  gap: 6px;
+}
+/* Chat switcher + settings sheet open upward from the panel. */
+.v2-bottom-panel .v2-chat-switcher,
+.v2-bottom-panel .v2-settings-sheet {
+  position: absolute;
+  left: var(--cp-gap);
+  right: var(--cp-gap);
+  bottom: calc(100% + 6px);
+  margin: 0;
+  max-height: 60vh;
+  max-height: 60dvh;
+  overflow-y: auto;
+  background: var(--cp-bg);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.18);
+  z-index: 10;
+}
+/* AC-105: floats just above the panel, centred. */
+.v2-new-message-pill {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  min-height: 36px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--cp-accent);
+  border-color: var(--cp-accent);
+  color: #fff;
+  font-size: 0.85rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  z-index: 5;
+}
+.v2-new-message-pill[hidden] { display: none; }

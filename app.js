@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-29 09:29 CEST c92b136`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-29 09:29 CEST c92b136";
+// `2026-09-29 10:01 CEST ccc5596`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-29 10:01 CEST ccc5596";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1604,6 +1604,8 @@ async function renderV2Detail(sessionId) {
   closeV2SettingsSheet();
   closeChatSwitcher();
   activeV2DetailSessionId = sessionId;
+  // (Re-)entering a chat lands on the newest message (AC-102).
+  v2ScrollState = { sessionId: null, messageCount: 0 };
   let record;
   try {
     const [{ record: r }] = await Promise.all([loadV2Record(sessionId), loadV2Index()]);
@@ -1753,7 +1755,58 @@ function renderSharePanel(record) {
 function renderV2Messages(record) {
   const container = document.getElementById("v2-messages");
   if (!container) return;
+  // Measure BEFORE the rebuild: clearing innerHTML resets a scroll
+  // container to the top (SPEC-DELTA-2026-09-29-chat-bottom-panel-and-autoscroll).
+  const wasAtBottom = SCROLLBACK_HELPERS
+    ? SCROLLBACK_HELPERS.shouldAutoScrollToBottom({
+        scrollTop: container.scrollTop,
+        scrollHeight: container.scrollHeight,
+        clientHeight: container.clientHeight,
+      })
+    : true;
+  const prevScrollTop = container.scrollTop;
   container.innerHTML = "";
+  try {
+    renderV2MessageList(container, record);
+  } finally {
+    applyV2ScrollAfterRender(container, record, wasAtBottom, prevScrollTop);
+  }
+}
+
+/** Per-session scroll bookkeeping for applyV2ScrollAfterRender. */
+let v2ScrollState = { sessionId: null, messageCount: 0 };
+/** Set by the user's own Send/Queue/Force so the next render follows the bottom (AC-106). */
+let v2ForceScrollBottom = false;
+
+function applyV2ScrollAfterRender(container, record, wasAtBottom, prevScrollTop) {
+  if (!SCROLLBACK_HELPERS) return;
+  const count = Array.isArray(record.messages) ? record.messages.length : 0;
+  const isFirstRender = v2ScrollState.sessionId !== record.id;
+  const newMessageArrived = !isFirstRender && count > v2ScrollState.messageCount;
+  v2ScrollState = { sessionId: record.id, messageCount: count };
+  const pill = document.getElementById("btn-v2-new-message");
+  const d = SCROLLBACK_HELPERS.decideScrollAfterRender({
+    isFirstRender,
+    forceBottom: v2ForceScrollBottom,
+    wasAtBottom,
+    newMessageArrived,
+    pillVisible: pill ? !pill.hidden : false,
+  });
+  v2ForceScrollBottom = false;
+  if (pill) pill.hidden = !d.showNewMessagePill;
+  if (d.scrollToBottom) {
+    container.scrollTop = container.scrollHeight;
+    // Again after layout: on a first render the view may only just have
+    // become visible, with no scrollHeight yet.
+    requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight;
+    });
+  } else {
+    container.scrollTop = prevScrollTop;
+  }
+}
+
+function renderV2MessageList(container, record) {
   const messages = orderMessagesForDisplay(record.messages);
   for (const raw of messages) {
     const m = formatSessionMessage(raw);
@@ -2036,6 +2089,7 @@ async function handleV2ComposerSend() {
   if (!text) return;
   clearV2DetailError();
   setV2Busy(true);
+  v2ForceScrollBottom = true;
   try {
     await v2EnqueueMessage(id, text);
     textEl.value = "";
@@ -2055,6 +2109,7 @@ async function handleV2ComposerForce() {
   if (!text) return;
   clearV2DetailError();
   setV2Busy(true);
+  v2ForceScrollBottom = true;
   try {
     await v2RequestForce(id, text);
     textEl.value = "";
@@ -2592,8 +2647,8 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE] = await Promise.all([
-      import("./write-helpers.mjs?v=c92b136"),
-      import("./ide-helpers.mjs?v=c92b136"),
+      import("./write-helpers.mjs?v=ccc5596"),
+      import("./ide-helpers.mjs?v=ccc5596"),
       import("./refresh-helpers.mjs"),
       import("./transcript-model.mjs"),
       import("./scrollback-helpers.mjs"),
@@ -2733,6 +2788,25 @@ async function bootstrap() {
     btnV2ComposerForce.addEventListener("click", () => {
       handleV2ComposerForce().catch((err) => showV2DetailError(err.message));
     });
+  }
+  // "↓ New message" (AC-105): tap to jump; hides itself once the reader
+  // reaches the bottom by any means.
+  const v2MessagesEl = document.getElementById("v2-messages");
+  const btnV2NewMessage = document.getElementById("btn-v2-new-message");
+  if (v2MessagesEl && btnV2NewMessage) {
+    btnV2NewMessage.addEventListener("click", () => {
+      v2MessagesEl.scrollTo({ top: v2MessagesEl.scrollHeight, behavior: "smooth" });
+      btnV2NewMessage.hidden = true;
+    });
+    v2MessagesEl.addEventListener("scroll", () => {
+      if (btnV2NewMessage.hidden || !SCROLLBACK_HELPERS) return;
+      const atBottom = SCROLLBACK_HELPERS.shouldAutoScrollToBottom({
+        scrollTop: v2MessagesEl.scrollTop,
+        scrollHeight: v2MessagesEl.scrollHeight,
+        clientHeight: v2MessagesEl.clientHeight,
+      });
+      if (atBottom) btnV2NewMessage.hidden = true;
+    }, { passive: true });
   }
   // Contextual buttons + auto-grow follow the box content; Ctrl/Cmd+Enter
   // submits (plain Enter stays a newline).
