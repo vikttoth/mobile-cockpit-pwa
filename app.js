@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-29 11:12 CEST 4c47e1d`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-29 11:12 CEST 4c47e1d";
+// `2026-09-29 11:38 CEST 03bd692`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-29 11:38 CEST 03bd692";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -75,6 +75,10 @@ let COMPOSER_STATE = null;
 
 /** Pure helpers for the header account menu (SPEC-DELTA-2026-09-29-app-menu). */
 let APP_MENU_STATE = null;
+
+/** PWA-wide Graph back-off after a 429/503 (SPEC-DELTA-2026-09-29-pwa-polling-hygiene);
+ *  null until the helper module loads. */
+let graphBackoff = null;
 
 /** Last-rendered v2 session status + in-flight flag, the two inputs
  *  applyComposerButtons() combines with the textbox content. */
@@ -236,6 +240,14 @@ async function getAccessToken() {
 
 async function graphFetch(path, init = {}, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 45000;
+  const backoffLeft = graphBackoff ? graphBackoff.remainingMs() : 0;
+  if (backoffLeft > 0) {
+    const err = new Error(
+      `OneDrive is throttling requests — retrying in ${Math.ceil(backoffLeft / 1000)}s`,
+    );
+    err.code = "GRAPH_BACKOFF";
+    throw err;
+  }
   const token = await getAccessToken();
   const headers = new Headers(init.headers || {});
   headers.set("Authorization", `Bearer ${token}`);
@@ -250,6 +262,12 @@ async function graphFetch(path, init = {}, opts = {}) {
       headers,
       signal: controller.signal,
     });
+    if (graphBackoff && (res.status === 429 || res.status === 503)) {
+      // OneDrive puts retryAfterSeconds in the JSON body; read a clone so
+      // the caller still gets an unconsumed response.
+      const body = await res.clone().text().catch(() => "");
+      graphBackoff.note(res.status, res.headers.get("retry-after"), body);
+    }
     return res;
   } catch (e) {
     if (e && e.name === "AbortError") {
@@ -1961,6 +1979,7 @@ function syncIdeDetailFastPoll() {
   const sec = (CONFIG.pwa && CONFIG.pwa.runningPollIntervalSeconds) || 5;
   const intervalMs = Math.max(3, sec | 0) * 1000;
   ideDetailFastTimerId = setInterval(() => {
+    if (document.hidden) return; // AC-131: no polling while the page is hidden
     if (document.body.dataset.view !== "ide-tab-detail" || !activeIdeTabComposerId) return;
     loadIdeTabs()
       .then(() => {
@@ -1987,6 +2006,7 @@ function syncV2DetailPoll() {
   const sec = (CONFIG.pwa && CONFIG.pwa.runningPollIntervalSeconds) || 5;
   const intervalMs = Math.max(3, sec | 0) * 1000;
   v2DetailTimerId = setInterval(() => {
+    if (document.hidden) return; // AC-131: no polling while the page is hidden
     if (document.body.dataset.view !== "v2-detail" || !activeV2DetailSessionId) return;
     const id = activeV2DetailSessionId;
     Promise.all([loadV2Record(id), loadV2Index()])
@@ -2018,6 +2038,7 @@ function startAutoRefresh() {
   if (ideRefreshTimerId === null && CONFIG.ideTabs && CONFIG.ideTabs.pollIntervalSeconds) {
     const ideIntervalMs = Math.max(5, (CONFIG.ideTabs.pollIntervalSeconds | 0)) * 1000;
     ideRefreshTimerId = setInterval(() => {
+      if (document.hidden) return; // AC-131: no polling while the page is hidden
       const v = document.body.dataset.view;
       // Refresh either the list OR the detail (so the open thread stays
       // live if the user is reading it while the agent posts new turns).
@@ -2043,6 +2064,7 @@ function startAutoRefresh() {
   if (v2RefreshTimerId === null) {
     const v2IntervalMs = Math.max(5, (CONFIG.pwa.pollIntervalSeconds | 0)) * 1000;
     v2RefreshTimerId = setInterval(() => {
+      if (document.hidden) return; // AC-131: no polling while the page is hidden
       if (document.body.dataset.view === "v2-list") {
         renderV2List().catch((err) => showV2ListError(err.message));
       }
@@ -2634,6 +2656,31 @@ function renderSharedMessages(record) {
  * render functions needed to change. Wired first thing in bootstrap so the
  * panel also works when sign-in or config loading fails.
  */
+/**
+ * One immediate refresh of whatever is on screen, used when the page becomes
+ * visible again (SPEC-DELTA-2026-09-29-pwa-polling-hygiene, AC-132).
+ */
+function refreshVisibleViewOnce() {
+  loadHealth();
+  loadDaemonControlStatus();
+  const v = document.body.dataset.view;
+  if (v === "v2-list") {
+    renderV2List().catch((err) => showV2ListError(err.message));
+  } else if (v === "ide-tabs") {
+    renderIdeTabsList().catch((err) => showIdeTabsError(err.message));
+  } else if (v === "v2-detail" && activeV2DetailSessionId) {
+    const id = activeV2DetailSessionId;
+    loadV2Record(id)
+      .then(({ record }) => {
+        if (!record || activeV2DetailSessionId !== id) return;
+        renderV2Messages(record);
+        syncComposerFromRecord(record);
+        syncV2DetailPoll();
+      })
+      .catch((err) => showV2DetailError(err.message));
+  }
+}
+
 function wireAppMenu() {
   const btn = document.getElementById("btn-app-menu");
   const menu = document.getElementById("app-menu");
@@ -2715,16 +2762,19 @@ async function bootstrap() {
   // ide-helpers module is sibling; both are loaded in parallel because
   // they have no inter-dependency.
   try {
-    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE] = await Promise.all([
-      import("./write-helpers.mjs?v=4c47e1d"),
-      import("./ide-helpers.mjs?v=4c47e1d"),
-      import("./refresh-helpers.mjs?v=4c47e1d"),
-      import("./transcript-model.mjs?v=4c47e1d"),
-      import("./scrollback-helpers.mjs?v=4c47e1d"),
-      import("./daemon-control-model.mjs?v=4c47e1d"),
-      import("./composer-state.mjs?v=4c47e1d"),
-      import("./app-menu-state.mjs?v=4c47e1d"),
+    let GRAPH_BACKOFF_HELPERS;
+    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS] = await Promise.all([
+      import("./write-helpers.mjs?v=03bd692"),
+      import("./ide-helpers.mjs?v=03bd692"),
+      import("./refresh-helpers.mjs?v=03bd692"),
+      import("./transcript-model.mjs?v=03bd692"),
+      import("./scrollback-helpers.mjs?v=03bd692"),
+      import("./daemon-control-model.mjs?v=03bd692"),
+      import("./composer-state.mjs?v=03bd692"),
+      import("./app-menu-state.mjs?v=03bd692"),
+      import("./graph-backoff.mjs?v=03bd692"),
     ]);
+    graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
     setStatusBadge(`helpers import error: ${err.message}`, "error");
     return;
@@ -2755,16 +2805,21 @@ async function bootstrap() {
   // bootstrap -- a slow/failed health fetch must never delay sign-in.
   loadHealth();
   if (CONFIG.health && Number.isFinite(CONFIG.health.pollIntervalSeconds)) {
-    setInterval(loadHealth, CONFIG.health.pollIntervalSeconds * 1000);
+    setInterval(() => { if (!document.hidden) loadHealth(); }, CONFIG.health.pollIntervalSeconds * 1000);
   }
 
   // SPEC-DELTA-2026-09-27-daemon-control-watchdog: same fire-and-forget,
   // never-blocks-boot posture as loadHealth above.
   loadDaemonControlStatus();
   if (CONFIG.daemonControl && Number.isFinite(CONFIG.daemonControl.pollIntervalSeconds)) {
-    setInterval(loadDaemonControlStatus, CONFIG.daemonControl.pollIntervalSeconds * 1000);
+    setInterval(() => { if (!document.hidden) loadDaemonControlStatus(); }, CONFIG.daemonControl.pollIntervalSeconds * 1000);
   }
   wireDaemonControlButtons();
+  // AC-132: timers skip ticks while hidden, so coming back refreshes once
+  // right away instead of showing up-to-a-poll-interval-old data.
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshVisibleViewOnce();
+  });
 
   // Wire navigation + write-path buttons.
   // Back buttons use their `data-target-view` attribute so the IDE-tab
