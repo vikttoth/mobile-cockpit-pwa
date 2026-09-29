@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-29 10:06 CEST 7f2e7a5`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-29 10:06 CEST 7f2e7a5";
+// `2026-09-29 10:08 CEST 497abc5`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-29 10:08 CEST 497abc5";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -2647,13 +2647,13 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE] = await Promise.all([
-      import("./write-helpers.mjs?v=7f2e7a5"),
-      import("./ide-helpers.mjs?v=7f2e7a5"),
-      import("./refresh-helpers.mjs?v=7f2e7a5"),
-      import("./transcript-model.mjs?v=7f2e7a5"),
-      import("./scrollback-helpers.mjs?v=7f2e7a5"),
-      import("./daemon-control-model.mjs?v=7f2e7a5"),
-      import("./composer-state.mjs?v=7f2e7a5"),
+      import("./write-helpers.mjs?v=497abc5"),
+      import("./ide-helpers.mjs?v=497abc5"),
+      import("./refresh-helpers.mjs?v=497abc5"),
+      import("./transcript-model.mjs?v=497abc5"),
+      import("./scrollback-helpers.mjs?v=497abc5"),
+      import("./daemon-control-model.mjs?v=497abc5"),
+      import("./composer-state.mjs?v=497abc5"),
     ]);
   } catch (err) {
     setStatusBadge(`helpers import error: ${err.message}`, "error");
@@ -2795,7 +2795,9 @@ async function bootstrap() {
   const btnV2NewMessage = document.getElementById("btn-v2-new-message");
   if (v2MessagesEl && btnV2NewMessage) {
     btnV2NewMessage.addEventListener("click", () => {
-      v2MessagesEl.scrollTo({ top: v2MessagesEl.scrollHeight, behavior: "smooth" });
+      // Instant, not smooth: a smooth scroll was measured stepping ~40 px/s
+      // when the tab is throttled, leaving the reader stranded mid-history.
+      v2MessagesEl.scrollTop = v2MessagesEl.scrollHeight;
       btnV2NewMessage.hidden = true;
     });
     v2MessagesEl.addEventListener("scroll", () => {
