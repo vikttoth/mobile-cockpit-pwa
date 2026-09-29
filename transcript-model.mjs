@@ -171,8 +171,12 @@ export function assignChatId(record, opts) {
  * Does not mutate `record`. Throws on an unsupported role or empty text --
  * loud failure, same pattern as write-helpers.mjs's mergeAppendSession.
  *
+ * `author` (optional, session sharing Stage 2): the email of a guest who wrote
+ * this message via the share relay. Absent for the host's own messages and
+ * for the assistant/system entries the daemon writes.
+ *
  * @param {object} record
- * @param {{role: string, text: string, now: number}} msg
+ * @param {{role: string, text: string, now: number, author?: string}} msg
  * @returns {object} new session record
  */
 export function appendMessage(record, msg) {
@@ -191,6 +195,7 @@ export function appendMessage(record, msg) {
     throw new Error("appendMessage: now must be a finite epoch-ms number");
   }
   const entry = { role: msg.role, text: msg.text, ts: msg.now };
+  if (typeof msg.author === "string" && msg.author) entry.author = msg.author;
   return {
     ...record,
     messages: [...record.messages, entry],
@@ -280,12 +285,17 @@ export function buildIndexEntry(record) {
  * the SPEC task 6 note); it is not needed to make queueing itself correct
  * and testable.
  *
- * Queue item ids are derived from the record's own queue length rather
- * than `now`, so two items enqueued in the same millisecond (plausible
- * under a fast synthetic clock in tests) never collide.
+ * Queue item ids come from a per-record monotonic counter (`queueSeq`)
+ * rather than `now`, so two items enqueued in the same millisecond
+ * (plausible under a fast synthetic clock in tests) never collide. Until
+ * 2026-09-29 the id was `q${queue.length + 1}`, which re-issued an id still
+ * in the queue after a pop or remove ([q2] + enqueue = two q2s, and
+ * removeQueuedMessage then deleted both) -- see
+ * SPEC-DELTA-2026-09-29-session-sharing-stage2.md. Records written before the
+ * counter existed seed it from the highest numeric suffix still queued.
  *
  * @param {object} record
- * @param {{text: string, now: number}} opts
+ * @param {{text: string, now: number, author?: string}} opts
  * @returns {object} new session record
  */
 export function enqueueMessage(record, opts) {
@@ -299,12 +309,24 @@ export function enqueueMessage(record, opts) {
     throw new Error("enqueueMessage: now must be a finite epoch-ms number");
   }
   const queue = Array.isArray(record.queue) ? record.queue : [];
-  const item = { id: `q${queue.length + 1}`, role: "user", text: opts.text, ts: opts.now };
+  const seq = nextQueueSeq(record, queue);
+  const item = { id: `q${seq}`, role: "user", text: opts.text, ts: opts.now };
+  if (typeof opts.author === "string" && opts.author) item.author = opts.author;
   return {
     ...record,
+    queueSeq: seq,
     queue: [...queue, item],
     updatedAt: isoNow(opts.now),
   };
+}
+
+function nextQueueSeq(record, queue) {
+  let max = Number.isInteger(record.queueSeq) ? record.queueSeq : 0;
+  for (const q of queue) {
+    const m = typeof q?.id === "string" ? /^q(\d+)$/.exec(q.id) : null;
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return max + 1;
 }
 
 /**
@@ -577,7 +599,7 @@ export function requestStop(record, opts) {
  * @returns {object} new session record
  */
 export function requestForce(record, opts) {
-  const withNewMessage = enqueueMessage(record, { text: opts?.text, now: opts?.now });
+  const withNewMessage = enqueueMessage(record, { text: opts?.text, now: opts?.now, author: opts?.author });
   const newMessageId = withNewMessage.queue[withNewMessage.queue.length - 1].id;
   const otherIds = withNewMessage.queue.slice(0, -1).map((q) => q.id);
   const reordered = reorderQueuedMessages(withNewMessage, { orderedIds: [newMessageId, ...otherIds] });
@@ -783,7 +805,7 @@ export function startNextTurn(record, opts) {
   const [message, ...rest] = queue;
   const appended = appendMessage(
     { ...record, queue: rest, pendingAction: null },
-    { role: "user", text: message.text, now: opts.now },
+    { role: "user", text: message.text, now: opts.now, author: message.author },
   );
   return { ...appended, status: "running", startedAt: isoNow(opts.now) };
 }
@@ -875,6 +897,7 @@ export function resolveFinishedTurn(record, opts) {
       role: "user",
       text: decision.message.text,
       now: opts.now,
+      author: decision.message.author,
     });
     return { ...appended, status: "running", startedAt: isoNow(opts.now) };
   }

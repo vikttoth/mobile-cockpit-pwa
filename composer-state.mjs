@@ -6,28 +6,34 @@
 // directly. See SPEC-DELTA-2026-09-29-composer-contextual-buttons.md.
 
 /**
- * @param {{ status?: string, text?: string, busy?: boolean }} [input]
+ * `readOnly` (SPEC-DELTA-2026-09-29-session-sharing-stage2): a guest holds
+ * Control, another device holds the lease, or this is a guest in Read mode.
+ * Buttons keep their normal visibility but are all disabled (AC-155/AC-157:
+ * "visible but inactive"), never hidden.
+ *
+ * @param {{ status?: string, text?: string, busy?: boolean, readOnly?: boolean }} [input]
  * @returns {{
  *   send: { visible: true, enabled: boolean, mode: "send"|"queue", label: string, title: string },
  *   stop: { visible: boolean, enabled: boolean },
  *   force: { visible: boolean, enabled: boolean },
  * }}
  */
-export function deriveComposerButtons({ status, text, busy = false } = {}) {
+export function deriveComposerButtons({ status, text, busy = false, readOnly = false } = {}) {
   const running = status === "running";
   const hasText = typeof text === "string" && text.trim().length > 0;
+  const blocked = busy || readOnly;
   return {
     // Always visible (stable anchor); Send already enqueues while a turn
     // runs, so it becomes "Queue" in the same slot instead of a second button.
     send: {
       visible: true,
-      enabled: hasText && !busy,
+      enabled: hasText && !blocked,
       mode: running ? "queue" : "send",
       label: running ? "Queue" : "Send",
-      title: running ? "Queue — runs after the current turn" : "Send",
+      title: readOnly ? "Read-only" : running ? "Queue — runs after the current turn" : "Send",
     },
-    stop: { visible: running, enabled: !busy },
-    force: { visible: running && hasText, enabled: !busy },
+    stop: { visible: running, enabled: !blocked },
+    force: { visible: running && hasText, enabled: !blocked },
   };
 }
 

@@ -48,6 +48,18 @@
     "pollIntervalSeconds": 15,
     "staleAfterSeconds": 180
   },
+  "sharing": {
+    "_comment": "SPEC-DELTA-2026-09-29-session-sharing-stage2. hostUpn/hostDisplayName/sharesRelativePath/guestRootFolder MUST match HOST_UPN/HOST_DISPLAY_NAME/SHARES_RELATIVE_PATH/GUEST_ROOT_FOLDER in lib/config.mjs (pwa-config-coherence). Any signed-in account other than hostUpn runs in guest mode and only ever touches its OWN drive under guestRootFolder.",
+    "hostUpn": "viktor.toth@nokia.com",
+    "hostDisplayName": "Viktor Tóth",
+    "sharesRelativePath": "cursor-cockpit/shares.json",
+    "sharesEndpoint": "/me/drive/root:/cursor-cockpit/shares.json",
+    "relayStatusRelativePath": "cursor-cockpit/share-relay-status.json",
+    "relayStatusEndpoint": "/me/drive/root:/cursor-cockpit/share-relay-status.json",
+    "guestRootFolder": "cursor-cockpit-guest",
+    "guestPollIntervalSeconds": 5,
+    "shareLinkBase": "https://vikttoth.github.io/mobile-cockpit-pwa/"
+  },
   "ideTabs": {
     "_comment": "M2.1 read-only mirror of live Cursor IDE chat tabs, written by flows/mobile-cockpit/ide-mirror/poll.mjs. PWA fetches GET-only; ETag tracking is not required here. The relativePath MUST match IDE_TABS_RELATIVE_PATH in ide-mirror/poll.mjs (which derives from ONEDRIVE.folderName + 'ide-tabs.json'). pollIntervalSeconds is independent of pwa.pollIntervalSeconds so the lighter read-only path can refresh faster than the sessions list.",
     "relativePath": "cursor-cockpit/ide-tabs.json",

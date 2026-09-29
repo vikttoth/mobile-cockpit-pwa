@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-29 11:38 CEST 03bd692`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-29 11:38 CEST 03bd692";
+// `2026-09-29 21:24 CEST 0ebcb8d`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-29 21:24 CEST 0ebcb8d";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -354,10 +354,13 @@ async function putJson(endpoint, json, etagOrNull) {
   if (etagOrNull) headers.set("If-Match", etagOrNull);
   const body = JSON.stringify(json, null, 2) + "\n";
   const res = await graphFetch(`${endpoint}:/content`, { method: "PUT", body, headers });
-  if (res.status === 412) {
-    const err = new Error("changed since last read (412)");
+  // 409 too, like lib/graph-state.mjs#isConflictStatus: OneDrive answers a
+  // racing If-Match write with either, and a 409 used to surface as a raw
+  // error instead of the retry (SPEC-DELTA-2026-09-29-session-sharing-stage2).
+  if (res.status === 412 || res.status === 409) {
+    const err = new Error(`changed since last read (${res.status})`);
     err.code = "PRECONDITION_FAILED";
-    err.status = 412;
+    err.status = res.status;
     throw err;
   }
   if (!res.ok) {
@@ -367,45 +370,10 @@ async function putJson(endpoint, json, etagOrNull) {
   return res.json().catch(() => null);
 }
 
-// SPEC-DELTA-2026-09-25-session-sharing-stage1: item-level sharing, the
-// browser-side mirror of lib/graph-state.mjs#invitePath/listPermissionsPath/
-// revokePermissionPath. Same path-addressed pattern as loadJson/putJson
-// above (`${endpoint}:/invite` etc.), not a JSON-file read/write.
-
-async function graphInvite(endpoint, { email, sendInvitation }) {
-  const res = await graphFetch(`${endpoint}:/invite`, {
-    method: "POST",
-    body: JSON.stringify({
-      recipients: [{ email }],
-      requireSignIn: true,
-      sendInvitation: sendInvitation ?? false,
-      roles: ["read"],
-    }),
-  });
-  if (!res.ok) {
-    const bodyText = await res.text().catch(() => "");
-    throw new Error(`graphInvite: POST failed ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
-  }
-  return res.json().catch(() => null);
-}
-
-async function graphListPermissions(endpoint) {
-  const res = await graphFetch(`${endpoint}:/permissions`);
-  if (!res.ok) {
-    const bodyText = await res.text().catch(() => "");
-    throw new Error(`graphListPermissions: GET failed ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
-  }
-  const json = await res.json().catch(() => null);
-  return Array.isArray(json?.value) ? json.value : [];
-}
-
-async function graphRevokePermission(endpoint, permissionId) {
-  const res = await graphFetch(`${endpoint}:/permissions/${encodeURIComponent(permissionId)}`, { method: "DELETE" });
-  if (!res.ok && res.status !== 404) {
-    const bodyText = await res.text().catch(() => "");
-    throw new Error(`graphRevokePermission: DELETE failed ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
-  }
-}
+// The Stage 1 per-file Graph invite/permissions helpers were removed with the
+// Stage 1 host path (SPEC-DELTA-2026-09-29-session-sharing-stage2). The only
+// remaining invite is the GUEST's Connect step, which grants the host write
+// access to a folder in the guest's own drive -- guest-app.mjs#inviteHost.
 
 /** Mirrors lib/config.mjs#sessionRecordRelativePath(id), endpoint-shaped. */
 function v2RecordEndpoint(id) {
@@ -606,7 +574,7 @@ async function v2SetCustomTitle(id, customTitle) {
  * SPEC-DELTA-2026-09-27-queue-remove-and-session-delete (AC-030): permanent
  * whole-session delete, browser-side mirror of
  * lib/session-store.mjs#deleteSession. Deletes the record's own driveItem
- * FIRST (mirrors graphRevokePermission's DELETE-call shape, but against the
+ * FIRST (a plain Graph DELETE, like the removed Stage 1 permission revoke, but against the
  * record endpoint itself rather than a `:/permissions/<id>` sub-resource --
  * same as scripts/delete-onedrive-pwa.mjs's `DELETE /me/drive/items/<id>`
  * pattern for removing a whole item, not its content), tolerating an
@@ -643,40 +611,70 @@ async function v2DeleteSession(id) {
   throw new Error(`v2DeleteSession(${id}): index retries exhausted`);
 }
 
-// v2TakeOverLease/v2HandBackLease/v2RenewLeaseHeartbeat were removed
-// 2026-09-24 along with the whole lease feature -- see
-// lib/transcript-model.mjs's note for why.
-
-// SPEC-DELTA-2026-09-25-session-sharing-stage1: mirrors
-// lib/session-store.mjs#requestSessionInvite/requestSessionSetSharingEnabled
-// exactly -- grant/revoke the real Graph permission FIRST, then update the
-// record via the pure transform, same "never claim an invite that didn't
-// actually happen" ordering.
-
-async function v2InviteToSession(id, email) {
-  await graphInvite(v2RecordEndpoint(id), { email });
-  return v2WriteRecordWithRetry(id, (record) => V2_MODEL.addSharedWithEntry(record, { email, now: Date.now() }));
+// SPEC task 15 (S-138, AC-163): the phone's "Take over" when the laptop holds
+// the lease via mc. The phone cannot run turns itself, so taking over hands
+// the lease back to the daemon (open question 1's default in
+// SPEC-DELTA-2026-09-29-session-sharing-stage2). Mirrors the index so the
+// daemon's v2 tick sees the owner change at once.
+async function v2TakeOverFromDevice(id) {
+  return v2WriteRecordAndMirrorIndex(id, (record) =>
+    record.owner === "daemon" ? record : V2_MODEL.handBackLease(record, { now: Date.now() }),
+  );
 }
 
-async function v2SetSharingEnabled(id, enabled) {
-  const endpoint = v2RecordEndpoint(id);
-  if (enabled) {
-    const { record } = await loadV2Record(id);
-    if (!record) {
-      const err = new Error(`v2 session not found: ${id}`);
-      err.code = "SESSION_NOT_FOUND";
-      throw err;
-    }
-    for (const entry of record.sharedWith ?? []) {
-      await graphInvite(endpoint, { email: entry.email });
-    }
-  } else {
-    const permissions = (await graphListPermissions(endpoint)).filter((p) => !p.roles?.includes("owner"));
-    for (const permission of permissions) {
-      await graphRevokePermission(endpoint, permission.id);
+// SPEC-DELTA-2026-09-29-session-sharing-stage2: the sharing registry
+// (cursor-cockpit/shares.json), same read-modify-write-with-retry shape as
+// lib/share-store.mjs#mutateShares. The Stage 1 per-file Graph invite path
+// (v2InviteToSession / v2SetSharingEnabled) was removed: in this tenant a
+// guest can never read the host's file, see the SPEC-DELTA.
+let SHARE_MODEL = null;
+let SHARE_UI = null;
+let cachedShares = null;
+let cachedRelayStatus = null;
+
+async function loadShares() {
+  const endpoint = CONFIG.sharing && CONFIG.sharing.sharesEndpoint;
+  if (!endpoint || !SHARE_MODEL) return { shares: null, etag: null };
+  const { json, etag } = await loadJson(endpoint);
+  cachedShares = json && Array.isArray(json.items) ? json : SHARE_MODEL.emptyShares(Date.now());
+  return { shares: cachedShares, etag };
+}
+
+async function mutateSharesPwa(transformFn) {
+  const endpoint = CONFIG.sharing.sharesEndpoint;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { shares, etag } = await loadShares();
+    const next = transformFn(shares);
+    try {
+      await putJson(endpoint, next, etag);
+      cachedShares = next;
+      return next;
+    } catch (err) {
+      if (err.code !== "PRECONDITION_FAILED" || attempt >= 2) throw err;
     }
   }
-  return v2WriteRecordWithRetry(id, (record) => V2_MODEL.setSharingEnabled(record, { enabled, now: Date.now() }));
+  throw new Error("mutateSharesPwa: retries exhausted");
+}
+
+/**
+ * shares.json + relay status at most every 30 s from views that poll (chat
+ * detail, IDE tab detail) -- the host's own share actions refresh the cache
+ * directly, so a slow cadence here only affects the relay's connected flags.
+ */
+let sharesLoadedAt = 0;
+async function refreshSharesIfStale(maxAgeMs = 30_000) {
+  if (!SHARE_MODEL || Date.now() - sharesLoadedAt < maxAgeMs) return;
+  sharesLoadedAt = Date.now();
+  await Promise.all([loadShares(), loadRelayStatus().catch(() => null)]);
+}
+
+async function loadRelayStatus() {
+  const endpoint = CONFIG.sharing && CONFIG.sharing.relayStatusEndpoint;
+  if (!endpoint) return null;
+  const res = await graphFetch(`${endpoint}:/content`);
+  if (!res.ok) return null;
+  cachedRelayStatus = await res.json().catch(() => null);
+  return cachedRelayStatus;
 }
 
 // =============================================================================
@@ -884,8 +882,8 @@ function setView(viewId, payload) {
     renderV2New();
   } else if (viewId === "shared-list") {
     renderSharedList().catch((err) => showSharedListError(err.message));
-  } else if (viewId === "shared-detail" && payload && payload.driveId && payload.itemId) {
-    renderSharedDetail(payload.driveId, payload.itemId).catch((err) => showSharedDetailError(err.message));
+  } else if (viewId === "shared-detail" && payload && payload.kind && payload.id) {
+    renderSharedDetail(payload).catch((err) => showSharedDetailError(err.message));
   }
   // Drop the cached composer ID when navigating away from the IDE detail
   // view so a stale value can't accidentally target the wrong tab on the
@@ -901,8 +899,8 @@ function setView(viewId, payload) {
     activeV2DetailRecord = null;
     stopV2DetailPoll();
   }
-  if (viewId !== "shared-detail") {
-    activeSharedItem = null;
+  if (viewId !== "shared-detail" && GUEST_APP) {
+    GUEST_APP.leaveItem();
   }
   if (
     viewId === "v2-list" ||
@@ -1280,6 +1278,10 @@ function renderIdeTabDetail(composerId, options = {}) {
         ? `${tab.lastActivityAt} (${IDE_HELPERS.relativeIdeTime(tab.lastActivityAt, Date.now())})`
         : "—");
   set("ide-detail-message-count", tab.messageCount);
+  // SPEC-DELTA-2026-09-29-session-sharing-stage2 (AC-160): this tab's Share panel.
+  refreshSharesIfStale()
+    .then(() => renderSharePanel(currentShareTarget("ide")))
+    .catch(() => renderSharePanel(currentShareTarget("ide")));
   // Friendly KB formatting; falls back to bytes for sub-1KB.
   if (typeof tab.transcriptSizeBytes === "number" && tab.transcriptSizeBytes >= 0) {
     const kb = tab.transcriptSizeBytes / 1024;
@@ -1548,7 +1550,9 @@ function setV2Busy(busy) {
   ];
   for (const id of ids) {
     const el = document.getElementById(id);
-    if (el) el.disabled = busy;
+    // Never re-enable over a read-only chat (a guest holds Control, or the
+    // lease is elsewhere) -- SPEC-DELTA-2026-09-29-session-sharing-stage2.
+    if (el) el.disabled = busy || v2HostReadOnly;
   }
   // Composer buttons are re-derived, never blanket-enabled (AC-094): an
   // empty box must keep Send disabled after the action finishes.
@@ -1567,6 +1571,7 @@ function applyComposerButtons() {
     status: v2ComposerStatus,
     text: textEl ? textEl.value : "",
     busy: v2Busy,
+    readOnly: v2HostReadOnly,
   });
   const btnSend = document.getElementById("btn-v2-composer-send");
   if (btnSend) {
@@ -1672,12 +1677,19 @@ async function renderV2Detail(sessionId) {
 
   syncComposerFromRecord(record);
   autoGrowComposer();
-  // AC-042: the settings-gear shows a dot whenever sharing is on, visible
-  // without opening the sheet.
-  const settingsDot = document.getElementById("v2-settings-dot");
-  if (settingsDot) settingsDot.hidden = !record.sharingEnabled;
   renderV2Messages(record);
-  renderSharePanel(record);
+  // SPEC-DELTA-2026-09-29-session-sharing-stage2: Share panel + host
+  // read-only state (AC-157/AC-163). AC-042's settings-gear dot now means
+  // "this chat has an active guest" (applyHostAccess).
+  applyHostAccess(record);
+  sharesLoadedAt = 0;
+  refreshSharesIfStale()
+    .catch(() => null)
+    .then(() => {
+      if (activeV2DetailSessionId !== record.id) return;
+      renderSharePanel(currentShareTarget("chat"));
+      applyHostAccess(activeV2DetailRecord || record);
+    });
 
   syncV2DetailPoll();
 }
@@ -1759,23 +1771,117 @@ async function handleV2RenameClick() {
   }
 }
 
-/** SPEC-DELTA-2026-09-25-session-sharing-stage1: renders the Share panel's
- * toggle + remembered invite list from whatever the record currently says.
- * Never throws -- a rendering-only function, same posture as renderV2Messages. */
-function renderSharePanel(record) {
-  const toggle = document.getElementById("v2-detail-sharing-toggle");
-  if (toggle) toggle.checked = !!record.sharingEnabled;
-  const list = document.getElementById("v2-detail-shared-list");
-  const empty = document.getElementById("v2-share-empty-state");
+/**
+ * SPEC-DELTA-2026-09-29-session-sharing-stage2: renders one Share panel (the
+ * chat's in the settings sheet, or an IDE tab's) from the cached registry and
+ * relay status. One row per guest: name + connection, Off | Read | Control |
+ * Concurrent (tabs: Off | Read), Copy link, remove. Rendering only -- never
+ * throws; data comes from loadShares()/loadRelayStatus().
+ */
+function renderSharePanel(target) {
+  if (!target || !SHARE_UI) return;
+  const isIde = target.panel === "ide";
+  const list = document.getElementById(isIde ? "ide-detail-shared-list" : "v2-detail-shared-list");
+  const empty = document.getElementById(isIde ? "ide-share-empty-state" : "v2-share-empty-state");
   if (!list) return;
+  const rows = SHARE_UI.deriveShareRows({ shares: cachedShares, kind: target.kind, id: target.id, relayStatus: cachedRelayStatus });
   list.innerHTML = "";
-  const sharedWith = Array.isArray(record.sharedWith) ? record.sharedWith : [];
-  if (empty) empty.hidden = sharedWith.length > 0;
-  for (const entry of sharedWith) {
+  if (empty) empty.hidden = rows.length > 0;
+  for (const row of rows) {
     const li = document.createElement("li");
-    li.textContent = `${entry.email} — invited ${relativeTime(entry.invitedAt)}`;
+    li.className = "v2-share-row";
+    const who = document.createElement("div");
+    who.className = "v2-share-who";
+    const name = document.createElement("span");
+    name.className = "v2-share-name";
+    name.textContent = row.name;
+    name.title = row.email;
+    who.appendChild(name);
+    if (row.connectionLabel) {
+      const conn = document.createElement("span");
+      conn.className = "v2-share-conn";
+      conn.dataset.state = row.connection;
+      conn.textContent = row.connectionLabel;
+      who.appendChild(conn);
+    }
+    li.appendChild(who);
+    const seg = document.createElement("div");
+    seg.className = "v2-share-modes";
+    seg.setAttribute("role", "radiogroup");
+    seg.setAttribute("aria-label", `Access for ${row.name}`);
+    for (const m of row.modes) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "v2-share-mode-btn";
+      b.textContent = m.label;
+      b.dataset.mode = m.id;
+      b.setAttribute("role", "radio");
+      b.setAttribute("aria-checked", String(m.selected));
+      if (!m.selected) b.addEventListener("click", () => handleShareModeClick(target.panel, row.email, m.id));
+      seg.appendChild(b);
+    }
+    li.appendChild(seg);
+    const actions = document.createElement("div");
+    actions.className = "v2-share-actions";
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "cockpit-btn cockpit-btn-small";
+    copy.textContent = "Copy link";
+    copy.addEventListener("click", () => handleShareCopyLinkClick(target.panel));
+    actions.appendChild(copy);
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "cockpit-btn cockpit-btn-icon v2-share-remove";
+    del.textContent = "🗑";
+    del.setAttribute("aria-label", `Remove ${row.email}`);
+    del.addEventListener("click", () => handleShareRemoveClick(target.panel, row.email));
+    actions.appendChild(del);
+    li.appendChild(actions);
     list.appendChild(li);
   }
+  const stopAll = document.getElementById("btn-v2-share-stop-all");
+  if (stopAll) {
+    const st = SHARE_UI.deriveStopAllState(cachedShares);
+    stopAll.textContent = st.label;
+    stopAll.dataset.stopped = String(st.stopped);
+  }
+}
+
+/**
+ * Host read-only state for the open chat (AC-157/AC-163): a guest holds
+ * Control, or another device holds the lease. Drives the access banner, the
+ * take-over row, and -- via v2HostReadOnly -- deriveComposerButtons.
+ */
+let v2HostReadOnly = false;
+function applyHostAccess(record) {
+  if (!SHARE_UI) return;
+  const access = SHARE_UI.deriveHostChatAccess({ shares: cachedShares, record });
+  v2HostReadOnly = access.readOnly;
+  const banner = document.getElementById("v2-access-banner");
+  const text = document.getElementById("v2-access-banner-text");
+  const action = document.getElementById("btn-v2-access-action");
+  if (banner) banner.hidden = !access.readOnly;
+  if (text) text.textContent = access.banner || "";
+  if (action) {
+    action.hidden = !access.action;
+    action.textContent = access.action ? access.action.label : "";
+    action.dataset.action = access.action ? access.action.id : "";
+  }
+  for (const id of ["v2-detail-model-input", "v2-detail-mode-select", "v2-composer-text"]) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = v2Busy || access.readOnly;
+  }
+  const row = SHARE_UI.deriveTakeOverRow(record);
+  const rowText = document.getElementById("v2-takeover-text");
+  const rowBtn = document.getElementById("btn-v2-take-over");
+  if (rowText) rowText.textContent = row.text;
+  if (rowBtn) rowBtn.hidden = !row.action;
+  const settingsDot = document.getElementById("v2-settings-dot");
+  if (settingsDot) {
+    const item = cachedShares && SHARE_MODEL ? SHARE_MODEL.findItem(cachedShares, "session", record.id) : null;
+    settingsDot.hidden = !(item && cachedShares.sharingEnabled !== false && item.guests.some((g) => g.mode !== "off"));
+  }
+  applyComposerButtons();
 }
 
 function renderV2Messages(record) {
@@ -2019,11 +2125,21 @@ function syncV2DetailPoll() {
         };
         set("v2-detail-status", record.status);
         set("v2-detail-chat-id", record.chatId || "(provisioning…)");
+        activeV2DetailRecord = record;
         syncComposerFromRecord(record);
+        refreshSharesIfStale()
+          .catch(() => null)
+          .then(() => applyHostAccess(record));
+        // A chat a guest can write to may change at any time, so it keeps
+        // polling (at the same 5 s cadence) even when it looks idle.
+        const guestCanWrite = SHARE_MODEL && cachedShares
+          ? (SHARE_MODEL.findItem(cachedShares, "session", record.id)?.guests || []).some((g) => g.mode === "control" || g.mode === "concurrent")
+          : false;
         const stillChanging =
           record.status === "running" ||
           !record.chatId ||
-          (Array.isArray(record.queue) && record.queue.length > 0);
+          (Array.isArray(record.queue) && record.queue.length > 0) ||
+          (guestCanWrite && cachedShares.sharingEnabled !== false);
         if (!stillChanging) stopV2DetailPoll();
       })
       .catch((err) => showV2DetailError(err.message));
@@ -2114,6 +2230,7 @@ async function handleV2NewSubmit(ev) {
 // mirroring how Claude's own composer behaves instead of a permanent
 // Queue/Force mode selector (Viktor's ask, 2026-09-24).
 async function handleV2ComposerSend() {
+  if (v2HostReadOnly) return; // SPEC-DELTA-2026-09-29-session-sharing-stage2 (AC-157/AC-163)
   const textEl = document.getElementById("v2-composer-text");
   const id = activeV2DetailSessionId;
   if (!id || !textEl) return;
@@ -2134,6 +2251,7 @@ async function handleV2ComposerSend() {
 }
 
 async function handleV2ComposerForce() {
+  if (v2HostReadOnly) return; // SPEC-DELTA-2026-09-29-session-sharing-stage2 (AC-157/AC-163)
   const textEl = document.getElementById("v2-composer-text");
   const id = activeV2DetailSessionId;
   if (!id || !textEl) return;
@@ -2154,6 +2272,7 @@ async function handleV2ComposerForce() {
 }
 
 async function handleV2StopClick(id) {
+  if (v2HostReadOnly) return; // SPEC-DELTA-2026-09-29-session-sharing-stage2 (AC-157/AC-163)
   clearV2DetailError();
   setV2Busy(true);
   try {
@@ -2168,6 +2287,7 @@ async function handleV2StopClick(id) {
 
 /** Per-queue-item remove control handler (S-006, AC-015 "remove"). */
 async function handleV2QueueRemoveClick(id, queueItemId) {
+  if (v2HostReadOnly) return; // SPEC-DELTA-2026-09-29-session-sharing-stage2 (AC-157/AC-163)
   clearV2DetailError();
   setV2Busy(true);
   try {
@@ -2209,6 +2329,7 @@ async function handleV2DetailDeleteClick() {
 
 
 async function handleV2ModelChange() {
+  if (v2HostReadOnly) return; // SPEC-DELTA-2026-09-29-session-sharing-stage2 (AC-157/AC-163)
   const id = activeV2DetailSessionId;
   const modelInput = document.getElementById("v2-detail-model-input");
   if (!id || !modelInput) return;
@@ -2229,6 +2350,7 @@ async function handleV2ModelChange() {
 }
 
 async function handleV2ModeChange() {
+  if (v2HostReadOnly) return; // SPEC-DELTA-2026-09-29-session-sharing-stage2 (AC-157/AC-163)
   const id = activeV2DetailSessionId;
   const modeSelect = document.getElementById("v2-detail-mode-select");
   if (!id || !modeSelect) return;
@@ -2245,40 +2367,119 @@ async function handleV2ModeChange() {
 }
 
 // SPEC-DELTA-2026-09-25-session-sharing-stage1.
-async function handleV2ShareInviteSubmit(evt) {
+// SPEC-DELTA-2026-09-29-session-sharing-stage2: Share panel actions. Every
+// action is one shares.json read-modify-write; share-relay/ picks the change
+// up within one cycle (mirror, delete, stop ingesting).
+
+/** Which item the currently visible Share panel belongs to. */
+function currentShareTarget(panel) {
+  if (panel === "ide") {
+    if (!activeIdeTabComposerId) return null;
+    const kind = ideTrackerSource === "claude-code" ? "claude-tab" : "cursor-tab";
+    const tab = cachedIdeSnapshot && IDE_HELPERS
+      ? IDE_HELPERS.findIdeTab(cachedIdeSnapshot, activeIdeTabComposerId)
+      : null;
+    return { kind, id: activeIdeTabComposerId, title: (tab && tab.title) || null, panel };
+  }
+  if (!activeV2DetailSessionId) return null;
+  const title = activeV2DetailRecord && V2_MODEL ? V2_MODEL.deriveTitle(activeV2DetailRecord) : null;
+  return { kind: "session", id: activeV2DetailSessionId, title, panel: "chat" };
+}
+
+function shareErrorEl(panel) {
+  return document.getElementById(panel === "ide" ? "ide-share-error-state" : "v2-share-error-state");
+}
+
+async function runShareAction(panel, fn) {
+  const errEl = shareErrorEl(panel);
+  if (errEl) errEl.hidden = true;
+  try {
+    await fn();
+  } catch (err) {
+    if (errEl) {
+      errEl.textContent = translateErrorMessage(err.message);
+      errEl.hidden = false;
+    }
+  }
+  const target = currentShareTarget(panel);
+  if (target) renderSharePanel(target);
+  if (panel === "chat" && activeV2DetailRecord) applyHostAccess(activeV2DetailRecord);
+}
+
+async function handleShareInviteSubmit(evt, panel) {
   evt.preventDefault();
-  const id = activeV2DetailSessionId;
-  const emailInput = document.getElementById("v2-share-invite-email");
-  if (!id || !emailInput) return;
+  const target = currentShareTarget(panel);
+  const emailInput = document.getElementById(panel === "ide" ? "ide-share-invite-email" : "v2-share-invite-email");
+  if (!target || !emailInput) return;
   const email = emailInput.value.trim();
   if (!email) return;
-  clearV2DetailError();
-  setV2Busy(true);
-  try {
-    await v2InviteToSession(id, email);
+  await runShareAction(panel, async () => {
+    await mutateSharesPwa((s) => SHARE_MODEL.addGuest(s, { kind: target.kind, id: target.id, title: target.title, email, mode: "read", now: Date.now() }));
     emailInput.value = "";
-  } catch (err) {
-    showV2DetailError(err.message);
-  } finally {
-    await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
-    setV2Busy(false);
+  });
+}
+
+async function handleShareModeClick(panel, email, mode) {
+  const target = currentShareTarget(panel);
+  if (!target) return;
+  if (mode === "control" && !window.confirm(`Give ${SHARE_UI.nameFromEmail(email)} control of this chat? Your own view becomes read-only until you take it back.`)) return;
+  await runShareAction(panel, () =>
+    mutateSharesPwa((s) => SHARE_MODEL.setGuestMode(s, { kind: target.kind, id: target.id, email, mode, now: Date.now() })),
+  );
+}
+
+async function handleShareRemoveClick(panel, email) {
+  const target = currentShareTarget(panel);
+  if (!target) return;
+  if (!window.confirm(`Stop sharing with ${email} and remove them from this list?`)) return;
+  await runShareAction(panel, () =>
+    mutateSharesPwa((s) => SHARE_MODEL.removeGuest(s, { kind: target.kind, id: target.id, email, now: Date.now() })),
+  );
+}
+
+async function handleShareCopyLinkClick(panel) {
+  const target = currentShareTarget(panel);
+  if (!target) return;
+  const link = SHARE_MODEL.buildShareLink({
+    baseUrl: CONFIG.sharing.shareLinkBase,
+    kind: target.kind,
+    id: target.id,
+    hostUpn: CONFIG.sharing.hostUpn,
+  });
+  try {
+    await navigator.clipboard.writeText(link);
+    setStatusBadge("Link copied", "ok");
+  } catch {
+    window.prompt("Copy this link:", link);
   }
 }
 
-async function handleV2SharingToggleChange() {
+async function handleShareStopAllClick() {
+  const stopped = cachedShares && cachedShares.sharingEnabled === false;
+  if (!stopped && !window.confirm("Stop all sharing? Every guest loses access to every shared item right away. Their modes are remembered.")) return;
+  await runShareAction("chat", () =>
+    mutateSharesPwa((s) => SHARE_MODEL.setSharingEnabled(s, { enabled: stopped, now: Date.now() })),
+  );
+}
+
+/** "Take back control" / "Take over" from the access banner or the settings row. */
+async function handleV2AccessAction(actionId) {
   const id = activeV2DetailSessionId;
-  const toggle = document.getElementById("v2-detail-sharing-toggle");
-  if (!id || !toggle) return;
-  const enabled = toggle.checked;
+  if (!id) return;
   clearV2DetailError();
   setV2Busy(true);
   try {
-    await v2SetSharingEnabled(id, enabled);
+    if (actionId === "take-back") {
+      await mutateSharesPwa((s) => SHARE_MODEL.takeBackControl(s, { kind: "session", id, now: Date.now() }));
+    } else if (actionId === "take-over") {
+      if (!window.confirm("Take over from the laptop? Close the mc session on the laptop first, or both will send to the same chat.")) return;
+      await v2TakeOverFromDevice(id);
+    }
   } catch (err) {
     showV2DetailError(err.message);
   } finally {
-    await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
     setV2Busy(false);
+    await renderV2Detail(id).catch((err) => showV2DetailError(err.message));
   }
 }
 
@@ -2485,19 +2686,16 @@ function wireDaemonControlButtons() {
 }
 
 // =============================================================================
-// 7d. "Shared with me" -- read-only guest view (SPEC-DELTA-2026-09-25-
-//     session-sharing-stage1, AC-034/AC-035)
+// 7d. Sharing overview + guest mode entry (SPEC-DELTA-2026-09-29-session-sharing-stage2)
 // =============================================================================
 //
-// A completely separate read path from the host's own v2 code above: the
-// host reads their OWN drive (/me/drive/root:/...); a guest reads whatever
-// Graph's own sharedWithMe surfaced, addressed by the OWNER's driveId/itemId
-// (/drives/{driveId}/items/{itemId}/content), never the guest's own root.
-// No composer, no model/mode/stop, no overflow menu anywhere in this
-// section -- reusing v2-detail's write controls here would be a real
-// access-control bug, not a UX slip.
+// Host: the "Shared" tab is "Shared by me" -- every item in shares.json with
+// its guests and modes; tapping one opens it. Guest: the same two views are
+// driven by guest-app.mjs from the guest's OWN drive (see bootstrap). The
+// Stage 1 /me/drive/sharedWithMe + /drives/{id}/items/{id} path was removed:
+// in this tenant it can only ever return 403 for the guest.
 
-let activeSharedItem = null;
+let GUEST_APP = null; // guest-app.mjs controller when running in guest mode
 
 function showSharedListError(message) {
   const el = document.getElementById("shared-list-error-state");
@@ -2515,138 +2713,64 @@ function showSharedDetailError(message) {
   el.textContent = translateErrorMessage(message);
   el.hidden = false;
 }
-function clearSharedDetailError() {
-  const el = document.getElementById("shared-detail-error-state");
-  if (el) el.hidden = true;
-}
-
-/**
- * GET /me/drive/sharedWithMe, filtered to mobile-cockpit v2 session records
- * (AC-034: never any OTHER kind of file someone might have shared with this
- * account). `.json` is a loose filter, but this app has no other sharing
- * feature to collide with it.
- */
-async function loadSharedWithMe() {
-  const res = await graphFetch("/me/drive/sharedWithMe");
-  if (!res.ok) {
-    const bodyText = await res.text().catch(() => "");
-    throw new Error(`loadSharedWithMe: GET failed ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
-  }
-  const json = await res.json().catch(() => null);
-  const items = Array.isArray(json?.value) ? json.value : [];
-  return items
-    .filter((item) => item.remoteItem && typeof item.remoteItem.name === "string" && item.remoteItem.name.endsWith(".json"))
-    .map((item) => ({
-      driveId: item.remoteItem.parentReference?.driveId,
-      itemId: item.remoteItem.id,
-      name: item.remoteItem.name,
-    }))
-    .filter((item) => item.driveId && item.itemId);
-}
 
 async function renderSharedList() {
+  if (GUEST_APP) return GUEST_APP.renderGuestList();
   clearSharedListError();
   const ul = document.getElementById("shared-session-list");
   const empty = document.getElementById("shared-list-empty-state");
-  if (!ul || !empty) return;
-  let items;
-  try {
-    items = await loadSharedWithMe();
-  } catch (err) {
-    showSharedListError(err.message);
-    return;
-  }
+  if (!ul || !empty || !SHARE_MODEL || !SHARE_UI) return;
+  await Promise.all([loadShares(), loadRelayStatus().catch(() => null)]);
+  sharesLoadedAt = Date.now();
+  const items = (cachedShares && cachedShares.items) || [];
   ul.innerHTML = "";
-  if (items.length === 0) {
+  empty.textContent = "Nothing shared yet. Open a chat or an IDE tab and use its Share panel.";
+  empty.hidden = items.length > 0;
+  if (cachedShares && cachedShares.sharingEnabled === false && items.length) {
+    empty.textContent = "Sharing is stopped for everyone. Resume it from any Share panel.";
     empty.hidden = false;
-    return;
   }
-  empty.hidden = true;
+  const kindLabel = { session: "Chat", "cursor-tab": "Cursor tab", "claude-tab": "Claude Code" };
   for (const item of items) {
     const li = document.createElement("li");
     li.className = "cockpit-session-row";
     li.tabIndex = 0;
     const title = document.createElement("span");
     title.className = "cockpit-row-title";
-    // AC-039: never the raw OneDrive filename (== the session id in
-    // disguise) as the row's primary text -- fetch the real record and show
-    // its derived/custom title instead, filled in asynchronously so the
-    // list still paints immediately.
-    title.textContent = "…";
+    title.textContent = `${kindLabel[item.kind] || item.kind}: ${item.title || "(untitled)"}`;
     li.appendChild(title);
-    loadSharedRecord(item.driveId, item.itemId)
-      .then((record) => {
-        title.textContent = (V2_MODEL && V2_MODEL.deriveTitle(record)) || "(shared session)";
-      })
-      .catch(() => {
-        title.textContent = "(shared session)";
-      });
-    const goToDetail = () => setView("shared-detail", { driveId: item.driveId, itemId: item.itemId });
-    li.addEventListener("click", goToDetail);
+    const meta = document.createElement("span");
+    meta.className = "cockpit-row-meta";
+    meta.textContent = SHARE_UI.deriveShareRows({ shares: cachedShares, kind: item.kind, id: item.id, relayStatus: cachedRelayStatus })
+      .map((r) => `${r.name} · ${SHARE_UI.MODE_LABELS[r.mode]}${r.connectionLabel ? ` (${r.connectionLabel})` : ""}`)
+      .join(", ");
+    li.appendChild(meta);
+    const open = () => {
+      if (item.kind === "session") {
+        setView("v2-detail", { sessionId: item.id });
+        return;
+      }
+      const source = item.kind === "claude-tab" ? "claude-code" : "cursor";
+      if (ideTrackerSource !== source) setIdeTrackerSource(source);
+      loadIdeTabs()
+        .then(() => setView("ide-tab-detail", { composerId: item.id }))
+        .catch((err) => showSharedListError(err.message));
+    };
+    li.addEventListener("click", open);
     li.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" || ev.key === " ") {
         ev.preventDefault();
-        goToDetail();
+        open();
       }
     });
     ul.appendChild(li);
   }
 }
 
-/** GET .../content on the OWNER's drive item -- never the guest's own /me/drive/root. */
-async function loadSharedRecord(driveId, itemId) {
-  const res = await graphFetch(`/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/content`);
-  if (!res.ok) {
-    const bodyText = await res.text().catch(() => "");
-    throw new Error(`loadSharedRecord: GET failed ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
-  }
-  return res.json();
-}
-
-async function renderSharedDetail(driveId, itemId) {
-  clearSharedDetailError();
-  activeSharedItem = { driveId, itemId };
-  let record;
-  try {
-    record = await loadSharedRecord(driveId, itemId);
-  } catch (err) {
-    showSharedDetailError(err.message);
-    return;
-  }
-  const titleEl = document.getElementById("shared-detail-title");
-  // AC-039: never the raw record.id -- the derived/custom title (or a
-  // neutral fallback) is always the primary displayed text.
-  if (titleEl) titleEl.textContent = (V2_MODEL && V2_MODEL.deriveTitle(record)) || "(shared session)";
-  renderSharedMessages(record);
-}
-
-/** Read-only render -- deliberately NOT renderV2Messages (no streaming bubble,
- * no write-path coupling of any kind; a shared record never has a composer). */
-function renderSharedMessages(record) {
-  const container = document.getElementById("shared-messages");
-  if (!container) return;
-  container.innerHTML = "";
-  const messages = orderMessagesForDisplay(record.messages);
-  for (const raw of messages) {
-    const m = formatSessionMessage(raw);
-    const bubble = document.createElement("div");
-    bubble.className = `v2-message v2-role-${m.role}`;
-    const label = document.createElement("div");
-    label.className = "v2-message-role-label";
-    label.textContent = m.label;
-    bubble.appendChild(label);
-    const text = document.createElement("div");
-    text.className = "v2-message-text";
-    text.textContent = m.text;
-    bubble.appendChild(text);
-    container.appendChild(bubble);
-  }
-  if (messages.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "v2-message v2-role-system";
-    empty.textContent = "No messages yet.";
-    container.appendChild(empty);
-  }
+async function renderSharedDetail(payload) {
+  if (GUEST_APP) return GUEST_APP.renderGuestItem(payload);
+  // Host never lands here (its "Shared by me" rows open the real views).
+  setView("shared-list");
 }
 
 /**
@@ -2763,16 +2887,18 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     let GRAPH_BACKOFF_HELPERS;
-    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS] = await Promise.all([
-      import("./write-helpers.mjs?v=03bd692"),
-      import("./ide-helpers.mjs?v=03bd692"),
-      import("./refresh-helpers.mjs?v=03bd692"),
-      import("./transcript-model.mjs?v=03bd692"),
-      import("./scrollback-helpers.mjs?v=03bd692"),
-      import("./daemon-control-model.mjs?v=03bd692"),
-      import("./composer-state.mjs?v=03bd692"),
-      import("./app-menu-state.mjs?v=03bd692"),
-      import("./graph-backoff.mjs?v=03bd692"),
+    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI] = await Promise.all([
+      import("./write-helpers.mjs?v=0ebcb8d"),
+      import("./ide-helpers.mjs?v=0ebcb8d"),
+      import("./refresh-helpers.mjs?v=0ebcb8d"),
+      import("./transcript-model.mjs?v=0ebcb8d"),
+      import("./scrollback-helpers.mjs?v=0ebcb8d"),
+      import("./daemon-control-model.mjs?v=0ebcb8d"),
+      import("./composer-state.mjs?v=0ebcb8d"),
+      import("./app-menu-state.mjs?v=0ebcb8d"),
+      import("./graph-backoff.mjs?v=0ebcb8d"),
+      import("./share-model.mjs?v=0ebcb8d"),
+      import("./share-ui-state.mjs?v=0ebcb8d"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -2791,6 +2917,48 @@ async function bootstrap() {
     await ensureSignedIn();
   } catch (err) {
     setStatusBadge(`sign-in error: ${err.message}`, "error");
+    return;
+  }
+
+  // SPEC-DELTA-2026-09-29-session-sharing-stage2 (AC-150): anyone but the
+  // cockpit's owner is a guest -- guest-app.mjs takes over the page and the
+  // host wiring below never runs (no host views, no reads or writes under the
+  // guest's own cursor-cockpit/).
+  if (SHARE_UI.isGuestAccount(activeAccount.username, CONFIG.sharing && CONFIG.sharing.hostUpn)) {
+    document.body.dataset.guest = "true";
+    setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
+    if (connEl) connEl.textContent = "online";
+    try {
+      const guestModule = await import("./guest-app.mjs?v=0ebcb8d");
+      GUEST_APP = guestModule.startGuestMode({
+        config: CONFIG,
+        account: activeAccount,
+        graphFetch,
+        loadJson,
+        putJson,
+        shareModel: SHARE_MODEL,
+        shareUi: SHARE_UI,
+        scrollback: SCROLLBACK_HELPERS,
+        ideHelpers: IDE_HELPERS,
+        composerState: COMPOSER_STATE,
+        setView,
+        setStatusBadge,
+        translateErrorMessage,
+        populateModelSelect,
+      });
+    } catch (err) {
+      setStatusBadge(`guest mode error: ${err.message}`, "error");
+      return;
+    }
+    for (const back of document.querySelectorAll(".cockpit-back-btn")) {
+      back.addEventListener("click", () => setView(back.dataset.targetView || "shared-list"));
+    }
+    const btnSharedRefreshGuest = document.getElementById("btn-shared-refresh");
+    if (btnSharedRefreshGuest) btnSharedRefreshGuest.addEventListener("click", () => GUEST_APP.renderGuestList());
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) GUEST_APP.refreshOnce();
+    });
+    GUEST_APP.start(window.location.hash);
     return;
   }
 
@@ -3002,16 +3170,36 @@ async function bootstrap() {
       handleV2ModeChange().catch((err) => showV2DetailError(err.message));
     });
   }
+  // SPEC-DELTA-2026-09-29-session-sharing-stage2: Share panels (chat + IDE
+  // tab), Stop all sharing, the access banner and the take-over row.
   const v2ShareInviteForm = document.getElementById("v2-share-invite-form");
   if (v2ShareInviteForm) {
     v2ShareInviteForm.addEventListener("submit", (evt) => {
-      handleV2ShareInviteSubmit(evt).catch((err) => showV2DetailError(err.message));
+      handleShareInviteSubmit(evt, "chat").catch((err) => showV2DetailError(err.message));
     });
   }
-  const v2SharingToggle = document.getElementById("v2-detail-sharing-toggle");
-  if (v2SharingToggle) {
-    v2SharingToggle.addEventListener("change", () => {
-      handleV2SharingToggleChange().catch((err) => showV2DetailError(err.message));
+  const ideShareInviteForm = document.getElementById("ide-share-invite-form");
+  if (ideShareInviteForm) {
+    ideShareInviteForm.addEventListener("submit", (evt) => {
+      handleShareInviteSubmit(evt, "ide").catch((err) => showIdeDetailError(err.message));
+    });
+  }
+  const btnShareStopAll = document.getElementById("btn-v2-share-stop-all");
+  if (btnShareStopAll) {
+    btnShareStopAll.addEventListener("click", () => {
+      handleShareStopAllClick().catch((err) => showV2DetailError(err.message));
+    });
+  }
+  const btnAccessAction = document.getElementById("btn-v2-access-action");
+  if (btnAccessAction) {
+    btnAccessAction.addEventListener("click", () => {
+      handleV2AccessAction(btnAccessAction.dataset.action).catch((err) => showV2DetailError(err.message));
+    });
+  }
+  const btnTakeOver = document.getElementById("btn-v2-take-over");
+  if (btnTakeOver) {
+    btnTakeOver.addEventListener("click", () => {
+      handleV2AccessAction("take-over").catch((err) => showV2DetailError(err.message));
     });
   }
 

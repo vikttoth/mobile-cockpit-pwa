@@ -79,18 +79,30 @@ export function shouldAutoScrollToBottom(geometry, opts = {}) {
  * eventual chat-UI rendering code can share a mental model across the
  * session view and the read-only IDE-tab thread view.
  *
- * @param {{role?: string, text?: string, ts?: number}|null|undefined} message
- * @returns {{role: string, label: string, text: string, ts: number|null}}
+ * `author` (SPEC-DELTA-2026-09-29-session-sharing-stage2): a user message a
+ * guest wrote carries their email; the label becomes their name instead of
+ * the generic "You", and `author` is passed through for styling.
+ *
+ * @param {{role?: string, text?: string, ts?: number, author?: string}|null|undefined} message
+ * @returns {{role: string, label: string, text: string, ts: number|null, author: string|null}}
  */
 export function formatSessionMessage(message) {
   if (!message || typeof message !== "object") {
-    return { role: "unknown", label: "System", text: "", ts: null };
+    return { role: "unknown", label: "System", text: "", ts: null, author: null };
   }
   const role = typeof message.role === "string" ? message.role : "unknown";
-  const label = ROLE_LABELS[role] || "System";
+  const author = typeof message.author === "string" && message.author ? message.author : null;
+  const label = author && role === "user" ? authorName(author) : ROLE_LABELS[role] || "System";
   const text = typeof message.text === "string" ? message.text : "";
   const ts = typeof message.ts === "number" && Number.isFinite(message.ts) ? message.ts : null;
-  return { role, label, text, ts };
+  return { role, label, text, ts, author };
+}
+
+/** "karoly.brix@nokia.com" -> "Karoly Brix" (same rule as share-ui-state.mjs#nameFromEmail). */
+export function authorName(email) {
+  if (typeof email !== "string" || !email.includes("@")) return email || "";
+  const parts = email.split("@")[0].split(/[._-]+/).filter(Boolean);
+  return parts.length ? parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ") : email;
 }
 
 /**

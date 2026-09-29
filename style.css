@@ -1220,3 +1220,105 @@ body[data-view="v2-detail"] main {
 .cockpit-app-menu .cockpit-status-badge { font-size: 0.9rem; color: var(--cp-fg); word-break: break-all; }
 .cockpit-app-menu .cockpit-daemon-control { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .cockpit-app-menu-build { color: var(--cp-muted); font-size: 0.8rem; }
+
+/* ---------------------------------------------------------------------------
+   Session sharing Stage 2 (SPEC-DELTA-2026-09-29-session-sharing-stage2)
+   --------------------------------------------------------------------------- */
+.v2-share-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--cp-border);
+  color: var(--cp-fg);
+}
+.v2-share-who {
+  flex: 1 1 140px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.v2-share-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.v2-share-conn {
+  font-size: 0.8rem;
+  color: var(--cp-muted);
+}
+.v2-share-conn[data-state="connected"] { color: var(--cp-success); }
+.v2-share-conn[data-state="waiting"] { color: var(--cp-warning); }
+.v2-share-modes {
+  display: inline-flex;
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+  overflow: hidden;
+}
+.v2-share-mode-btn {
+  border: 0;
+  background: transparent;
+  color: var(--cp-fg);
+  padding: 4px 8px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.v2-share-mode-btn + .v2-share-mode-btn { border-left: 1px solid var(--cp-border); }
+.v2-share-mode-btn[aria-checked="true"] {
+  background: var(--cp-accent);
+  color: #fff;
+  cursor: default;
+}
+.v2-share-actions {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.v2-share-stop-all { align-self: flex-start; }
+.v2-share-stop-all[data-stopped="true"] {
+  background: var(--cp-success);
+  border-color: var(--cp-success);
+  color: #fff;
+}
+.v2-access-banner:not([hidden]) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  margin: 0 0 6px;
+  border-radius: var(--cp-radius);
+  background: #fff7ed;
+  border: 1px solid var(--cp-warning);
+  color: var(--cp-fg);
+  font-size: 0.9rem;
+}
+.guest-connect-card:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  margin: 8px 0;
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+}
+.guest-composer:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.cockpit-list-heading {
+  margin: 0;
+  font-size: 1rem;
+  flex: 1 1 auto;
+}
+/* Guest mode (AC-150): only the Shared view exists for a guest. */
+body[data-guest="true"] #btn-mode-v2,
+body[data-guest="true"] #btn-mode-ide-tabs,
+body[data-guest="true"] #daemon-control-strip,
+body[data-guest="true"] #health-badge {
+  display: none !important;
+}

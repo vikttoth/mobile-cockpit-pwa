@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-29 11:38 CEST 03bd692 in config.json + app.js).
+  script (replaces 2026-09-29 21:24 CEST 0ebcb8d in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,11 +45,11 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=03bd692")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=0ebcb8d")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=03bd692" />
+  <link rel="stylesheet" href="./style.css?v=0ebcb8d" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
@@ -192,6 +192,20 @@
           <dt>Transcript size</dt><dd id="ide-detail-transcript-size">…</dd>
         </dl>
       </details>
+      <!-- SPEC-DELTA-2026-09-29-session-sharing-stage2 (AC-160): share this one
+           Cursor tab / Claude Code session, Off | Read only (nobody can write
+           into an IDE mirror, the host included). Same renderer as the chat
+           Share panel (app.js#renderSharePanel). -->
+      <details class="cockpit-detail-meta-collapse ide-share-panel">
+        <summary>Share</summary>
+        <ul id="ide-detail-shared-list" class="v2-share-list"></ul>
+        <p id="ide-share-empty-state" class="cockpit-hint" hidden>Not shared with anyone yet.</p>
+        <form id="ide-share-invite-form" class="v2-share-invite-form">
+          <input type="email" id="ide-share-invite-email" placeholder="colleague@nokia.com" required />
+          <button type="submit" id="btn-ide-share-invite" class="cockpit-btn">Share</button>
+        </form>
+        <p id="ide-share-error-state" class="cockpit-error" hidden role="alert"></p>
+      </details>
       <section class="cockpit-ide-thread">
         <h3>Thread (most recent first)</h3>
         <ol id="ide-detail-thread" class="cockpit-ide-thread-list" role="list">
@@ -321,40 +335,51 @@
             </div>
           </section>
 
-          <!-- SPEC-DELTA-2026-09-25-session-sharing-stage1: session-level,
-               read-only sharing, relocated into the settings sheet 2026-09-26
-               (same behavior, just no longer always-visible). The toggle is
-               separate from the invite list on purpose -- turning it off
-               revokes real Graph access but remembers who was invited, so
-               turning it back on needs no re-typing (AC-032/AC-037). -->
+          <!-- SPEC-DELTA-2026-09-29-session-sharing-stage2: per-guest sharing
+               of THIS chat. One row per guest: name, connection state, a
+               segmented Off | Read | Control | Concurrent selector, Copy link
+               and remove. "Stop all sharing" is the global kill switch (every
+               item, every guest; modes stay remembered). Data lives in
+               cursor-cockpit/shares.json; share-relay/ does the mirroring.
+               Rendered by app.js#renderSharePanel (shared with the IDE-tab
+               detail view's own panel below). -->
           <section class="v2-settings-section v2-share-panel">
             <h3 class="v2-settings-section-title">Sharing</h3>
-            <label class="v2-inline-control">
-              Sharing
-              <input type="checkbox" id="v2-detail-sharing-toggle" />
-            </label>
+            <button type="button" id="btn-v2-share-stop-all" class="cockpit-btn cockpit-btn-danger v2-share-stop-all">Stop all sharing</button>
             <ul id="v2-detail-shared-list" class="v2-share-list">
-              <!-- Populated by app.js#renderSharePanel(): <li>email — invited &lt;time&gt;</li> -->
+              <!-- Populated by app.js#renderSharePanel(). -->
             </ul>
-            <p id="v2-share-empty-state" class="cockpit-hint" hidden>Nobody invited yet.</p>
+            <p id="v2-share-empty-state" class="cockpit-hint" hidden>Not shared with anyone yet.</p>
             <form id="v2-share-invite-form" class="v2-share-invite-form">
               <input type="email" id="v2-share-invite-email" placeholder="colleague@nokia.com" required />
-              <button type="submit" id="btn-v2-share-invite" class="cockpit-btn">Invite</button>
+              <button type="submit" id="btn-v2-share-invite" class="cockpit-btn">Share</button>
             </form>
             <p id="v2-share-error-state" class="cockpit-error" hidden role="alert"></p>
           </section>
 
-          <!-- Stage 2 (take-over mode) is not built yet -- this row makes the
-               UI shape final now without any functionality behind it. -->
+          <!-- SPEC task 15 / SPEC-DELTA-2026-09-29-session-sharing-stage2
+               (S-138, AC-163): which device runs this chat's turns. When the
+               laptop holds the lease (mc), the phone shows it and offers Take
+               over, which hands the lease back to the daemon. -->
           <section class="v2-settings-section v2-takeover-section">
             <h3 class="v2-settings-section-title">Take over</h3>
-            <p class="v2-settings-row v2-settings-row-disabled" aria-disabled="true">
-              Take over — coming soon
-            </p>
+            <div class="v2-settings-row">
+              <span id="v2-takeover-text" class="v2-settings-row-value">…</span>
+              <button type="button" id="btn-v2-take-over" class="cockpit-btn" hidden>Take over</button>
+            </div>
           </section>
         </div>
 
         <button type="button" id="btn-v2-new-message" class="cockpit-btn v2-new-message-pill" hidden>↓ New message</button>
+
+        <!-- SPEC-DELTA-2026-09-29-session-sharing-stage2 (AC-157/AC-163):
+             shown while this chat is read-only for the host -- a guest holds
+             Control ("Take back control") or another device holds the lease
+             ("Take over"). Composer buttons stay visible but disabled. -->
+        <div id="v2-access-banner" class="v2-access-banner" hidden role="status">
+          <span id="v2-access-banner-text"></span>
+          <button type="button" id="btn-v2-access-action" class="cockpit-btn cockpit-btn-small"></button>
+        </div>
 
         <div class="v2-composer">
           <textarea id="v2-composer-text" class="v2-composer-text" rows="1" placeholder="Message" aria-label="Message"></textarea>
@@ -475,32 +500,69 @@
       (SPEC-DELTA-2026-09-25-session-sharing-stage1, AC-034). Lists items
       from GET /me/drive/sharedWithMe. Strictly read-only -- see view 10.
     -->
+    <!--
+      SPEC-DELTA-2026-09-29-session-sharing-stage2: one view, two audiences.
+        - Host: "Shared by me" -- every item in shares.json, its guests and
+          modes, tap to open (app.js#renderSharedList).
+        - Guest (AC-150): items the host mirrored into the guest's OWN drive
+          (cursor-cockpit-guest/hosts/<host>/manifest.json), plus the one-time
+          Connect card (AC-151). Guest code lives in guest-app.mjs.
+    -->
     <section id="view-shared-list" class="cockpit-view" data-view-id="shared-list" hidden>
       <div class="cockpit-list-toolbar">
-        <button type="button" id="btn-shared-refresh" class="cockpit-btn" aria-label="Refresh shared sessions">↻</button>
+        <h2 id="shared-list-heading" class="cockpit-list-heading">Shared by me</h2>
+        <button type="button" id="btn-shared-refresh" class="cockpit-btn" aria-label="Refresh shared items">↻</button>
+      </div>
+      <div id="guest-connect-card" class="guest-connect-card" hidden>
+        <p id="guest-connect-text">…</p>
+        <button type="button" id="btn-guest-connect" class="cockpit-btn cockpit-btn-primary">Connect</button>
+        <p id="guest-connect-status" class="cockpit-hint" hidden></p>
       </div>
       <ul id="shared-session-list" class="cockpit-session-list" role="list">
-        <!-- Populated by app.js#renderSharedList(). -->
+        <!-- Populated by app.js#renderSharedList() (host) or guest-app.mjs (guest). -->
       </ul>
       <p id="shared-list-empty-state" class="cockpit-empty" hidden>
-        Nobody has shared a session with you yet.
+        Nothing shared yet.
       </p>
       <p id="shared-list-error-state" class="cockpit-error" hidden role="alert"></p>
     </section>
 
     <!--
-      View 10: a single shared session, read-only (AC-035). No composer, no
-      model/mode/stop, no overflow menu -- reusing any v2-detail control here
-      would be a real access-control bug, not just a UX slip.
+      View 10: one shared item as a GUEST sees it (guest-app.mjs). Composer,
+      Stop/Force and model/mode are always rendered but stay disabled unless
+      the guest's mode is Control (as holder) or Concurrent (AC-155) -- the
+      relay enforces the same rule independently, so a modified client gains
+      nothing. IDE tabs never get a composer (AC-160).
     -->
     <section id="view-shared-detail" class="cockpit-view" data-view-id="shared-detail" hidden>
       <div class="cockpit-detail-header">
-        <button type="button" class="cockpit-back-btn" data-target-view="shared-list" aria-label="Back to shared sessions">← Back</button>
+        <button type="button" class="cockpit-back-btn" data-target-view="shared-list" aria-label="Back to shared items">← Back</button>
         <h2 id="shared-detail-title" class="v2-detail-title-inline">…</h2>
       </div>
-      <p class="cockpit-hint">Shared with you, read-only.</p>
+      <p id="shared-detail-banner" class="cockpit-hint">Shared with you.</p>
       <div id="shared-messages" class="v2-messages" role="log" aria-live="polite">
-        <!-- Populated by app.js#renderSharedDetail(). -->
+        <!-- Populated by guest-app.mjs#renderGuestItem(). -->
+      </div>
+      <div id="guest-composer" class="guest-composer" hidden>
+        <div class="v2-settings-row-pair">
+          <label class="v2-inline-control">Model <select id="guest-model-select" disabled></select></label>
+          <label class="v2-inline-control">Mode
+            <select id="guest-mode-select" disabled>
+              <option value="agent">agent</option>
+              <option value="plan">plan</option>
+              <option value="ask">ask</option>
+            </select>
+          </label>
+        </div>
+        <div class="v2-composer">
+          <textarea id="guest-composer-text" class="v2-composer-text" rows="1" placeholder="Message" aria-label="Message" disabled></textarea>
+          <div class="v2-composer-actions">
+            <button type="button" id="btn-guest-stop" class="cockpit-btn v2-composer-btn v2-btn-stop" disabled aria-label="Stop" title="Stop the running turn">■</button>
+            <button type="button" id="btn-guest-force" class="cockpit-btn v2-composer-btn v2-btn-force" disabled aria-label="Force" title="Stop the running turn and send this now">⚡</button>
+            <button type="button" id="btn-guest-send" class="cockpit-btn v2-composer-btn v2-btn-send" disabled aria-label="Send" title="Send">➜</button>
+          </div>
+        </div>
+        <p id="guest-composer-note" class="cockpit-hint" hidden></p>
       </div>
       <p id="shared-detail-error-state" class="cockpit-error" hidden role="alert"></p>
     </section>
@@ -508,6 +570,6 @@
   </main>
 
 
-  <script src="./app.js?v=03bd692" defer></script>
+  <script src="./app.js?v=0ebcb8d" defer></script>
 </body>
 </html>
