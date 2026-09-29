@@ -112,3 +112,16 @@ export function decideScrollAfterRender(input = { isFirstRender: true }) {
   }
   return { scrollToBottom: false, showNewMessagePill: Boolean(newMessageArrived || pillVisible) };
 }
+
+/**
+ * How many messages did NOT come from the user. Drives "new message"
+ * detection: the user's own message moving from queue[] into messages[]
+ * must not raise the "New message" button (S-086).
+ *
+ * @param {Array<{role?: string}|null>|null|undefined} messages
+ * @returns {number}
+ */
+export function countIncomingMessages(messages) {
+  if (!Array.isArray(messages)) return 0;
+  return messages.filter((m) => m && typeof m === "object" && m.role !== "user").length;
+}

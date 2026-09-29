@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-29 10:08 CEST 497abc5`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-29 10:08 CEST 497abc5";
+// `2026-09-29 10:18 CEST 162da9d`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-29 10:18 CEST 162da9d";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1780,7 +1780,9 @@ let v2ForceScrollBottom = false;
 
 function applyV2ScrollAfterRender(container, record, wasAtBottom, prevScrollTop) {
   if (!SCROLLBACK_HELPERS) return;
-  const count = Array.isArray(record.messages) ? record.messages.length : 0;
+  // Only the agent's/system's messages count as "new" -- the user's own
+  // message moving out of the queue must not raise the button (S-086).
+  const count = SCROLLBACK_HELPERS.countIncomingMessages(record.messages);
   const isFirstRender = v2ScrollState.sessionId !== record.id;
   const newMessageArrived = !isFirstRender && count > v2ScrollState.messageCount;
   v2ScrollState = { sessionId: record.id, messageCount: count };
@@ -2647,13 +2649,13 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE] = await Promise.all([
-      import("./write-helpers.mjs?v=497abc5"),
-      import("./ide-helpers.mjs?v=497abc5"),
-      import("./refresh-helpers.mjs?v=497abc5"),
-      import("./transcript-model.mjs?v=497abc5"),
-      import("./scrollback-helpers.mjs?v=497abc5"),
-      import("./daemon-control-model.mjs?v=497abc5"),
-      import("./composer-state.mjs?v=497abc5"),
+      import("./write-helpers.mjs?v=162da9d"),
+      import("./ide-helpers.mjs?v=162da9d"),
+      import("./refresh-helpers.mjs?v=162da9d"),
+      import("./transcript-model.mjs?v=162da9d"),
+      import("./scrollback-helpers.mjs?v=162da9d"),
+      import("./daemon-control-model.mjs?v=162da9d"),
+      import("./composer-state.mjs?v=162da9d"),
     ]);
   } catch (err) {
     setStatusBadge(`helpers import error: ${err.message}`, "error");
