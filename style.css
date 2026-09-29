@@ -1093,8 +1093,7 @@ body[data-view="shared-detail"] .cockpit-mode-toggle {
    Chat view: full-screen column, messages scroll, bottom-docked panel
    (SPEC-DELTA-2026-09-29-chat-bottom-panel-and-autoscroll, AC-100/AC-101).
    --------------------------------------------------------------------------- */
-body[data-view="v2-detail"] .cockpit-header,
-body[data-view="v2-detail"] .cockpit-footer {
+body[data-view="v2-detail"] .cockpit-header {
   display: none;
 }
 body[data-view="v2-detail"] main {
@@ -1161,3 +1160,63 @@ body[data-view="v2-detail"] main {
   z-index: 5;
 }
 .v2-new-message-pill[hidden] { display: none; }
+
+/* ---------------------------------------------------------------------------
+   Header account menu (SPEC-DELTA-2026-09-29-app-menu): one-line title,
+   initials button with an attention dot, dropdown status panel.
+   --------------------------------------------------------------------------- */
+.cockpit-header {
+  position: relative;
+}
+.cockpit-header h1 {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cockpit-avatar-btn {
+  position: relative;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: var(--cp-accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.cockpit-avatar-dot {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--cp-error);
+  border: 2px solid var(--cp-bg);
+}
+.cockpit-avatar-dot[hidden] { display: none; }
+.cockpit-app-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: var(--cp-gap);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 240px;
+  max-width: calc(100vw - 2 * var(--cp-gap));
+  padding: var(--cp-gap);
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+  background: var(--cp-bg);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+  font-size: 0.9rem;
+}
+.cockpit-app-menu[hidden] { display: none; }
+.cockpit-app-menu .cockpit-status-badge { font-size: 0.9rem; color: var(--cp-fg); word-break: break-all; }
+.cockpit-app-menu .cockpit-daemon-control { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.cockpit-app-menu-build { color: var(--cp-muted); font-size: 0.8rem; }

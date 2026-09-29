@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-29 10:33 CEST 59b7d76`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-29 10:33 CEST 59b7d76";
+// `2026-09-29 11:12 CEST 4c47e1d`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-29 11:12 CEST 4c47e1d";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -72,6 +72,9 @@ let DAEMON_CONTROL_MODEL = null;
 /** Pure helpers for the v2 composer buttons + status chip
  *  (SPEC-DELTA-2026-09-29-composer-contextual-buttons). */
 let COMPOSER_STATE = null;
+
+/** Pure helpers for the header account menu (SPEC-DELTA-2026-09-29-app-menu). */
+let APP_MENU_STATE = null;
 
 /** Last-rendered v2 session status + in-flight flag, the two inputs
  *  applyComposerButtons() combines with the textbox content. */
@@ -2624,11 +2627,70 @@ function renderSharedMessages(record) {
   }
 }
 
+/**
+ * Header account menu (SPEC-DELTA-2026-09-29-app-menu): the button toggles
+ * the status panel; Escape / an outside tap closes it; the red dot follows
+ * the status elements via a MutationObserver, so none of their existing
+ * render functions needed to change. Wired first thing in bootstrap so the
+ * panel also works when sign-in or config loading fails.
+ */
+function wireAppMenu() {
+  const btn = document.getElementById("btn-app-menu");
+  const menu = document.getElementById("app-menu");
+  if (!btn || !menu) return;
+  const setOpen = (open) => {
+    menu.hidden = !open;
+    btn.setAttribute("aria-expanded", String(open));
+  };
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    setOpen(menu.hidden);
+  });
+  document.addEventListener("click", (ev) => {
+    if (!menu.hidden && !menu.contains(ev.target) && !btn.contains(ev.target)) setOpen(false);
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && !menu.hidden) setOpen(false);
+  });
+  const watched = ["status-badge", "health-badge", "daemon-control-badge"]
+    .map((id) => document.getElementById(id))
+    .filter(Boolean);
+  const observer = new MutationObserver(() => updateAppMenuAlert());
+  for (const el of watched) {
+    observer.observe(el, { attributes: true, childList: true, characterData: true, subtree: true });
+  }
+  updateAppMenuAlert();
+}
+
+function updateAppMenuAlert() {
+  const dot = document.getElementById("app-menu-alert-dot");
+  const btn = document.getElementById("btn-app-menu");
+  if (!dot) return;
+  const statusEl = document.getElementById("status-badge");
+  const healthEl = document.getElementById("health-badge");
+  const daemonEl = document.getElementById("daemon-control-badge");
+  const input = {
+    statusBadge: statusEl ? statusEl.dataset.status : undefined,
+    health: healthEl ? healthEl.dataset.state : undefined,
+    daemon: daemonEl ? daemonEl.dataset.state : undefined,
+    daemonChecked: daemonEl ? !/checking/.test(daemonEl.textContent || "") : false,
+  };
+  // Before the helpers load (e.g. a config error), a plain error check.
+  const r = APP_MENU_STATE
+    ? APP_MENU_STATE.deriveMenuAlert(input)
+    : { alert: input.statusBadge === "error", reasons: input.statusBadge === "error" ? ["error"] : [] };
+  dot.hidden = !r.alert;
+  if (btn) {
+    btn.title = r.alert ? `Needs attention: ${r.reasons.join(", ")}` : "Account and status";
+  }
+}
+
 // =============================================================================
 // 8. Bootstrap
 // =============================================================================
 
 async function bootstrap() {
+  wireAppMenu();
   const buildStampEl = document.getElementById("build-stamp");
   if (buildStampEl) buildStampEl.textContent = BUILD_STAMP;
   const connEl = document.getElementById("conn-state");
@@ -2653,14 +2715,15 @@ async function bootstrap() {
   // ide-helpers module is sibling; both are loaded in parallel because
   // they have no inter-dependency.
   try {
-    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE] = await Promise.all([
-      import("./write-helpers.mjs?v=59b7d76"),
-      import("./ide-helpers.mjs?v=59b7d76"),
-      import("./refresh-helpers.mjs?v=59b7d76"),
-      import("./transcript-model.mjs?v=59b7d76"),
-      import("./scrollback-helpers.mjs?v=59b7d76"),
-      import("./daemon-control-model.mjs?v=59b7d76"),
-      import("./composer-state.mjs?v=59b7d76"),
+    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE] = await Promise.all([
+      import("./write-helpers.mjs?v=4c47e1d"),
+      import("./ide-helpers.mjs?v=4c47e1d"),
+      import("./refresh-helpers.mjs?v=4c47e1d"),
+      import("./transcript-model.mjs?v=4c47e1d"),
+      import("./scrollback-helpers.mjs?v=4c47e1d"),
+      import("./daemon-control-model.mjs?v=4c47e1d"),
+      import("./composer-state.mjs?v=4c47e1d"),
+      import("./app-menu-state.mjs?v=4c47e1d"),
     ]);
   } catch (err) {
     setStatusBadge(`helpers import error: ${err.message}`, "error");
@@ -2682,6 +2745,10 @@ async function bootstrap() {
   }
 
   setStatusBadge(`signed in: ${activeAccount.username} (read-write)`, "ok");
+  const initialsEl = document.getElementById("app-menu-initials");
+  if (initialsEl && APP_MENU_STATE) {
+    initialsEl.textContent = APP_MENU_STATE.deriveInitials(activeAccount.name, activeAccount.username);
+  }
   if (connEl) connEl.textContent = "online";
 
   // SPEC task 12 (AC-008): fire-and-forget, does not block the rest of

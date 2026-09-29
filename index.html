@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-29 10:33 CEST 59b7d76 in config.json + app.js).
+  script (replaces 2026-09-29 11:12 CEST 4c47e1d in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,19 +45,53 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=59b7d76")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=4c47e1d")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=59b7d76" />
+  <link rel="stylesheet" href="./style.css?v=4c47e1d" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
-    <h1>Mobile cockpit</h1>
-    <span class="cockpit-status-badge" id="status-badge" data-status="unknown" aria-live="polite">
-      <!-- Filled by app.js: "signed in as ... (read-write)", "saving…", "saved", error messages. -->
-      booting…
-    </span>
+    <h1>Mobile Cockpit</h1>
+    <!-- SPEC-DELTA-2026-09-29-app-menu: account button (initials) + a red dot
+         when something needs attention; the panel holds what used to be the
+         header badge and the footer. Element ids unchanged. -->
+    <button type="button" id="btn-app-menu" class="cockpit-avatar-btn" aria-haspopup="true" aria-expanded="false" aria-controls="app-menu" aria-label="Account and status">
+      <span id="app-menu-initials" aria-hidden="true">?</span>
+      <span id="app-menu-alert-dot" class="cockpit-avatar-dot" hidden aria-hidden="true"></span>
+    </button>
+    <div id="app-menu" class="cockpit-app-menu" hidden>
+      <span class="cockpit-status-badge" id="status-badge" data-status="unknown" aria-live="polite">
+        <!-- Filled by app.js: "signed in as ... (read-write)", "saving…", "saved", error messages. -->
+        booting…
+      </span>
+      <div class="cockpit-app-menu-row"><span id="conn-state" aria-live="polite">offline</span></div>
+      <div class="cockpit-app-menu-row">
+        <span id="health-badge" data-state="unknown" aria-live="polite" hidden></span>
+      </div>
+      <!--
+        SPEC-DELTA-2026-09-27-daemon-control-watchdog: was always visible in
+        the footer; since SPEC-DELTA-2026-09-29-app-menu (Viktor's later ask)
+        it lives in the header account panel, and the account button's red
+        dot flags a stopped/errored daemon while the panel is closed.
+        app.js#renderDaemonControlBadge sets data-state (one of
+        running/stopped/error/unknown) + the visible text + the "checked Ns
+        ago" readout from the watchdog's own daemon-status.json. Start/Stop
+        buttons write a fresh requestId to daemon-control.json; Stop asks for
+        confirmation first when any v2 session is currently `running`
+        (app.js#handleDaemonStopClick) -- that confirmation is the ONLY gate,
+        the watchdog itself always does a hard kill (Viktor: "force stop
+        mehet").
+      -->
+      <small class="cockpit-daemon-control" id="daemon-control-strip">
+        <span id="daemon-control-badge" data-state="unknown" aria-live="polite">daemon: checking…</span>
+        <span id="daemon-control-checked-ago" aria-live="polite"></span>
+        <button type="button" id="btn-daemon-start" class="cockpit-btn cockpit-btn-small" hidden>Start</button>
+        <button type="button" id="btn-daemon-stop" class="cockpit-btn cockpit-btn-small" hidden>Stop</button>
+      </small>
+      <div class="cockpit-app-menu-row cockpit-app-menu-build">Build <span id="build-stamp" aria-label="Build timestamp">stamp-not-set</span></div>
+    </div>
   </header>
 
   <!--
@@ -473,39 +507,7 @@
 
   </main>
 
-  <footer class="cockpit-footer">
-    <small>
-      mobile-cockpit Stage A2 (read-write) —
-      <span id="build-stamp" aria-label="Build timestamp">stamp-not-set</span>
-      —
-      <span id="conn-state" aria-live="polite">offline</span>
-      —
-      <!-- SPEC task 12 (AC-008), wired 2026-09-25: GET .../cursor-cockpit/health.json
-           (same file the daemon publishes to via lib/health-store.mjs). Hidden
-           until the first successful load; app.js#loadHealth sets data-state
-           and the visible text, never more than one status at a time. -->
-      <span id="health-badge" data-state="unknown" aria-live="polite" hidden></span>
-    </small>
-    <!--
-      SPEC-DELTA-2026-09-27-daemon-control-watchdog: always-visible (no
-      extra taps -- Viktor's explicit ask), NOT gated behind the settings
-      sheet. app.js#renderDaemonControlBadge sets data-state (one of
-      running/stopped/error/unknown) + the visible text + the "checked Ns
-      ago" readout from the watchdog's own daemon-status.json. Start/Stop
-      buttons write a fresh requestId to daemon-control.json; Stop asks for
-      confirmation first when any v2 session is currently `running`
-      (app.js#handleDaemonStopClick) -- that confirmation is the ONLY gate,
-      the watchdog itself always does a hard kill (Viktor: "force stop
-      mehet").
-    -->
-    <small class="cockpit-daemon-control" id="daemon-control-strip">
-      <span id="daemon-control-badge" data-state="unknown" aria-live="polite">daemon: checking…</span>
-      <span id="daemon-control-checked-ago" aria-live="polite"></span>
-      <button type="button" id="btn-daemon-start" class="cockpit-btn cockpit-btn-small" hidden>Start</button>
-      <button type="button" id="btn-daemon-stop" class="cockpit-btn cockpit-btn-small" hidden>Stop</button>
-    </small>
-  </footer>
 
-  <script src="./app.js?v=59b7d76" defer></script>
+  <script src="./app.js?v=4c47e1d" defer></script>
 </body>
 </html>
