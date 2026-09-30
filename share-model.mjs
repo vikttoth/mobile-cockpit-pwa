@@ -197,6 +197,31 @@ export function setSharingEnabled(shares, { enabled, now }) {
   return { ...normalizeShares(shares), sharingEnabled: !!enabled, updatedAt: isoNow(now) };
 }
 
+/**
+ * Pause / resume ONE guest across every item (Live L2 findings 2026-09-30,
+ * "Shared by me" per-person switch). Like Stop all sharing, but for one
+ * person: their modes stay remembered, the relay treats them as Off.
+ */
+export function setGuestPaused(shares, { email, paused, now }) {
+  requireNow(now, "setGuestPaused");
+  const e = normalizeEmail(email);
+  const s = normalizeShares(shares);
+  const current = new Set(Array.isArray(s.pausedGuests) ? s.pausedGuests : []);
+  if (paused) current.add(e);
+  else current.delete(e);
+  return { ...s, pausedGuests: [...current].sort(), updatedAt: isoNow(now) };
+}
+
+export function isGuestPaused(shares, email) {
+  const list = normalizeShares(shares).pausedGuests;
+  if (!Array.isArray(list) || !list.length) return false;
+  try {
+    return list.includes(normalizeEmail(email));
+  } catch {
+    return false;
+  }
+}
+
 /** Host takes the wheel back (AC-158): the holder drops to Read. */
 export function takeBackControl(shares, { kind = "session", id, now }) {
   requireNow(now, "takeBackControl");
@@ -221,6 +246,7 @@ export function effectiveGuestMode(shares, kind, id, email) {
   } catch {
     return "off";
   }
+  if (isGuestPaused(s, e)) return "off";
   const it = findItem(s, kind, id);
   const g = it?.guests.find((x) => x.email === e);
   return g ? g.mode : "off";
@@ -230,12 +256,13 @@ export function effectiveGuestMode(shares, kind, id, email) {
 export function hostReadOnlyFor(shares, sessionId) {
   const s = normalizeShares(shares);
   if (!s.sharingEnabled) return false;
-  return !!findItem(s, "session", sessionId)?.control?.holder;
+  const holder = findItem(s, "session", sessionId)?.control?.holder;
+  return !!holder && !isGuestPaused(s, holder);
 }
 
 export function isAnyShareActive(shares) {
   const s = normalizeShares(shares);
-  return s.sharingEnabled && s.items.some((it) => it.guests.some((g) => g.mode !== "off"));
+  return s.sharingEnabled && s.items.some((it) => it.guests.some((g) => g.mode !== "off" && !isGuestPaused(s, g.email)));
 }
 
 /**
@@ -249,7 +276,7 @@ export function activeEntriesByGuest(shares) {
   if (!s.sharingEnabled) return out;
   for (const it of s.items) {
     for (const g of it.guests) {
-      if (g.mode === "off") continue;
+      if (g.mode === "off" || isGuestPaused(s, g.email)) continue;
       (out[g.email] ||= []).push({ kind: it.kind, id: it.id, title: it.title || null, mode: g.mode });
     }
   }

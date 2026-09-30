@@ -1322,3 +1322,80 @@ body[data-guest="true"] #daemon-control-strip,
 body[data-guest="true"] #health-badge {
   display: none !important;
 }
+
+/* Live L2 findings 2026-09-30 (SPEC-DELTA-2026-09-29-session-sharing-stage2):
+   guest chat uses the host chat's full-height column + bottom panel; the
+   RO / RW chip; the host "Shared by me" controls and per-person rows. */
+body[data-view="shared-detail"] .cockpit-header { display: none; }
+body[data-view="shared-detail"] main { padding: 0; }
+#view-shared-detail:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+}
+#view-shared-detail .v2-messages {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: var(--cp-gap);
+}
+#view-shared-detail .v2-bottom-panel .cockpit-hint { margin: 0 0 4px; }
+.guest-mode-chip {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--cp-border);
+  color: var(--cp-muted);
+}
+.guest-mode-chip[data-tone="rw"] {
+  background: var(--cp-success);
+  border-color: var(--cp-success);
+  color: #fff;
+}
+.shared-host-controls:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 8px;
+}
+.shared-person {
+  list-style: none;
+  border-bottom: 1px solid var(--cp-border);
+  padding: 6px 0;
+}
+.shared-person-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.shared-person-head .v2-share-who { flex: 1 1 auto; }
+.shared-person-items {
+  list-style: none;
+  margin: 6px 0 0 12px;
+  padding: 0;
+}
+.shared-person-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 4px 0;
+}
+.shared-person-item-title {
+  flex: 1 1 160px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cp-accent);
+  cursor: pointer;
+}
+.shared-person-switch { display: inline-flex; align-items: center; gap: 4px; font-size: 0.85rem; }

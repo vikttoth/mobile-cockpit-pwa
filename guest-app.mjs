@@ -183,7 +183,10 @@ export function startGuestMode(ctx) {
       empty.hidden = !(state.kind === "list" && state.text);
       empty.textContent = state.text || "";
     }
-    scheduleListPoll(state.kind === "waiting");
+    // Always keep the list fresh while it is on screen (Live L2 findings
+    // 2026-09-30: after Stop all sharing -> resume the item only reappeared
+    // on a manual refresh).
+    scheduleListPoll(true);
     if (state.kind !== "list") return;
     for (const item of state.items) {
       const li = document.createElement("li");
@@ -284,19 +287,32 @@ export function startGuestMode(ctx) {
     if (wasAtBottom) container.scrollTop = container.scrollHeight;
   }
 
+  function applyModeChip(chip) {
+    const el = $("shared-detail-mode-chip");
+    if (!el) return;
+    el.textContent = chip.label;
+    el.title = chip.title;
+    el.dataset.tone = chip.tone;
+  }
+
   function applyComposer() {
     const wrap = $("guest-composer");
     const isSession = openProjection && openProjection.kind === "session";
     if (wrap) wrap.hidden = !isSession;
     const banner = $("shared-detail-banner");
-    if (!openProjection) return;
+    if (!openProjection) {
+      applyModeChip(shareUi.deriveModeChip("off", false));
+      return;
+    }
     if (!isSession) {
       if (banner) banner.textContent = "Read-only — you can follow this tab live.";
+      applyModeChip(shareUi.deriveModeChip("read", false));
       return;
     }
     const textEl = $("guest-composer-text");
     const st = deriveGuestComposer({ projection: openProjection, guestEmail, text: textEl ? textEl.value : "", busy, composerState, shareUi });
     if (banner) banner.textContent = st.access.banner || "";
+    applyModeChip(shareUi.deriveModeChip(st.access.mode, st.access.canWrite));
     if (textEl) textEl.disabled = !st.access.canWrite;
     const set = (id, b) => {
       const el = $(id);
@@ -447,8 +463,9 @@ export function startGuestMode(ctx) {
     renderGuestItem,
     leaveItem,
     refreshOnce() {
-      if (document.body.dataset.view === "shared-detail" && openItem) renderGuestItem(openItem);
-      else if (document.body.dataset.view === "shared-list") renderGuestList();
+      if (document.body.dataset.view === "shared-detail" && openItem) return renderGuestItem(openItem);
+      if (document.body.dataset.view === "shared-list") return renderGuestList();
+      return Promise.resolve();
     },
   };
 }

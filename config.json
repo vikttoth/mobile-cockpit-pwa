@@ -58,7 +58,7 @@
     "relayStatusEndpoint": "/me/drive/root:/cursor-cockpit/share-relay-status.json",
     "guestRootFolder": "cursor-cockpit-guest",
     "guestPollIntervalSeconds": 5,
-    "shareLinkBase": "https://vikttoth.github.io/mobile-cockpit-pwa/"
+    "shareLinkBase": "https://mobile-cockpit-pwa-e681a6.gitlabe2-pages.ext.net.nokia.com/"
   },
   "ideTabs": {
     "_comment": "M2.1 read-only mirror of live Cursor IDE chat tabs, written by flows/mobile-cockpit/ide-mirror/poll.mjs. PWA fetches GET-only; ETag tracking is not required here. The relativePath MUST match IDE_TABS_RELATIVE_PATH in ide-mirror/poll.mjs (which derives from ONEDRIVE.folderName + 'ide-tabs.json'). pollIntervalSeconds is independent of pwa.pollIntervalSeconds so the lighter read-only path can refresh faster than the sessions list.",

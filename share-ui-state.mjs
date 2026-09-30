@@ -43,6 +43,7 @@ export function deriveShareRows({ shares, kind, id, relayStatus }) {
       mode: g.mode,
       modes: modes.map((m) => ({ id: m, label: MODE_LABELS[m], selected: m === g.mode })),
       isHolder: item.control?.holder === g.email,
+      paused: Array.isArray(shares?.pausedGuests) && shares.pausedGuests.includes(g.email),
       connection,
       connectionLabel:
         connection === "connected" ? "Connected" : connection === "waiting" ? "Waiting for Connect" : "",
@@ -65,7 +66,9 @@ export function deriveHostChatAccess({ shares, record }) {
   const items = Array.isArray(shares?.items) ? shares.items : [];
   const enabled = shares ? shares.sharingEnabled !== false : true;
   const item = record ? items.find((it) => it.kind === "session" && it.id === record.id) : null;
-  const holder = enabled ? item?.control?.holder || null : null;
+  const paused = Array.isArray(shares?.pausedGuests) ? shares.pausedGuests : [];
+  const rawHolder = enabled ? item?.control?.holder || null : null;
+  const holder = rawHolder && !paused.includes(rawHolder) ? rawHolder : null;
   if (holder) {
     return {
       readOnly: true,
@@ -110,4 +113,50 @@ export function deriveGuestChatAccess(projection, guestEmail) {
   if (mode === "control" && canWrite) banner = "You have control of this chat.";
   if (mode === "concurrent") banner = "Shared chat — you and the owner can both write.";
   return { mode, canWrite, banner };
+}
+
+const KIND_LABELS = Object.freeze({ session: "Chat", "cursor-tab": "Cursor tab", "claude-tab": "Claude Code" });
+
+/**
+ * "Shared by me" -> By person (Live L2 findings 2026-09-30): one entry per
+ * guest with their connection, pause state and every item shared with them.
+ */
+export function deriveSharesByPerson({ shares, relayStatus }) {
+  const items = Array.isArray(shares?.items) ? shares.items : [];
+  const paused = new Set(Array.isArray(shares?.pausedGuests) ? shares.pausedGuests : []);
+  const people = new Map();
+  for (const it of items) {
+    const modes = it.kind === "session" ? ["off", "read", "control", "concurrent"] : ["off", "read"];
+    for (const g of it.guests) {
+      if (!people.has(g.email)) {
+        const st = relayStatus?.guests?.[g.email] || null;
+        const connection = st ? (st.connected ? "connected" : "waiting") : "unknown";
+        people.set(g.email, {
+          email: g.email,
+          name: nameFromEmail(g.email),
+          paused: paused.has(g.email),
+          connection,
+          connectionLabel: connection === "connected" ? "Connected" : connection === "waiting" ? "Waiting for Connect" : "",
+          items: [],
+        });
+      }
+      people.get(g.email).items.push({
+        kind: it.kind,
+        kindLabel: KIND_LABELS[it.kind] || it.kind,
+        id: it.id,
+        title: it.title || "(untitled)",
+        mode: g.mode,
+        modes: modes.map((m) => ({ id: m, label: MODE_LABELS[m], selected: m === g.mode })),
+      });
+    }
+  }
+  return [...people.values()]
+    .map((p) => ({ ...p, itemCount: p.items.length, activeCount: p.paused ? 0 : p.items.filter((i) => i.mode !== "off").length }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** The small always-visible mode chip on a guest's chat view: RO or RW. */
+export function deriveModeChip(mode, canWrite) {
+  if (canWrite) return { label: "RW", title: mode === "control" ? "You have control (read-write)" : "Shared chat (read-write)", tone: "rw" };
+  return { label: "RO", title: "Read-only", tone: "ro" };
 }

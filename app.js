@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-29 21:24 CEST 0ebcb8d`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-29 21:24 CEST 0ebcb8d";
+// `2026-09-30 20:55 CEST b543b14`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-09-30 20:55 CEST b543b14";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -2714,22 +2714,175 @@ function showSharedDetailError(message) {
   el.hidden = false;
 }
 
-async function renderSharedList() {
-  if (GUEST_APP) return GUEST_APP.renderGuestList();
-  clearSharedListError();
-  const ul = document.getElementById("shared-session-list");
-  const empty = document.getElementById("shared-list-empty-state");
-  if (!ul || !empty || !SHARE_MODEL || !SHARE_UI) return;
-  await Promise.all([loadShares(), loadRelayStatus().catch(() => null)]);
-  sharesLoadedAt = Date.now();
-  const items = (cachedShares && cachedShares.items) || [];
-  ul.innerHTML = "";
-  empty.textContent = "Nothing shared yet. Open a chat or an IDE tab and use its Share panel.";
-  empty.hidden = items.length > 0;
-  if (cachedShares && cachedShares.sharingEnabled === false && items.length) {
-    empty.textContent = "Sharing is stopped for everyone. Resume it from any Share panel.";
-    empty.hidden = false;
+/**
+ * Spin a refresh button while `fn` runs (Live L2 findings 2026-09-30: the
+ * animation only ever existed on the removed v1 button and the IDE ones).
+ * Keeps spinning at least `minMs` so a fast refresh is still visible.
+ */
+async function withRefreshSpin(buttonId, fn, minMs = 500) {
+  const el = document.getElementById(buttonId);
+  const started = Date.now();
+  if (el) {
+    el.classList.add("cockpit-btn-refreshing");
+    el.setAttribute("aria-busy", "true");
   }
+  try {
+    return await fn();
+  } finally {
+    const left = minMs - (Date.now() - started);
+    if (left > 0) await sleepMs(left);
+    if (el) {
+      el.classList.remove("cockpit-btn-refreshing");
+      el.setAttribute("aria-busy", "false");
+    }
+  }
+}
+
+// "Shared by me" (host): By person (default) or By item, per-person pause
+// switch, per-item mode buttons and remove (Live L2 findings 2026-09-30).
+let sharedViewMode = "person";
+
+function openSharedItem(kind, id) {
+  if (kind === "session") {
+    setView("v2-detail", { sessionId: id });
+    return;
+  }
+  const source = kind === "claude-tab" ? "claude-code" : "cursor";
+  if (ideTrackerSource !== source) setIdeTrackerSource(source);
+  loadIdeTabs()
+    .then(() => setView("ide-tab-detail", { composerId: id }))
+    .catch((err) => showSharedListError(err.message));
+}
+
+async function runSharedListAction(fn) {
+  clearSharedListError();
+  try {
+    await fn();
+  } catch (err) {
+    showSharedListError(err.message);
+  }
+  await renderSharedList().catch((err) => showSharedListError(err.message));
+}
+
+function buildModeButtons(modes, onPick, ariaLabel) {
+  const seg = document.createElement("div");
+  seg.className = "v2-share-modes";
+  seg.setAttribute("role", "radiogroup");
+  seg.setAttribute("aria-label", ariaLabel);
+  for (const m of modes) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "v2-share-mode-btn";
+    btn.textContent = m.label;
+    btn.dataset.mode = m.id;
+    btn.setAttribute("role", "radio");
+    btn.setAttribute("aria-checked", String(m.selected));
+    if (!m.selected) {
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        onPick(m.id);
+      });
+    }
+    seg.appendChild(btn);
+  }
+  return seg;
+}
+
+function renderSharedByPerson(ul) {
+  const people = SHARE_UI.deriveSharesByPerson({ shares: cachedShares, relayStatus: cachedRelayStatus });
+  for (const p of people) {
+    const li = document.createElement("li");
+    li.className = "shared-person";
+    const head = document.createElement("div");
+    head.className = "shared-person-head";
+    head.tabIndex = 0;
+    head.setAttribute("aria-expanded", "false");
+    const who = document.createElement("div");
+    who.className = "v2-share-who";
+    const name = document.createElement("span");
+    name.className = "v2-share-name";
+    name.textContent = p.name;
+    name.title = p.email;
+    who.appendChild(name);
+    const meta = document.createElement("span");
+    meta.className = "v2-share-conn";
+    meta.dataset.state = p.paused ? "paused" : p.connection;
+    const countText = `${p.itemCount} item${p.itemCount === 1 ? "" : "s"}`;
+    meta.textContent = [p.paused ? "Paused" : p.connectionLabel, countText].filter(Boolean).join(" · ");
+    who.appendChild(meta);
+    head.appendChild(who);
+    const sw = document.createElement("label");
+    sw.className = "shared-person-switch";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = !p.paused;
+    box.setAttribute("aria-label", `Sharing with ${p.name}`);
+    box.addEventListener("change", () => {
+      runSharedListAction(() =>
+        mutateSharesPwa((s) => SHARE_MODEL.setGuestPaused(s, { email: p.email, paused: !box.checked, now: Date.now() })),
+      );
+    });
+    sw.appendChild(box);
+    sw.appendChild(document.createTextNode(p.paused ? "Off" : "On"));
+    sw.addEventListener("click", (ev) => ev.stopPropagation());
+    head.appendChild(sw);
+    li.appendChild(head);
+    const list = document.createElement("ul");
+    list.className = "shared-person-items";
+    list.hidden = true;
+    for (const it of p.items) {
+      const row = document.createElement("li");
+      row.className = "shared-person-item";
+      const title = document.createElement("span");
+      title.className = "shared-person-item-title";
+      title.textContent = `${it.kindLabel}: ${it.title}`;
+      title.addEventListener("click", () => openSharedItem(it.kind, it.id));
+      row.appendChild(title);
+      row.appendChild(
+        buildModeButtons(
+          it.modes,
+          (mode) => {
+            if (mode === "control" && !window.confirm(`Give ${p.name} control of this chat? Your own view becomes read-only until you take it back.`)) return;
+            runSharedListAction(() =>
+              mutateSharesPwa((s) => SHARE_MODEL.setGuestMode(s, { kind: it.kind, id: it.id, email: p.email, mode, now: Date.now() })),
+            );
+          },
+          `Access for ${p.name}`,
+        ),
+      );
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "cockpit-btn cockpit-btn-icon v2-share-remove";
+      del.textContent = "🗑";
+      del.setAttribute("aria-label", `Stop sharing ${it.title} with ${p.email}`);
+      del.addEventListener("click", () => {
+        if (!window.confirm(`Stop sharing "${it.title}" with ${p.email}?`)) return;
+        runSharedListAction(() =>
+          mutateSharesPwa((s) => SHARE_MODEL.removeGuest(s, { kind: it.kind, id: it.id, email: p.email, now: Date.now() })),
+        );
+      });
+      row.appendChild(del);
+      list.appendChild(row);
+    }
+    li.appendChild(list);
+    const toggle = () => {
+      list.hidden = !list.hidden;
+      head.setAttribute("aria-expanded", String(!list.hidden));
+    };
+    head.addEventListener("click", toggle);
+    head.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        toggle();
+      }
+    });
+    ul.appendChild(li);
+  }
+  return people.length;
+}
+
+function renderSharedByItem(ul) {
+  const items = (cachedShares && cachedShares.items) || [];
   const kindLabel = { session: "Chat", "cursor-tab": "Cursor tab", "claude-tab": "Claude Code" };
   for (const item of items) {
     const li = document.createElement("li");
@@ -2742,28 +2895,47 @@ async function renderSharedList() {
     const meta = document.createElement("span");
     meta.className = "cockpit-row-meta";
     meta.textContent = SHARE_UI.deriveShareRows({ shares: cachedShares, kind: item.kind, id: item.id, relayStatus: cachedRelayStatus })
-      .map((r) => `${r.name} · ${SHARE_UI.MODE_LABELS[r.mode]}${r.connectionLabel ? ` (${r.connectionLabel})` : ""}`)
+      .map((r) => `${r.name} · ${r.paused ? "Paused" : SHARE_UI.MODE_LABELS[r.mode]}${r.connectionLabel ? ` (${r.connectionLabel})` : ""}`)
       .join(", ");
     li.appendChild(meta);
-    const open = () => {
-      if (item.kind === "session") {
-        setView("v2-detail", { sessionId: item.id });
-        return;
-      }
-      const source = item.kind === "claude-tab" ? "claude-code" : "cursor";
-      if (ideTrackerSource !== source) setIdeTrackerSource(source);
-      loadIdeTabs()
-        .then(() => setView("ide-tab-detail", { composerId: item.id }))
-        .catch((err) => showSharedListError(err.message));
-    };
-    li.addEventListener("click", open);
+    li.addEventListener("click", () => openSharedItem(item.kind, item.id));
     li.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" || ev.key === " ") {
         ev.preventDefault();
-        open();
+        openSharedItem(item.kind, item.id);
       }
     });
     ul.appendChild(li);
+  }
+  return items.length;
+}
+
+async function renderSharedList() {
+  if (GUEST_APP) return GUEST_APP.renderGuestList();
+  clearSharedListError();
+  const ul = document.getElementById("shared-session-list");
+  const empty = document.getElementById("shared-list-empty-state");
+  if (!ul || !empty || !SHARE_MODEL || !SHARE_UI) return;
+  await Promise.all([loadShares(), loadRelayStatus().catch(() => null)]);
+  sharesLoadedAt = Date.now();
+  const controls = document.getElementById("shared-host-controls");
+  if (controls) controls.hidden = false;
+  for (const btn of document.querySelectorAll("#shared-view-toggle [data-shared-view]")) {
+    btn.setAttribute("aria-checked", String(btn.dataset.sharedView === sharedViewMode));
+  }
+  const stopAll = document.getElementById("btn-shared-stop-all");
+  if (stopAll) {
+    const st = SHARE_UI.deriveStopAllState(cachedShares);
+    stopAll.textContent = st.label;
+    stopAll.dataset.stopped = String(st.stopped);
+  }
+  ul.innerHTML = "";
+  const count = sharedViewMode === "person" ? renderSharedByPerson(ul) : renderSharedByItem(ul);
+  empty.textContent = "Nothing shared yet. Open a chat or an IDE tab and use its Share panel.";
+  empty.hidden = count > 0;
+  if (cachedShares && cachedShares.sharingEnabled === false && count) {
+    empty.textContent = "Sharing is stopped for everyone. Tap “Sharing is stopped — resume” to turn it back on.";
+    empty.hidden = false;
   }
 }
 
@@ -2888,17 +3060,17 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI] = await Promise.all([
-      import("./write-helpers.mjs?v=0ebcb8d"),
-      import("./ide-helpers.mjs?v=0ebcb8d"),
-      import("./refresh-helpers.mjs?v=0ebcb8d"),
-      import("./transcript-model.mjs?v=0ebcb8d"),
-      import("./scrollback-helpers.mjs?v=0ebcb8d"),
-      import("./daemon-control-model.mjs?v=0ebcb8d"),
-      import("./composer-state.mjs?v=0ebcb8d"),
-      import("./app-menu-state.mjs?v=0ebcb8d"),
-      import("./graph-backoff.mjs?v=0ebcb8d"),
-      import("./share-model.mjs?v=0ebcb8d"),
-      import("./share-ui-state.mjs?v=0ebcb8d"),
+      import("./write-helpers.mjs?v=b543b14"),
+      import("./ide-helpers.mjs?v=b543b14"),
+      import("./refresh-helpers.mjs?v=b543b14"),
+      import("./transcript-model.mjs?v=b543b14"),
+      import("./scrollback-helpers.mjs?v=b543b14"),
+      import("./daemon-control-model.mjs?v=b543b14"),
+      import("./composer-state.mjs?v=b543b14"),
+      import("./app-menu-state.mjs?v=b543b14"),
+      import("./graph-backoff.mjs?v=b543b14"),
+      import("./share-model.mjs?v=b543b14"),
+      import("./share-ui-state.mjs?v=b543b14"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -2929,7 +3101,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=0ebcb8d");
+      const guestModule = await import("./guest-app.mjs?v=b543b14");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
@@ -2945,6 +3117,7 @@ async function bootstrap() {
         setStatusBadge,
         translateErrorMessage,
         populateModelSelect,
+        withRefreshSpin,
       });
     } catch (err) {
       setStatusBadge(`guest mode error: ${err.message}`, "error");
@@ -2954,7 +3127,13 @@ async function bootstrap() {
       back.addEventListener("click", () => setView(back.dataset.targetView || "shared-list"));
     }
     const btnSharedRefreshGuest = document.getElementById("btn-shared-refresh");
-    if (btnSharedRefreshGuest) btnSharedRefreshGuest.addEventListener("click", () => GUEST_APP.renderGuestList());
+    if (btnSharedRefreshGuest) {
+      btnSharedRefreshGuest.addEventListener("click", () => withRefreshSpin("btn-shared-refresh", () => GUEST_APP.renderGuestList()));
+    }
+    const btnSharedDetailRefreshGuest = document.getElementById("btn-shared-detail-refresh");
+    if (btnSharedDetailRefreshGuest) {
+      btnSharedDetailRefreshGuest.addEventListener("click", () => withRefreshSpin("btn-shared-detail-refresh", () => GUEST_APP.refreshOnce()));
+    }
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) GUEST_APP.refreshOnce();
     });
@@ -3040,20 +3219,35 @@ async function bootstrap() {
   const btnV2Refresh = document.getElementById("btn-v2-refresh");
   if (btnV2Refresh) {
     btnV2Refresh.addEventListener("click", () => {
-      renderV2List().catch((err) => showV2ListError(err.message));
+      withRefreshSpin("btn-v2-refresh", () => renderV2List()).catch((err) => showV2ListError(err.message));
     });
   }
   const btnSharedRefresh = document.getElementById("btn-shared-refresh");
   if (btnSharedRefresh) {
     btnSharedRefresh.addEventListener("click", () => {
+      withRefreshSpin("btn-shared-refresh", () => renderSharedList()).catch((err) => showSharedListError(err.message));
+    });
+  }
+  for (const btn of document.querySelectorAll("#shared-view-toggle [data-shared-view]")) {
+    btn.addEventListener("click", () => {
+      sharedViewMode = btn.dataset.sharedView === "item" ? "item" : "person";
       renderSharedList().catch((err) => showSharedListError(err.message));
+    });
+  }
+  const btnSharedStopAll = document.getElementById("btn-shared-stop-all");
+  if (btnSharedStopAll) {
+    btnSharedStopAll.addEventListener("click", () => {
+      handleShareStopAllClick()
+        .then(() => renderSharedList())
+        .catch((err) => showSharedListError(err.message));
     });
   }
   const btnV2DetailRefresh = document.getElementById("btn-v2-detail-refresh");
   if (btnV2DetailRefresh) {
     btnV2DetailRefresh.addEventListener("click", () => {
       if (activeV2DetailSessionId) {
-        renderV2Detail(activeV2DetailSessionId).catch((err) => showV2DetailError(err.message));
+        const id = activeV2DetailSessionId;
+        withRefreshSpin("btn-v2-detail-refresh", () => renderV2Detail(id)).catch((err) => showV2DetailError(err.message));
       }
     });
   }

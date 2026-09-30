@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-29 21:24 CEST 0ebcb8d in config.json + app.js).
+  script (replaces 2026-09-30 20:55 CEST b543b14 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,11 +45,11 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=0ebcb8d")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=b543b14")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=0ebcb8d" />
+  <link rel="stylesheet" href="./style.css?v=b543b14" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
@@ -513,6 +513,15 @@
         <h2 id="shared-list-heading" class="cockpit-list-heading">Shared by me</h2>
         <button type="button" id="btn-shared-refresh" class="cockpit-btn" aria-label="Refresh shared items">↻</button>
       </div>
+      <!-- Host only (Live L2 findings 2026-09-30): By person / By item summary
+           switch and the global Stop all sharing. app.js#renderSharedList. -->
+      <div id="shared-host-controls" class="shared-host-controls" hidden>
+        <div id="shared-view-toggle" class="v2-share-modes" role="radiogroup" aria-label="Group shared items">
+          <button type="button" class="v2-share-mode-btn" role="radio" data-shared-view="person" aria-checked="true">By person</button>
+          <button type="button" class="v2-share-mode-btn" role="radio" data-shared-view="item" aria-checked="false">By item</button>
+        </div>
+        <button type="button" id="btn-shared-stop-all" class="cockpit-btn cockpit-btn-danger v2-share-stop-all">Stop all sharing</button>
+      </div>
       <div id="guest-connect-card" class="guest-connect-card" hidden>
         <p id="guest-connect-text">…</p>
         <button type="button" id="btn-guest-connect" class="cockpit-btn cockpit-btn-primary">Connect</button>
@@ -535,41 +544,48 @@
       nothing. IDE tabs never get a composer (AC-160).
     -->
     <section id="view-shared-detail" class="cockpit-view" data-view-id="shared-detail" hidden>
-      <div class="cockpit-detail-header">
-        <button type="button" class="cockpit-back-btn" data-target-view="shared-list" aria-label="Back to shared items">← Back</button>
-        <h2 id="shared-detail-title" class="v2-detail-title-inline">…</h2>
-      </div>
-      <p id="shared-detail-banner" class="cockpit-hint">Shared with you.</p>
       <div id="shared-messages" class="v2-messages" role="log" aria-live="polite">
         <!-- Populated by guest-app.mjs#renderGuestItem(). -->
       </div>
-      <div id="guest-composer" class="guest-composer" hidden>
-        <div class="v2-settings-row-pair">
-          <label class="v2-inline-control">Model <select id="guest-model-select" disabled></select></label>
-          <label class="v2-inline-control">Mode
-            <select id="guest-mode-select" disabled>
-              <option value="agent">agent</option>
-              <option value="plan">plan</option>
-              <option value="ask">ask</option>
-            </select>
-          </label>
-        </div>
-        <div class="v2-composer">
-          <textarea id="guest-composer-text" class="v2-composer-text" rows="1" placeholder="Message" aria-label="Message" disabled></textarea>
-          <div class="v2-composer-actions">
-            <button type="button" id="btn-guest-stop" class="cockpit-btn v2-composer-btn v2-btn-stop" disabled aria-label="Stop" title="Stop the running turn">■</button>
-            <button type="button" id="btn-guest-force" class="cockpit-btn v2-composer-btn v2-btn-force" disabled aria-label="Force" title="Stop the running turn and send this now">⚡</button>
-            <button type="button" id="btn-guest-send" class="cockpit-btn v2-composer-btn v2-btn-send" disabled aria-label="Send" title="Send">➜</button>
+      <!-- Same bottom-docked layout as the host chat (Live L2 findings
+           2026-09-30): banner, composer, then the header row with Back, the
+           title, the always-visible RO / RW mode chip and a refresh button. -->
+      <div class="v2-bottom-panel">
+        <p id="shared-detail-banner" class="cockpit-hint">Shared with you.</p>
+        <div id="guest-composer" class="guest-composer" hidden>
+          <div class="v2-settings-row-pair">
+            <label class="v2-inline-control">Model <select id="guest-model-select" disabled></select></label>
+            <label class="v2-inline-control">Mode
+              <select id="guest-mode-select" disabled>
+                <option value="agent">agent</option>
+                <option value="plan">plan</option>
+                <option value="ask">ask</option>
+              </select>
+            </label>
           </div>
+          <div class="v2-composer">
+            <textarea id="guest-composer-text" class="v2-composer-text" rows="1" placeholder="Message" aria-label="Message" disabled></textarea>
+            <div class="v2-composer-actions">
+              <button type="button" id="btn-guest-stop" class="cockpit-btn v2-composer-btn v2-btn-stop" disabled aria-label="Stop" title="Stop the running turn">■</button>
+              <button type="button" id="btn-guest-force" class="cockpit-btn v2-composer-btn v2-btn-force" disabled aria-label="Force" title="Stop the running turn and send this now">⚡</button>
+              <button type="button" id="btn-guest-send" class="cockpit-btn v2-composer-btn v2-btn-send" disabled aria-label="Send" title="Send">➜</button>
+            </div>
+          </div>
+          <p id="guest-composer-note" class="cockpit-hint" hidden></p>
         </div>
-        <p id="guest-composer-note" class="cockpit-hint" hidden></p>
+        <p id="shared-detail-error-state" class="cockpit-error" hidden role="alert"></p>
+        <div class="cockpit-detail-header">
+          <button type="button" class="cockpit-back-btn" data-target-view="shared-list" aria-label="Back to shared items">← Back</button>
+          <h2 id="shared-detail-title" class="v2-detail-title-inline">…</h2>
+          <span id="shared-detail-mode-chip" class="guest-mode-chip" data-tone="ro" title="Read-only">RO</span>
+          <button type="button" id="btn-shared-detail-refresh" class="cockpit-btn" aria-label="Refresh shared item">↻</button>
+        </div>
       </div>
-      <p id="shared-detail-error-state" class="cockpit-error" hidden role="alert"></p>
     </section>
 
   </main>
 
 
-  <script src="./app.js?v=0ebcb8d" defer></script>
+  <script src="./app.js?v=b543b14" defer></script>
 </body>
 </html>
