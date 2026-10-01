@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-09-30 20:55 CEST b543b14 in config.json + app.js).
+  script (replaces 2026-10-01 11:08 CEST 234b9b8 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,11 +45,11 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=b543b14")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=234b9b8")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=b543b14" />
+  <link rel="stylesheet" href="./style.css?v=234b9b8" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
@@ -83,12 +83,23 @@
         (app.js#handleDaemonStopClick) -- that confirmation is the ONLY gate,
         the watchdog itself always does a hard kill (Viktor: "force stop
         mehet").
+
+        SPEC-DELTA-2026-10-01-health-visibility-and-manual-self-heal: a
+        Repair button shown exactly when state is error/unknown (the two
+        states that otherwise leave neither Start nor Stop visible --
+        currently no actionable button at all). Writes a
+        repair:wsl-restart request, which the watchdog recipe turns into a
+        hard `wsl --shutdown` + stack resume (see that SPEC-DELTA and
+        scripts/cockpit-control-watchdog.sh). More disruptive than Stop (it
+        restarts the whole WSL VM, not just the daemon), so it ALWAYS
+        confirms first, unlike Stop's running-sessions-only confirm.
       -->
       <small class="cockpit-daemon-control" id="daemon-control-strip">
         <span id="daemon-control-badge" data-state="unknown" aria-live="polite">daemon: checking…</span>
         <span id="daemon-control-checked-ago" aria-live="polite"></span>
         <button type="button" id="btn-daemon-start" class="cockpit-btn cockpit-btn-small" hidden>Start</button>
         <button type="button" id="btn-daemon-stop" class="cockpit-btn cockpit-btn-small" hidden>Stop</button>
+        <button type="button" id="btn-daemon-repair" class="cockpit-btn cockpit-btn-small" hidden>Repair</button>
       </small>
       <div class="cockpit-app-menu-row cockpit-app-menu-build">Build <span id="build-stamp" aria-label="Build timestamp">stamp-not-set</span></div>
     </div>
@@ -586,6 +597,6 @@
   </main>
 
 
-  <script src="./app.js?v=b543b14" defer></script>
+  <script src="./app.js?v=234b9b8" defer></script>
 </body>
 </html>

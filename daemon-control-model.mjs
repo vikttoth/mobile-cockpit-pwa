@@ -20,7 +20,9 @@
 export const DAEMON_CONTROL_SCHEMA_VERSION = 1;
 export const DAEMON_STATUS_SCHEMA_VERSION = 1;
 
-/** @typedef {'start'|'stop'} DaemonControlAction */
+/** @typedef {'start'|'stop'|'repair:wsl-restart'} DaemonControlAction */
+
+const VALID_ACTIONS = ["start", "stop", "repair:wsl-restart"];
 
 /**
  * Build the JSON the PWA writes to `daemon-control.json`.
@@ -32,9 +34,9 @@ export const DAEMON_STATUS_SCHEMA_VERSION = 1;
  */
 export function buildControlRequest(opts) {
   const { action, requestId, nowIso } = opts || {};
-  if (action !== "start" && action !== "stop") {
+  if (!VALID_ACTIONS.includes(action)) {
     throw new Error(
-      `buildControlRequest: action must be "start" or "stop", got ${JSON.stringify(action)}`,
+      `buildControlRequest: action must be one of ${VALID_ACTIONS.join(", ")}, got ${JSON.stringify(action)}`,
     );
   }
   if (typeof requestId !== "string" || !requestId.trim()) {
@@ -64,7 +66,7 @@ export function buildControlRequest(opts) {
 export function parseDaemonControl(raw) {
   if (!raw || typeof raw !== "object") return null;
   const o = /** @type {Record<string, unknown>} */ (raw);
-  if (o.action !== "start" && o.action !== "stop") return null;
+  if (!VALID_ACTIONS.includes(/** @type {string} */ (o.action))) return null;
   if (typeof o.requestId !== "string" || !o.requestId) return null;
   return {
     schemaVersion: typeof o.schemaVersion === "number" ? o.schemaVersion : DAEMON_CONTROL_SCHEMA_VERSION,

@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-09-30 20:55 CEST b543b14`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-09-30 20:55 CEST b543b14";
+// `2026-10-01 11:08 CEST 234b9b8`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-01 11:08 CEST 234b9b8";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -2557,6 +2557,7 @@ function renderDaemonControlBadge(status) {
   const agoEl = document.getElementById("daemon-control-checked-ago");
   const startBtn = document.getElementById("btn-daemon-start");
   const stopBtn = document.getElementById("btn-daemon-stop");
+  const repairBtn = document.getElementById("btn-daemon-repair");
   if (!badgeEl || !DAEMON_CONTROL_MODEL) return;
 
   const nowMs = Date.now();
@@ -2589,6 +2590,12 @@ function renderDaemonControlBadge(status) {
   // avoid.
   if (startBtn) startBtn.hidden = state !== "stopped";
   if (stopBtn) stopBtn.hidden = state !== "running";
+  // SPEC-DELTA-2026-10-01-health-visibility-and-manual-self-heal: the one
+  // case Start/Stop deliberately leave with no button at all -- give the
+  // host something to actually try. Both "error" (a prior action failed)
+  // and "unknown" (the watchdog itself hasn't reported in -- the exact
+  // symptom of a wedged WSL, SPEC.md's motivating incident) are covered.
+  if (repairBtn) repairBtn.hidden = state !== "error" && state !== "unknown";
 }
 
 /** Fetches the watchdog-published daemon-status.json and renders it.
@@ -2678,11 +2685,35 @@ async function handleDaemonStopClick() {
   }
 }
 
+/** SPEC-DELTA-2026-10-01-health-visibility-and-manual-self-heal: restarts
+ *  the whole WSL VM (`wsl --shutdown`), not just the daemon -- strictly
+ *  more disruptive than Stop, so this ALWAYS confirms first, regardless of
+ *  whether any v2 session looks "running" (a wedged watchdog can't even
+ *  report that reliably, which is exactly why this button exists). */
+async function handleDaemonRepairClick() {
+  if (daemonControlRequestInFlight) return;
+  daemonControlRequestInFlight = true;
+  try {
+    const proceed = window.confirm(
+      "This restarts your WSL environment entirely, interrupting anything else running there too. Continue?",
+    );
+    if (!proceed) return;
+    await writeDaemonControlRequest("repair:wsl-restart");
+    setTimeout(loadDaemonControlStatus, 1500);
+  } catch (err) {
+    window.alert(`Failed to send repair request: ${err.message}`);
+  } finally {
+    daemonControlRequestInFlight = false;
+  }
+}
+
 function wireDaemonControlButtons() {
   const startBtn = document.getElementById("btn-daemon-start");
   const stopBtn = document.getElementById("btn-daemon-stop");
+  const repairBtn = document.getElementById("btn-daemon-repair");
   if (startBtn) startBtn.addEventListener("click", handleDaemonStartClick);
   if (stopBtn) stopBtn.addEventListener("click", handleDaemonStopClick);
+  if (repairBtn) repairBtn.addEventListener("click", handleDaemonRepairClick);
 }
 
 // =============================================================================
@@ -3060,17 +3091,17 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI] = await Promise.all([
-      import("./write-helpers.mjs?v=b543b14"),
-      import("./ide-helpers.mjs?v=b543b14"),
-      import("./refresh-helpers.mjs?v=b543b14"),
-      import("./transcript-model.mjs?v=b543b14"),
-      import("./scrollback-helpers.mjs?v=b543b14"),
-      import("./daemon-control-model.mjs?v=b543b14"),
-      import("./composer-state.mjs?v=b543b14"),
-      import("./app-menu-state.mjs?v=b543b14"),
-      import("./graph-backoff.mjs?v=b543b14"),
-      import("./share-model.mjs?v=b543b14"),
-      import("./share-ui-state.mjs?v=b543b14"),
+      import("./write-helpers.mjs?v=234b9b8"),
+      import("./ide-helpers.mjs?v=234b9b8"),
+      import("./refresh-helpers.mjs?v=234b9b8"),
+      import("./transcript-model.mjs?v=234b9b8"),
+      import("./scrollback-helpers.mjs?v=234b9b8"),
+      import("./daemon-control-model.mjs?v=234b9b8"),
+      import("./composer-state.mjs?v=234b9b8"),
+      import("./app-menu-state.mjs?v=234b9b8"),
+      import("./graph-backoff.mjs?v=234b9b8"),
+      import("./share-model.mjs?v=234b9b8"),
+      import("./share-ui-state.mjs?v=234b9b8"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -3101,7 +3132,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=b543b14");
+      const guestModule = await import("./guest-app.mjs?v=234b9b8");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
