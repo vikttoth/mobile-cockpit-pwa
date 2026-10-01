@@ -25,6 +25,27 @@ export function isGuestAccount(accountUpn, hostUpn) {
 }
 
 /**
+ * One guest's connection state from share-relay-status.json, shared by
+ * deriveShareRows and deriveSharesByPerson so the two views never drift
+ * apart on what counts as a real error (SPEC-DELTA-2026-10-01-health-
+ * visibility-and-manual-self-heal, AC-186): "waiting for the guest to tap
+ * Connect" is the relay's own benign not-connected-yet signal, any OTHER
+ * error string is a real problem and must show as ERR.
+ * @param {{connected?: boolean, error?: string|null}|null} st
+ */
+function deriveGuestConnection(st) {
+  let connection = "unknown";
+  if (st) {
+    if (st.connected) connection = "connected";
+    else if (!st.error || st.error === "waiting for the guest to tap Connect") connection = "waiting";
+    else connection = "error";
+  }
+  const connectionLabel =
+    connection === "connected" ? "Connected" : connection === "waiting" ? "Waiting for Connect" : connection === "error" ? "ERR" : "";
+  return { connection, connectionLabel };
+}
+
+/**
  * Rows for one item's Share panel.
  * @param {{shares: object|null, kind: string, id: string, relayStatus?: object|null}} input
  */
@@ -35,8 +56,6 @@ export function deriveShareRows({ shares, kind, id, relayStatus }) {
   if (!item) return [];
   return item.guests.map((g) => {
     const st = relayStatus?.guests?.[g.email] || null;
-    let connection = "unknown";
-    if (st) connection = st.connected ? "connected" : "waiting";
     return {
       email: g.email,
       name: nameFromEmail(g.email),
@@ -44,9 +63,7 @@ export function deriveShareRows({ shares, kind, id, relayStatus }) {
       modes: modes.map((m) => ({ id: m, label: MODE_LABELS[m], selected: m === g.mode })),
       isHolder: item.control?.holder === g.email,
       paused: Array.isArray(shares?.pausedGuests) && shares.pausedGuests.includes(g.email),
-      connection,
-      connectionLabel:
-        connection === "connected" ? "Connected" : connection === "waiting" ? "Waiting for Connect" : "",
+      ...deriveGuestConnection(st),
     };
   });
 }
@@ -130,13 +147,11 @@ export function deriveSharesByPerson({ shares, relayStatus }) {
     for (const g of it.guests) {
       if (!people.has(g.email)) {
         const st = relayStatus?.guests?.[g.email] || null;
-        const connection = st ? (st.connected ? "connected" : "waiting") : "unknown";
         people.set(g.email, {
           email: g.email,
           name: nameFromEmail(g.email),
           paused: paused.has(g.email),
-          connection,
-          connectionLabel: connection === "connected" ? "Connected" : connection === "waiting" ? "Waiting for Connect" : "",
+          ...deriveGuestConnection(st),
           items: [],
         });
       }

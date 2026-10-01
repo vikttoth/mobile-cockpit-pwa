@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-01 13:32 CEST 3153ad4`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-01 13:32 CEST 3153ad4";
+// `2026-10-01 13:40 CEST aa35c5e`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-01 13:40 CEST aa35c5e";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1803,10 +1803,18 @@ function renderSharePanel(target) {
     name.title = row.email;
     who.appendChild(name);
     if (row.connectionLabel) {
-      const conn = document.createElement("span");
+      // SPEC-DELTA-2026-10-01-health-visibility-and-manual-self-heal
+      // (AC-186/AC-187): an ERR state is tappable and opens the same
+      // diagnostics sheet the VT-menu entry point uses -- every ERR
+      // anywhere in the app opens one shared view, not a one-off.
+      const conn = document.createElement(row.connection === "error" ? "button" : "span");
       conn.className = "v2-share-conn";
       conn.dataset.state = row.connection;
       conn.textContent = row.connectionLabel;
+      if (row.connection === "error") {
+        conn.type = "button";
+        conn.addEventListener("click", () => openDiagnosticsSheet());
+      }
       who.appendChild(conn);
     }
     li.appendChild(who);
@@ -3198,18 +3206,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=3153ad4"),
-      import("./ide-helpers.mjs?v=3153ad4"),
-      import("./refresh-helpers.mjs?v=3153ad4"),
-      import("./transcript-model.mjs?v=3153ad4"),
-      import("./scrollback-helpers.mjs?v=3153ad4"),
-      import("./daemon-control-model.mjs?v=3153ad4"),
-      import("./composer-state.mjs?v=3153ad4"),
-      import("./app-menu-state.mjs?v=3153ad4"),
-      import("./graph-backoff.mjs?v=3153ad4"),
-      import("./share-model.mjs?v=3153ad4"),
-      import("./share-ui-state.mjs?v=3153ad4"),
-      import("./cockpit-health-model.mjs?v=3153ad4"),
+      import("./write-helpers.mjs?v=aa35c5e"),
+      import("./ide-helpers.mjs?v=aa35c5e"),
+      import("./refresh-helpers.mjs?v=aa35c5e"),
+      import("./transcript-model.mjs?v=aa35c5e"),
+      import("./scrollback-helpers.mjs?v=aa35c5e"),
+      import("./daemon-control-model.mjs?v=aa35c5e"),
+      import("./composer-state.mjs?v=aa35c5e"),
+      import("./app-menu-state.mjs?v=aa35c5e"),
+      import("./graph-backoff.mjs?v=aa35c5e"),
+      import("./share-model.mjs?v=aa35c5e"),
+      import("./share-ui-state.mjs?v=aa35c5e"),
+      import("./cockpit-health-model.mjs?v=aa35c5e"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -3240,7 +3248,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=3153ad4");
+      const guestModule = await import("./guest-app.mjs?v=aa35c5e");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,

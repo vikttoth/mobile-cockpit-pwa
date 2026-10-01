@@ -1257,9 +1257,16 @@ body[data-view="v2-detail"] main {
 .v2-share-conn {
   font-size: 0.8rem;
   color: var(--cp-muted);
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
 }
 .v2-share-conn[data-state="connected"] { color: var(--cp-success); }
 .v2-share-conn[data-state="waiting"] { color: var(--cp-warning); }
+/* SPEC-DELTA-2026-10-01-health-visibility-and-manual-self-heal: ERR is a
+   real button (opens the diagnostics sheet), underlined as a tap hint. */
+.v2-share-conn[data-state="error"] { color: var(--cp-error); font-weight: 600; text-decoration: underline; cursor: pointer; }
 .v2-share-modes {
   display: inline-flex;
   border: 1px solid var(--cp-border);

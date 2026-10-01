@@ -41,4 +41,4 @@ node scripts/publish-pwa-github-api.mjs --execute             # GitHub Pages (RE
 
 ## Build stamp
 
-`2026-10-01 13:32 CEST 3153ad4`
+`2026-10-01 13:40 CEST aa35c5e`
