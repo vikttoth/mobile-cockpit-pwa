@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-01 11:08 CEST 234b9b8`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-01 11:08 CEST 234b9b8";
+// `2026-10-01 13:32 CEST 3153ad4`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-01 13:32 CEST 3153ad4";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -68,6 +68,11 @@ let REFRESH_HELPERS = null;
  *  mirror of ../lib/daemon-control-model.mjs (see
  *  pwa-daemon-control-coherence.sh). */
 let DAEMON_CONTROL_MODEL = null;
+
+/** Dynamically imported pure helpers for the global diagnostics panel
+ *  (SPEC-DELTA-2026-10-01-health-visibility-and-manual-self-heal) --
+ *  byte-for-byte mirror of ../lib/cockpit-health-model.mjs. */
+let COCKPIT_HEALTH_MODEL = null;
 
 /** Pure helpers for the v2 composer buttons + status chip
  *  (SPEC-DELTA-2026-09-29-composer-contextual-buttons). */
@@ -2516,16 +2521,23 @@ function renderHealthBadge(status) {
   el.hidden = status.state === "ok";
 }
 
+/** Last-loaded health.json, cached for the diagnostics panel
+ *  (SPEC-DELTA-2026-10-01-health-visibility-and-manual-self-heal) -- same
+ *  idea as cachedRelayStatus/cachedShares below. */
+let cachedHealthStatus = null;
+
 /** Fetches the daemon-published health status and renders it. Never throws. */
 async function loadHealth() {
   if (!CONFIG.health) return;
   try {
     const { json } = await loadJson(CONFIG.health.endpoint);
+    cachedHealthStatus = json;
     renderHealthBadge(json);
   } catch {
     // Read-only, best-effort -- a failed fetch just leaves the badge as it
     // was (or hidden, if it never loaded), same "don't crash the rest of
     // the app over a secondary signal" posture as the IDE-tabs mirror.
+    cachedHealthStatus = null;
   }
 }
 
@@ -2598,14 +2610,20 @@ function renderDaemonControlBadge(status) {
   if (repairBtn) repairBtn.hidden = state !== "error" && state !== "unknown";
 }
 
+/** Last-loaded daemon-status.json, cached for the diagnostics panel
+ *  (SPEC-DELTA-2026-10-01-health-visibility-and-manual-self-heal). */
+let cachedDaemonStatus = null;
+
 /** Fetches the watchdog-published daemon-status.json and renders it.
  *  Never throws (same best-effort posture as loadHealth). */
 async function loadDaemonControlStatus() {
   if (!CONFIG || !CONFIG.daemonControl) return;
   try {
     const { json } = await loadJson(CONFIG.daemonControl.statusEndpoint);
+    cachedDaemonStatus = json;
     renderDaemonControlBadge(json);
   } catch {
+    cachedDaemonStatus = null;
     renderDaemonControlBadge(null);
   }
 }
@@ -2714,6 +2732,95 @@ function wireDaemonControlButtons() {
   if (startBtn) startBtn.addEventListener("click", handleDaemonStartClick);
   if (stopBtn) stopBtn.addEventListener("click", handleDaemonStopClick);
   if (repairBtn) repairBtn.addEventListener("click", handleDaemonRepairClick);
+}
+
+// =============================================================================
+// 7c-3. Global diagnostics panel (SPEC-DELTA-2026-10-01-health-visibility-
+//        and-manual-self-heal)
+// =============================================================================
+//
+// One place to see every monitored check, not just the daemon-control strip
+// above -- auth (health.json), daemon (daemon-status.json), the sharing
+// relay and each active guest's connection (share-relay-status.json +
+// shares.json). All severity/likely-cause/root-cause logic lives in
+// cockpit-health-model.mjs#buildHealthItems; this only renders whatever
+// that returns.
+
+const DIAGNOSTICS_SEVERITY_LABEL = { ok: "OK", degraded: "Degraded", error: "Error", unknown: "Unknown" };
+
+/** Renders the full health-item list into #diagnostics-list. Never throws
+ *  (same best-effort posture as the other render* functions here). */
+function renderDiagnosticsList() {
+  const list = document.getElementById("diagnostics-list");
+  if (!list || !COCKPIT_HEALTH_MODEL) return;
+  const items = COCKPIT_HEALTH_MODEL.buildHealthItems({
+    health: cachedHealthStatus,
+    daemonStatus: cachedDaemonStatus,
+    relayStatus: cachedRelayStatus,
+    shares: cachedShares,
+    nowMs: Date.now(),
+  });
+  const labelById = Object.fromEntries(items.map((it) => [it.id, it.label]));
+
+  list.innerHTML = "";
+  for (const item of items) {
+    const row = document.createElement("div");
+    row.className = "v2-settings-row";
+    const label = document.createElement("span");
+    label.className = "v2-settings-row-label";
+    label.textContent = item.label;
+    const badge = document.createElement("span");
+    badge.className = "v2-status-chip";
+    badge.dataset.tone = item.severity;
+    badge.textContent = DIAGNOSTICS_SEVERITY_LABEL[item.severity] || item.severity;
+    row.append(label, badge);
+    list.appendChild(row);
+
+    const hintText = item.rootCause
+      ? `Likely cause: see "${labelById[item.rootCause.id] || item.rootCause.id}" above`
+      : item.reason || (item.likelyCauses && item.likelyCauses.join(" ")) || "";
+    if (hintText) {
+      const hint = document.createElement("div");
+      hint.className = "diagnostics-item-hint";
+      hint.textContent = hintText;
+      list.appendChild(hint);
+    }
+  }
+}
+
+/** Opens the sheet and refreshes everything it shows -- health/daemon-status
+ *  are already kept fresh by their own always-on polling loops, but
+ *  shares/relay status are only ever refreshed lazily from views that need
+ *  them (refreshSharesIfStale), which this panel otherwise never visits. */
+async function openDiagnosticsSheet() {
+  const sheet = document.getElementById("diagnostics-sheet");
+  if (!sheet) return;
+  sheet.hidden = false;
+  try {
+    await refreshSharesIfStale(0);
+  } catch {
+    // Best-effort -- render with whatever is already cached rather than
+    // leaving the panel blank over a secondary signal's fetch failure.
+  }
+  renderDiagnosticsList();
+}
+
+function closeDiagnosticsSheet() {
+  const sheet = document.getElementById("diagnostics-sheet");
+  if (sheet) sheet.hidden = true;
+}
+
+function wireDiagnosticsButton() {
+  const btn = document.getElementById("btn-open-diagnostics");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    const sheet = document.getElementById("diagnostics-sheet");
+    if (sheet && !sheet.hidden) {
+      closeDiagnosticsSheet();
+    } else {
+      openDiagnosticsSheet();
+    }
+  });
 }
 
 // =============================================================================
@@ -3090,18 +3197,19 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     let GRAPH_BACKOFF_HELPERS;
-    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI] = await Promise.all([
-      import("./write-helpers.mjs?v=234b9b8"),
-      import("./ide-helpers.mjs?v=234b9b8"),
-      import("./refresh-helpers.mjs?v=234b9b8"),
-      import("./transcript-model.mjs?v=234b9b8"),
-      import("./scrollback-helpers.mjs?v=234b9b8"),
-      import("./daemon-control-model.mjs?v=234b9b8"),
-      import("./composer-state.mjs?v=234b9b8"),
-      import("./app-menu-state.mjs?v=234b9b8"),
-      import("./graph-backoff.mjs?v=234b9b8"),
-      import("./share-model.mjs?v=234b9b8"),
-      import("./share-ui-state.mjs?v=234b9b8"),
+    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
+      import("./write-helpers.mjs?v=3153ad4"),
+      import("./ide-helpers.mjs?v=3153ad4"),
+      import("./refresh-helpers.mjs?v=3153ad4"),
+      import("./transcript-model.mjs?v=3153ad4"),
+      import("./scrollback-helpers.mjs?v=3153ad4"),
+      import("./daemon-control-model.mjs?v=3153ad4"),
+      import("./composer-state.mjs?v=3153ad4"),
+      import("./app-menu-state.mjs?v=3153ad4"),
+      import("./graph-backoff.mjs?v=3153ad4"),
+      import("./share-model.mjs?v=3153ad4"),
+      import("./share-ui-state.mjs?v=3153ad4"),
+      import("./cockpit-health-model.mjs?v=3153ad4"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -3132,7 +3240,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=234b9b8");
+      const guestModule = await import("./guest-app.mjs?v=3153ad4");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
@@ -3193,6 +3301,7 @@ async function bootstrap() {
     setInterval(() => { if (!document.hidden) loadDaemonControlStatus(); }, CONFIG.daemonControl.pollIntervalSeconds * 1000);
   }
   wireDaemonControlButtons();
+  wireDiagnosticsButton();
   // AC-132: timers skip ticks while hidden, so coming back refreshes once
   // right away instead of showing up-to-a-poll-interval-old data.
   document.addEventListener("visibilitychange", () => {

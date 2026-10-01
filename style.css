@@ -1064,6 +1064,15 @@ body[data-view="shared-detail"] .cockpit-mode-toggle {
 .v2-status-chip[data-tone="running"] { color: var(--cp-accent); border-color: var(--cp-accent); }
 .v2-status-chip[data-tone="ok"] { color: var(--cp-success); border-color: var(--cp-success); }
 .v2-status-chip[data-tone="error"] { color: var(--cp-error); border-color: var(--cp-error); }
+/* SPEC-DELTA-2026-10-01-health-visibility-and-manual-self-heal: diagnostics
+   panel severities reuse this same chip rather than inventing a new one. */
+.v2-status-chip[data-tone="degraded"] { color: var(--cp-warning); border-color: var(--cp-warning); }
+.v2-status-chip[data-tone="unknown"] { color: var(--cp-muted); border-color: var(--cp-muted); }
+.diagnostics-item-hint {
+  margin: 0 0 var(--cp-gap) 0;
+  color: var(--cp-muted);
+  font-size: 0.8rem;
+}
 .v2-composer-mode-select {
   padding: 6px 8px;
   border-radius: var(--cp-radius);

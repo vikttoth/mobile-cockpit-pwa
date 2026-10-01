@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-10-01 11:08 CEST 234b9b8 in config.json + app.js).
+  script (replaces 2026-10-01 13:32 CEST 3153ad4 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,11 +45,11 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=234b9b8")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=3153ad4")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=234b9b8" />
+  <link rel="stylesheet" href="./style.css?v=3153ad4" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
@@ -101,6 +101,25 @@
         <button type="button" id="btn-daemon-stop" class="cockpit-btn cockpit-btn-small" hidden>Stop</button>
         <button type="button" id="btn-daemon-repair" class="cockpit-btn cockpit-btn-small" hidden>Repair</button>
       </small>
+      <!--
+        SPEC-DELTA-2026-10-01-health-visibility-and-manual-self-heal: one
+        place to see every monitored check (auth, daemon, sharing relay,
+        per-guest relay connection), not just the daemon-control strip
+        above. Reuses the existing #v2-settings-sheet styling (same class)
+        so it looks like the rest of the app, not a new visual language.
+        app.js#renderDiagnosticsList calls cockpit-health-model.mjs's
+        buildHealthItems -- all severity/likely-cause logic lives there,
+        this markup only renders whatever that returns.
+      -->
+      <div class="cockpit-app-menu-row">
+        <button type="button" id="btn-open-diagnostics" class="cockpit-btn cockpit-btn-small">Diagnostics</button>
+      </div>
+      <div id="diagnostics-sheet" class="v2-settings-sheet" hidden>
+        <section class="v2-settings-section">
+          <h3 class="v2-settings-section-title">Diagnostics</h3>
+          <div id="diagnostics-list"></div>
+        </section>
+      </div>
       <div class="cockpit-app-menu-row cockpit-app-menu-build">Build <span id="build-stamp" aria-label="Build timestamp">stamp-not-set</span></div>
     </div>
   </header>
@@ -597,6 +616,6 @@
   </main>
 
 
-  <script src="./app.js?v=234b9b8" defer></script>
+  <script src="./app.js?v=3153ad4" defer></script>
 </body>
 </html>
