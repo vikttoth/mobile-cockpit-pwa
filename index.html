@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-10-01 13:40 CEST aa35c5e in config.json + app.js).
+  script (replaces 2026-10-07 16:19 CEST 841bcc3 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,15 +45,20 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=aa35c5e")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=841bcc3")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=aa35c5e" />
+  <link rel="stylesheet" href="./style.css?v=841bcc3" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
     <h1>Mobile Cockpit</h1>
+    <!-- SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md: pins this
+         window always-on-top (daemon/lib/window-pin.mjs, local-only --
+         no-ops silently off the laptop, e.g. on the phone). Auto-pinned
+         once at bootstrap too; this button is for re-pinning/unpinning. -->
+    <button type="button" id="btn-pin-topmost" class="cockpit-pin-btn" aria-pressed="false" title="Pin this window always on top">&#128204;</button>
     <!-- SPEC-DELTA-2026-09-29-app-menu: account button (initials) + a red dot
          when something needs attention; the panel holds what used to be the
          header badge and the footer. Element ids unchanged. -->
@@ -146,9 +151,37 @@
             title="Sessions someone else shared with you, read-only (SPEC-DELTA-2026-09-25-session-sharing-stage1)">Shared</button>
     <button type="button" id="btn-mode-ide-tabs" class="cockpit-mode-btn"
             role="tab" data-target-view="ide-tabs">IDE Tracker</button>
+    <!-- SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md: a
+         dedicated, chrome-free grouped view -- see #view-tracker below and
+         body[data-view="tracker"] in style.css (hides header + this nav). -->
+    <button type="button" id="btn-mode-tracker" class="cockpit-mode-btn"
+            role="tab" data-target-view="tracker"
+            title="Grouped session tracker: Claude Code (Active group) + Cursor (GUI + CLI) + Copilot browser tabs, one compact list">Tracker</button>
   </nav>
 
   <main>
+    <!--
+      Tracker view: chrome-free, grouped session rows only (Claude Code
+      Active-group + Cursor GUI+CLI + Copilot browser tabs). No title, no
+      nav, no per-source switcher -- just an exit icon back to the normal
+      cockpit and the rows themselves, to fit as much as possible in a small
+      pinned desktop window.
+    -->
+    <section id="view-tracker" class="cockpit-view" data-view-id="tracker" hidden>
+      <div class="cockpit-tracker-topbar">
+        <button type="button" id="btn-tracker-exit" class="cockpit-tracker-exit-btn cockpit-back-btn"
+                data-target-view="v2-list" aria-label="Back to cockpit">&#8592;</button>
+        <span id="tracker-summary" class="cockpit-tracker-summary" aria-live="polite"></span>
+      </div>
+      <div id="tracker-groups">
+        <!-- Populated by app.js#renderTrackerView() with one <section> per
+             source (Claude Code / Cursor / Copilot), each a <ul> of
+             cockpit-session-row rows carrying a status-colored badge. -->
+      </div>
+      <p id="tracker-empty-state" class="cockpit-empty" hidden>Nothing to show yet.</p>
+      <p id="tracker-error-state" class="cockpit-error" hidden role="alert"></p>
+    </section>
+
     <!--
       View 4: IDE tabs list (read-only mirror, v2).
       Mirror of live Cursor IDE chat tabs from cursor-cockpit/ide-tabs.json
@@ -170,6 +203,11 @@
                 role="tab" data-ide-tracker-source="cursor" aria-current="true">Cursor</button>
         <button type="button" id="btn-ide-tracker-claude-code" class="cockpit-ide-tracker-btn"
                 role="tab" data-ide-tracker-source="claude-code">Claude Code</button>
+        <!-- SPEC-DELTA-2026-10-07-browser-tab-copilot-mirror.md: a flat list
+             (no Open/Archive toggle, no detail view -- see app.js#renderIdeTabsList's
+             own branch for this source) rather than a 3rd full sub-view. -->
+        <button type="button" id="btn-ide-tracker-browser" class="cockpit-ide-tracker-btn"
+                role="tab" data-ide-tracker-source="browser">Browser</button>
       </nav>
       <nav class="cockpit-ide-list-toggle" role="tablist" aria-label="IDE tab list">
         <button type="button" id="btn-ide-list-open" class="cockpit-ide-list-btn"
@@ -192,13 +230,20 @@
                <span class="cockpit-row-title">…</span>
                <span class="cockpit-row-status" data-waiting-on="…">…</span>
                <time class="cockpit-row-time" datetime="…">…</time>
+               <button class="cockpit-row-info" aria-label="Show summary">ⓘ</button>  (only when tab.summary present)
              </li>
+             Row click/tap: if tab.link is present, opens it (new tab) instead of the
+             in-app detail view -- SPEC-DELTA-2026-10-06-ide-tracker-summary-and-open-link.md.
         -->
       </ul>
       <p id="ide-tabs-empty-state" class="cockpit-empty" hidden>
         No IDE tabs in this list yet.
       </p>
       <p id="ide-tabs-error-state" class="cockpit-error" hidden role="alert"></p>
+      <!-- SPEC-DELTA-2026-10-06-ide-tracker-summary-and-open-link.md: one shared,
+           fixed-size popover (repositioned/repopulated per row), not one DOM node
+           per row -- same "single shared sheet" pattern as #v2-settings-sheet. -->
+      <div id="ide-row-summary-popover" class="cockpit-row-summary-popover" hidden role="status"></div>
     </section>
 
     <!--
@@ -616,6 +661,6 @@
   </main>
 
 
-  <script src="./app.js?v=aa35c5e" defer></script>
+  <script src="./app.js?v=841bcc3" defer></script>
 </body>
 </html>

@@ -33,6 +33,12 @@
     "endpoint": "/me/drive/root:/cursor-cockpit/claude-code-tabs.json",
     "pollIntervalSeconds": 20
   },
+  "browserTabs": {
+    "_comment": "SPEC-DELTA-2026-10-07-browser-tab-copilot-mirror.md. Read-only mirror of Copilot/Cowork browser tabs, written by flows/mobile-cockpit/browser-tab-mirror/poll.mjs. Own schema (no thread/waitingOn -- there is no transcript, just title + best-effort url). relativePath MUST match BROWSER_TABS_RELATIVE_PATH in browser-tab-mirror/poll.mjs.",
+    "relativePath": "cursor-cockpit/browser-tabs.json",
+    "endpoint": "/me/drive/root:/cursor-cockpit/browser-tabs.json",
+    "pollIntervalSeconds": 30
+  },
   "health": {
     "_comment": "SPEC task 12 (AC-008), wired 2026-09-25. relativePath MUST match HEALTH_RELATIVE_PATH in lib/config.mjs. Coherence enforced by pwa-config-coherence.sh.",
     "relativePath": "cursor-cockpit/health.json",

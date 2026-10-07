@@ -362,6 +362,18 @@ body[data-view="shared-detail"] .cockpit-mode-toggle {
 /* List rows are already styled by .cockpit-session-row (reused from sessions);
    IDE-tabs view uses the same DOM class so tap targets / spacing stay
    identical. Add minimal row-internal layout that matches sessions: */
+/* SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md (AC-216):
+   Viktor's pinned desktop companion window is small (~640x600) and
+   mouse-driven -- the 44px touch-target rows and rem-based type below are
+   correct for the phone PWA (real touch targets there) but waste most of a
+   window this size. Scoped to hover+fine-pointer so the phone experience is
+   byte-for-byte unchanged. */
+@media (hover: hover) and (pointer: fine) {
+  :root { --cp-gap: 8px; }
+  html { font-size: 11px; }
+  .cockpit-session-row { padding: 3px var(--cp-gap); min-height: auto; }
+}
+
 .cockpit-session-row {
   display: grid;
   /* 4th/5th columns are a no-op for rows with only 3 children (IDE tabs /
@@ -393,6 +405,24 @@ body[data-view="shared-detail"] .cockpit-mode-toggle {
   min-height: 32px;
   padding: 4px 10px;
   font-size: 0.8rem;
+}
+/* SPEC-DELTA-2026-10-06-ide-tracker-summary-and-open-link: info affordance that
+   reveals the fixed-size summary popover (AC-197) -- deliberately NOT the row's
+   main click target (that opens the real tool/tab when a link exists, AC-198). */
+.cockpit-row-info {
+  min-height: 32px;
+  min-width: 32px;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--cp-muted);
+  background: transparent;
+  border: 1px solid transparent;
+}
+.cockpit-row-info:hover,
+.cockpit-row-info:focus {
+  color: var(--cp-fg);
+  border-color: var(--cp-border);
 }
 
 /* Active/Archive section headings above each grouped list (item D). */
@@ -1229,6 +1259,96 @@ body[data-view="v2-detail"] main {
 .cockpit-app-menu .cockpit-status-badge { font-size: 0.9rem; color: var(--cp-fg); word-break: break-all; }
 .cockpit-app-menu .cockpit-daemon-control { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .cockpit-app-menu-build { color: var(--cp-muted); font-size: 0.8rem; }
+
+/* SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md */
+.cockpit-pin-btn {
+  min-height: 32px;
+  min-width: 32px;
+  padding: 0;
+  font-size: 1rem;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--cp-muted);
+}
+.cockpit-pin-btn[aria-pressed="true"] {
+  color: var(--cp-accent);
+  border-color: var(--cp-accent);
+}
+
+/* Tracker view: chrome-free, grouped rows only -- the whole point is
+   maximizing usable rows in a small pinned window (AC-217). */
+body[data-view="tracker"] .cockpit-header,
+body[data-view="tracker"] .cockpit-mode-toggle {
+  display: none;
+}
+.cockpit-tracker-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--cp-gap);
+  padding: 6px var(--cp-gap);
+  border-bottom: 1px solid var(--cp-border);
+}
+.cockpit-tracker-exit-btn {
+  min-height: 32px;
+  min-width: 32px;
+  padding: 0;
+  font-size: 1.1rem;
+  background: transparent;
+  border: 1px solid var(--cp-border);
+}
+.cockpit-tracker-summary { font-size: 0.85rem; color: var(--cp-muted); }
+.cockpit-tracker-group-title {
+  margin: 0;
+  padding: 4px var(--cp-gap) 2px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cp-muted);
+}
+/* Per-row status dot -- AC-221: running / waiting-on-you / idle-done, no
+   4th "problem" color (no real error signal exists to key off yet). */
+.cockpit-row-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.cockpit-row-status-dot[data-status="agent"] { background: var(--cp-accent); }
+.cockpit-row-status-dot[data-status="user"] { background: var(--cp-warning); }
+.cockpit-row-status-dot[data-status="none"] { background: var(--cp-success); }
+.cockpit-row-status-dot[data-status="problem"] { background: var(--cp-error); }
+.cockpit-row-source-badge {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--cp-border);
+  color: var(--cp-muted);
+  white-space: nowrap;
+}
+
+/* SPEC-DELTA-2026-10-06-ide-tracker-summary-and-open-link (AC-197): one
+   shared, FIXED-size popover (viewport-positioned via JS next to whichever
+   row's info button triggered it) -- deliberately not an auto-sized native
+   tooltip, per Viktor's explicit ask. */
+.cockpit-row-summary-popover {
+  position: fixed;
+  z-index: 150;
+  width: 280px;
+  max-width: calc(100vw - 2 * var(--cp-gap));
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--cp-border);
+  border-radius: var(--cp-radius);
+  background: var(--cp-bg);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  font-size: 0.85rem;
+  line-height: 1.35;
+  color: var(--cp-fg);
+}
+.cockpit-row-summary-popover[hidden] { display: none; }
 
 /* ---------------------------------------------------------------------------
    Session sharing Stage 2 (SPEC-DELTA-2026-09-29-session-sharing-stage2)

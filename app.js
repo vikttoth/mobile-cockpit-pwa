@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-01 13:40 CEST aa35c5e`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-01 13:40 CEST aa35c5e";
+// `2026-10-07 16:19 CEST 841bcc3`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-07 16:19 CEST 841bcc3";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -302,28 +302,32 @@ async function graphFetch(path, init = {}, opts = {}) {
  * If-None-Match (so we always see the latest write, eTag churn doesn't
  * matter here).
  */
-async function loadIdeTabs() {
-  const configKey = ideTrackerSource === "claude-code" ? "claudeCodeTabs" : "ideTabs";
+/**
+ * SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md: extracted out
+ * of loadIdeTabs() so the Tracker view can fetch all three IDE-mirror
+ * endpoints independently, without touching the single-source-at-a-time
+ * cachedIdeSnapshot/ideTrackerSource globals the Cursor/Claude Code/Browser
+ * sub-views depend on.
+ */
+async function fetchSnapshotByConfigKey(configKey) {
   const endpoint = CONFIG && CONFIG[configKey] && CONFIG[configKey].endpoint;
   if (!endpoint) {
     throw new Error(`config.${configKey}.endpoint missing -- update pwa/config.json`);
   }
   const contentRes = await graphFetch(`${endpoint}:/content`);
   if (contentRes.status === 404) {
-    const stub = {
-      schemaVersion: 1,
-      snapshotAt: null,
-      workspaceKey: null,
-      workspacePath: null,
-      tabs: [],
-    };
-    cachedIdeSnapshot = stub;
-    return stub;
+    return { schemaVersion: 1, snapshotAt: null, workspaceKey: null, workspacePath: null, tabs: [] };
   }
   if (!contentRes.ok) {
-    throw new Error(`ide-tabs.json GET failed: ${contentRes.status} ${contentRes.statusText}`);
+    throw new Error(`${configKey} GET failed: ${contentRes.status} ${contentRes.statusText}`);
   }
-  const snapshot = await contentRes.json();
+  return contentRes.json();
+}
+
+async function loadIdeTabs() {
+  const configKey =
+    ideTrackerSource === "claude-code" ? "claudeCodeTabs" : ideTrackerSource === "browser" ? "browserTabs" : "ideTabs";
+  const snapshot = await fetchSnapshotByConfigKey(configKey);
   cachedIdeSnapshot = snapshot;
   return snapshot;
 }
@@ -889,6 +893,8 @@ function setView(viewId, payload) {
     renderSharedList().catch((err) => showSharedListError(err.message));
   } else if (viewId === "shared-detail" && payload && payload.kind && payload.id) {
     renderSharedDetail(payload).catch((err) => showSharedDetailError(err.message));
+  } else if (viewId === "tracker") {
+    renderTrackerView().catch((err) => showTrackerError(err.message));
   }
   // Drop the cached composer ID when navigating away from the IDE detail
   // view so a stale value can't accidentally target the wrong tab on the
@@ -1112,14 +1118,22 @@ function syncIdeTrackerSourceToggle() {
 }
 
 function setIdeTrackerSource(source) {
-  if (source !== "cursor" && source !== "claude-code") return;
+  if (source !== "cursor" && source !== "claude-code" && source !== "browser") return;
   if (source === ideTrackerSource) return;
   ideTrackerSource = source;
   syncIdeTrackerSourceToggle();
+  // SPEC-DELTA-2026-10-07-browser-tab-copilot-mirror.md: no Open/Archive
+  // concept for browser tabs -- there's no transcript, just whatever is
+  // currently open. Hide the toggle rather than leaving a no-op control.
+  const openHistoryToggle = document.getElementById("btn-ide-list-open")?.closest("nav");
+  if (openHistoryToggle) openHistoryToggle.hidden = source === "browser";
   renderIdeTabsList().catch((err) => showIdeTabsError(err.message));
 }
 
 async function renderIdeTabsList() {
+  if (ideTrackerSource === "browser") {
+    return renderBrowserTabsList();
+  }
   if (!IDE_HELPERS) {
     showIdeTabsError("ide-helpers module not loaded yet (bootstrap order bug)");
     return;
@@ -1216,11 +1230,28 @@ async function renderIdeTabsList() {
     li.className = "cockpit-session-row";
     li.dataset.composerId = t.composerId || "";
     li.tabIndex = 0;
-    li.addEventListener("click", () => setView("ide-tab-detail", { composerId: t.composerId }));
+    // SPEC-DELTA-2026-10-06-ide-tracker-summary-and-open-link.md (AC-198/AC-199):
+    // a row with a known deep link (today: claude-code-mirror only) jumps straight
+    // to the real tool + real session instead of the cockpit's own read-only
+    // preview. A row with no link (Cursor, today) first tries the local,
+    // on-demand UI-Automation activation (SPEC-DELTA-2026-10-07-cursor-tab-
+    // activate-via-ui-automation.md) -- only succeeds when physically at the
+    // laptop with the daemon's local server running -- and falls back to
+    // today's in-app preview otherwise.
+    const hasLink = typeof t.link === "string" && t.link.length > 0;
+    const activateRow = async () => {
+      if (hasLink) {
+        window.open(t.link, "_blank", "noopener");
+        return;
+      }
+      const activated = await tryActivateCursorTab(t.title);
+      if (!activated) setView("ide-tab-detail", { composerId: t.composerId });
+    };
+    li.addEventListener("click", activateRow);
     li.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" || ev.key === " ") {
         ev.preventDefault();
-        setView("ide-tab-detail", { composerId: t.composerId });
+        activateRow();
       }
     });
 
@@ -1242,6 +1273,463 @@ async function renderIdeTabsList() {
     if (t.lastActivityAt) time.dateTime = t.lastActivityAt;
     time.textContent = IDE_HELPERS.relativeIdeTime(t.lastActivityAt, Date.now());
     li.appendChild(time);
+
+    // AC-197: plain-language summary, shown in a fixed-size popover on hover
+    // (desktop) or tap (touch) of this info affordance -- not a native tooltip.
+    if (typeof t.summary === "string" && t.summary.length > 0) {
+      const info = document.createElement("button");
+      info.type = "button";
+      info.className = "cockpit-row-info";
+      info.setAttribute("aria-label", "Show summary");
+      info.textContent = "ⓘ"; // circled small "i"
+      info.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        toggleIdeRowSummaryPopover(info, t.summary);
+      });
+      info.addEventListener("mouseenter", () => showIdeRowSummaryPopover(info, t.summary));
+      info.addEventListener("mouseleave", () => hideIdeRowSummaryPopover());
+      li.appendChild(info);
+    }
+
+    ul.appendChild(li);
+  }
+}
+
+// SPEC-DELTA-2026-10-07-cursor-tab-activate-via-ui-automation.md: the daemon's
+// local control surface (daemon/poll.mjs#LOCAL_SERVER_PORT -- keep this port
+// in lockstep with that constant, same cross-file-comment convention as
+// CLAUDE_CODE_TABS_RELATIVE_PATH elsewhere in this flow). Reached directly by
+// fetch() regardless of which origin served this page -- modern browsers
+// exempt 127.0.0.1 from mixed-content blocking, and local-server.mjs answers
+// CORS for this PWA's own known hosted origins.
+const CURSOR_ACTIVATE_URL = "http://127.0.0.1:4127/api/cursor-tabs/activate";
+const CURSOR_ACTIVATE_TIMEOUT_MS = 500;
+
+/**
+ * Best-effort, fast-failing: true only when the daemon's local server is up
+ * AND found exactly one live Cursor tab matching `title`. Any failure
+ * (daemon not running, not at the laptop, ambiguous/not-found match) resolves
+ * to false quickly via the short timeout, so the caller can fall back to the
+ * in-app preview without a visible hang.
+ */
+async function tryActivateCursorTab(title) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CURSOR_ACTIVATE_TIMEOUT_MS);
+    let res;
+    try {
+      res = await fetch(CURSOR_ACTIVATE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.status === "activated";
+  } catch {
+    return false;
+  }
+}
+
+// SPEC-DELTA-2026-10-07-browser-tab-copilot-mirror.md: same local on-demand
+// activation shape as tryActivateCursorTab, pointed at the Browser (Copilot/
+// Cowork) activation endpoint.
+const BROWSER_ACTIVATE_URL = "http://127.0.0.1:4127/api/browser-tabs/activate";
+
+async function tryActivateBrowserTab(title) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CURSOR_ACTIVATE_TIMEOUT_MS);
+    let res;
+    try {
+      res = await fetch(BROWSER_ACTIVATE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.status === "activated";
+  } catch {
+    return false;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Window pin (SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md).
+// Same local-only, silent-off-the-laptop shape as tryActivateCursorTab/
+// tryActivateBrowserTab.
+// -----------------------------------------------------------------------------
+
+const WINDOW_PIN_URL = "http://127.0.0.1:4127/api/window/pin";
+
+async function tryToggleWindowPin(desired) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CURSOR_ACTIVATE_TIMEOUT_MS);
+    let res;
+    try {
+      res = await fetch(WINDOW_PIN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ desired }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
+function syncPinButton(pinned) {
+  const btn = document.getElementById("btn-pin-topmost");
+  if (btn) btn.setAttribute("aria-pressed", pinned ? "true" : "false");
+}
+
+// -----------------------------------------------------------------------------
+// Tracker view (SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md):
+// a dedicated, chrome-free view with THREE SEPARATE groups (Viktor asked for
+// grouped, not one interleaved/sorted list) -- Claude Code (sidebar "Active"
+// group only), Cursor (ide-mirror GUI tabs + non-archived v2/CLI sessions),
+// Copilot (every browser-tab-mirror entry, unfiltered).
+// -----------------------------------------------------------------------------
+
+function showTrackerError(message) {
+  const el = document.getElementById("tracker-error-state");
+  if (el) {
+    el.hidden = false;
+    el.textContent = message;
+  }
+}
+
+/**
+ * v2 session `status` -> the same {agent, user, none} vocabulary the IDE
+ * mirrors' `waitingOn` uses, PLUS a genuine "problem" kind for `"failed"` --
+ * a real signal v2 sessions carry (unlike the IDE mirrors, which have no
+ * error/failure field at all, so they never get a fabricated 4th state).
+ */
+function v2StatusToTrackerStatus(status) {
+  if (status === "running") return { statusKind: "agent", statusLabel: "running" };
+  if (status === "pending") return { statusKind: "user", statusLabel: "waiting on you" };
+  if (status === "failed") return { statusKind: "problem", statusLabel: "problem" };
+  if (status === "done" || status === "stopped") return { statusKind: "none", statusLabel: "done" };
+  return { statusKind: null, statusLabel: status || "" };
+}
+
+function appendTrackerGroup(container, label, rows, onActivate) {
+  const title = document.createElement("h2");
+  title.className = "cockpit-tracker-group-title";
+  title.textContent = `${label} (${rows.length})`;
+  container.appendChild(title);
+
+  const ul = document.createElement("ul");
+  ul.className = "cockpit-session-list";
+  if (rows.length === 0) {
+    const li = document.createElement("li");
+    li.className = "cockpit-hint";
+    li.textContent = "Nothing open.";
+    ul.appendChild(li);
+  }
+  for (const row of rows) {
+    const li = document.createElement("li");
+    li.className = "cockpit-session-row";
+    li.tabIndex = 0;
+    li.addEventListener("click", () => onActivate(row));
+    li.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        onActivate(row);
+      }
+    });
+
+    if (row.statusKind) {
+      const dot = document.createElement("span");
+      dot.className = "cockpit-row-status-dot";
+      dot.dataset.status = row.statusKind;
+      dot.title = row.statusLabel || "";
+      li.appendChild(dot);
+    }
+
+    const titleEl = document.createElement("span");
+    titleEl.className = "cockpit-row-title";
+    titleEl.textContent = IDE_HELPERS.formatTabTitle(row.title, 50);
+    li.appendChild(titleEl);
+
+    if (row.lastActivityAt) {
+      const time = document.createElement("time");
+      time.className = "cockpit-row-time";
+      time.dateTime = row.lastActivityAt;
+      time.textContent = IDE_HELPERS.relativeIdeTime(row.lastActivityAt, Date.now());
+      li.appendChild(time);
+    }
+
+    ul.appendChild(li);
+  }
+  container.appendChild(ul);
+}
+
+async function renderTrackerView() {
+  const groupsEl = document.getElementById("tracker-groups");
+  const empty = document.getElementById("tracker-empty-state");
+  const errorEl = document.getElementById("tracker-error-state");
+  const summaryEl = document.getElementById("tracker-summary");
+  if (!groupsEl || !empty || !errorEl || !IDE_HELPERS) return;
+  errorEl.hidden = true;
+  errorEl.textContent = "";
+
+  let claudeSnap, cursorSnap, browserSnap, v2IndexResult;
+  try {
+    [claudeSnap, cursorSnap, browserSnap, v2IndexResult] = await Promise.all([
+      fetchSnapshotByConfigKey("claudeCodeTabs"),
+      fetchSnapshotByConfigKey("ideTabs"),
+      fetchSnapshotByConfigKey("browserTabs"),
+      loadV2Index().catch(() => ({ index: { sessions: [] } })),
+    ]);
+  } catch (err) {
+    showTrackerError(err.message);
+    return;
+  }
+
+  // AC-218: Active-group filter, not the recency-window open set.
+  const activeIds = new Set(Array.isArray(claudeSnap.activeGroupComposerIds) ? claudeSnap.activeGroupComposerIds : []);
+  const claudeRows = [...(claudeSnap.openTabs || []), ...(claudeSnap.historyTabs || [])]
+    .filter((t) => activeIds.has(t.composerId))
+    .map((t) => ({
+      title: t.title,
+      lastActivityAt: t.lastActivityAt,
+      composerId: t.composerId,
+      link: t.link || null,
+      statusKind: IDE_HELPERS.isEmptyIdeTab(t) ? "none" : t.waitingOn || "none",
+      statusLabel: IDE_HELPERS.ideTabStatusLabel(t),
+    }));
+
+  // AC-219: ide-mirror's own open GUI tabs...
+  const cursorGuiRows = (cursorSnap.openTabs || []).map((t) => ({
+    title: t.title,
+    lastActivityAt: t.lastActivityAt,
+    composerId: t.composerId,
+    statusKind: IDE_HELPERS.isEmptyIdeTab(t) ? "none" : t.waitingOn || "none",
+    statusLabel: IDE_HELPERS.ideTabStatusLabel(t),
+    kind: "gui",
+  }));
+  // ...plus this cockpit's own non-archived v2 (CLI) sessions. `title` is
+  // already the index-mirrored derived/custom title (see lib/transcript-
+  // model.mjs#buildIndexEntry) -- no need to re-derive it here.
+  const v2Sessions = (v2IndexResult.index && v2IndexResult.index.sessions) || [];
+  const cursorCliRows = v2Sessions
+    .filter((s) => !s.archived)
+    .map((s) => {
+      const { statusKind, statusLabel } = v2StatusToTrackerStatus(s.status);
+      return {
+        title: s.title || s.id,
+        lastActivityAt: s.updatedAt,
+        sessionId: s.id,
+        statusKind,
+        statusLabel,
+        kind: "cli",
+      };
+    });
+  const cursorRows = [...cursorGuiRows, ...cursorCliRows];
+
+  // AC-220: every browser-tab-mirror entry, unfiltered. No status signal
+  // exists for these (no agent/running concept for a browser tab) -- no
+  // dot, not a fabricated one.
+  const browserRows = (Array.isArray(browserSnap.tabs) ? browserSnap.tabs : []).map((t) => ({
+    title: t.title,
+    link: t.url || null,
+    statusKind: null,
+    statusLabel: null,
+  }));
+
+  groupsEl.innerHTML = "";
+  const totalRows = claudeRows.length + cursorRows.length + browserRows.length;
+  if (summaryEl) summaryEl.textContent = `${totalRows} session${totalRows === 1 ? "" : "s"}`;
+
+  if (totalRows === 0) {
+    empty.hidden = false;
+    groupsEl.hidden = true;
+    return;
+  }
+  empty.hidden = true;
+  groupsEl.hidden = false;
+
+  appendTrackerGroup(groupsEl, "Claude Code", claudeRows, (row) => {
+    if (row.link) window.open(row.link, "_blank", "noopener");
+  });
+  appendTrackerGroup(groupsEl, "Cursor", cursorRows, (row) => {
+    if (row.kind === "cli") {
+      setView("v2-detail", { sessionId: row.sessionId });
+      return;
+    }
+    // AC-222: on a failed/unavailable local activation, point the shared
+    // cachedIdeSnapshot/ideTrackerSource globals at THIS render's own
+    // cursorSnap before opening the in-app detail view -- otherwise it could
+    // show stale or wrong-source data left over from whatever the Cursor/
+    // Claude Code/Browser sub-views last loaded.
+    tryActivateCursorTab(row.title).then((activated) => {
+      if (activated) return;
+      ideTrackerSource = "cursor";
+      cachedIdeSnapshot = cursorSnap;
+      setView("ide-tab-detail", { composerId: row.composerId });
+    });
+  });
+  appendTrackerGroup(groupsEl, "Copilot", browserRows, (row) => {
+    tryActivateBrowserTab(row.title).then((activated) => {
+      if (!activated && row.link) window.open(row.link, "_blank", "noopener");
+    });
+  });
+}
+
+// -----------------------------------------------------------------------------
+// IDE Tracker row summary popover (SPEC-DELTA-2026-10-06-ide-tracker-summary-
+// and-open-link.md, AC-197). One shared, fixed-size element, repositioned next
+// to whichever row's info button triggered it -- same "single shared panel"
+// idiom as #v2-settings-sheet / #app-menu, not one popover per row.
+// -----------------------------------------------------------------------------
+
+let ideRowSummaryPopoverAnchor = null;
+
+function positionIdeRowSummaryPopover(popover, anchorEl) {
+  const rect = anchorEl.getBoundingClientRect();
+  const margin = 8;
+  let left = rect.left;
+  const maxLeft = window.innerWidth - popover.offsetWidth - margin;
+  if (left > maxLeft) left = Math.max(margin, maxLeft);
+  let top = rect.bottom + margin;
+  if (top + popover.offsetHeight > window.innerHeight - margin) {
+    top = Math.max(margin, rect.top - popover.offsetHeight - margin);
+  }
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+}
+
+function showIdeRowSummaryPopover(anchorEl, text) {
+  const popover = document.getElementById("ide-row-summary-popover");
+  if (!popover) return;
+  popover.textContent = text;
+  popover.hidden = false;
+  ideRowSummaryPopoverAnchor = anchorEl;
+  positionIdeRowSummaryPopover(popover, anchorEl);
+}
+
+function hideIdeRowSummaryPopover() {
+  const popover = document.getElementById("ide-row-summary-popover");
+  if (popover) popover.hidden = true;
+  ideRowSummaryPopoverAnchor = null;
+}
+
+function toggleIdeRowSummaryPopover(anchorEl, text) {
+  const popover = document.getElementById("ide-row-summary-popover");
+  if (popover && !popover.hidden && ideRowSummaryPopoverAnchor === anchorEl) {
+    hideIdeRowSummaryPopover();
+  } else {
+    showIdeRowSummaryPopover(anchorEl, text);
+  }
+}
+
+/** Wires the one shared popover's dismiss-on-outside-click / Escape behavior. */
+function wireIdeRowSummaryPopover() {
+  const popover = document.getElementById("ide-row-summary-popover");
+  if (!popover) return;
+  document.addEventListener("click", (ev) => {
+    if (popover.hidden) return;
+    if (popover.contains(ev.target)) return;
+    if (ev.target.closest && ev.target.closest(".cockpit-row-info")) return;
+    hideIdeRowSummaryPopover();
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && !popover.hidden) hideIdeRowSummaryPopover();
+  });
+}
+
+/**
+ * SPEC-DELTA-2026-10-07-browser-tab-copilot-mirror.md: a much simpler flat
+ * list than renderIdeTabsList's Cursor/Claude Code rendering -- there is no
+ * transcript, no waitingOn, no Open/Archive split, just a title and a
+ * best-effort url. Reuses the same #ide-tabs-list / cockpit-session-row DOM.
+ */
+async function renderBrowserTabsList() {
+  const ul = document.getElementById("ide-tabs-list");
+  const empty = document.getElementById("ide-tabs-empty-state");
+  const summary = document.getElementById("ide-summary");
+  if (!ul || !empty || !summary) return;
+
+  clearIdeTabsError();
+  let snapshot;
+  try {
+    snapshot = await loadIdeTabs();
+  } catch (err) {
+    showIdeTabsError(err.message);
+    return;
+  }
+
+  const tabs = Array.isArray(snapshot.tabs) ? snapshot.tabs : [];
+
+  const workspaceLabel = document.getElementById("ide-tabs-workspace-label");
+  if (workspaceLabel) workspaceLabel.textContent = "";
+
+  summary.innerHTML = "";
+  const total = document.createElement("span");
+  total.className = "cockpit-ide-summary-bucket";
+  total.innerHTML = `<strong>${tabs.length}</strong> ${tabs.length === 1 ? "tab" : "tabs"}`;
+  summary.appendChild(total);
+  if (snapshot.snapshotAt && IDE_HELPERS) {
+    const ts = document.createElement("span");
+    ts.className = "cockpit-ide-summary-bucket";
+    ts.textContent = `mirrored ${IDE_HELPERS.relativeIdeTime(snapshot.snapshotAt, Date.now())}`;
+    summary.appendChild(ts);
+  }
+
+  ul.innerHTML = "";
+  if (tabs.length === 0) {
+    empty.hidden = false;
+    empty.textContent = "No Copilot/Cowork browser tabs detected yet. Open one, then refresh.";
+    return;
+  }
+  empty.hidden = true;
+
+  for (const t of tabs) {
+    const li = document.createElement("li");
+    li.className = "cockpit-session-row";
+    li.tabIndex = 0;
+    const hasUrl = typeof t.url === "string" && t.url.length > 0;
+    // Try local on-demand activation first (same two-tier fallback shape as
+    // Cursor rows); if that doesn't succeed, fall back to the known url
+    // when there is one (AC-211). No url and no activation -> inert row,
+    // never a false "opened" signal.
+    const activateRow = async () => {
+      const activated = await tryActivateBrowserTab(t.title);
+      if (!activated && hasUrl) window.open(t.url, "_blank", "noopener");
+    };
+    li.addEventListener("click", activateRow);
+    li.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        activateRow();
+      }
+    });
+
+    const title = document.createElement("span");
+    title.className = "cockpit-row-title";
+    title.textContent = IDE_HELPERS ? IDE_HELPERS.formatTabTitle(t.title, 60) : t.title;
+    li.appendChild(title);
+
+    const status = document.createElement("span");
+    status.className = "cockpit-row-status";
+    status.textContent = hasUrl ? "link known" : "no link yet";
+    li.appendChild(status);
 
     ul.appendChild(li);
   }
@@ -2184,6 +2672,11 @@ function startAutoRefresh() {
             }
           })
           .catch((err) => showIdeDetailError(err.message));
+      } else if (v === "tracker") {
+        // Tracker merges 3 already-auto-refreshing background mirrors; this
+        // re-render is what makes the glance-dashboard itself live while
+        // it's the open view, same cadence as the IDE-tabs list.
+        renderTrackerView().catch((err) => showTrackerError(err.message));
       }
     }, ideIntervalMs);
   }
@@ -3180,6 +3673,21 @@ function updateAppMenuAlert() {
 
 async function bootstrap() {
   wireAppMenu();
+  wireIdeRowSummaryPopover();
+  // SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md (AC-214):
+  // explicit "true", not a toggle -- a page reload while already pinned
+  // must never un-pin it. Silent no-op off the laptop (e.g. the phone).
+  tryToggleWindowPin("true").then((result) => {
+    if (result) syncPinButton(result.pinned);
+  });
+  const btnPin = document.getElementById("btn-pin-topmost");
+  if (btnPin) {
+    btnPin.addEventListener("click", () => {
+      tryToggleWindowPin("toggle").then((result) => {
+        if (result) syncPinButton(result.pinned);
+      });
+    });
+  }
   const buildStampEl = document.getElementById("build-stamp");
   if (buildStampEl) buildStampEl.textContent = BUILD_STAMP;
   const connEl = document.getElementById("conn-state");
@@ -3206,18 +3714,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=aa35c5e"),
-      import("./ide-helpers.mjs?v=aa35c5e"),
-      import("./refresh-helpers.mjs?v=aa35c5e"),
-      import("./transcript-model.mjs?v=aa35c5e"),
-      import("./scrollback-helpers.mjs?v=aa35c5e"),
-      import("./daemon-control-model.mjs?v=aa35c5e"),
-      import("./composer-state.mjs?v=aa35c5e"),
-      import("./app-menu-state.mjs?v=aa35c5e"),
-      import("./graph-backoff.mjs?v=aa35c5e"),
-      import("./share-model.mjs?v=aa35c5e"),
-      import("./share-ui-state.mjs?v=aa35c5e"),
-      import("./cockpit-health-model.mjs?v=aa35c5e"),
+      import("./write-helpers.mjs?v=841bcc3"),
+      import("./ide-helpers.mjs?v=841bcc3"),
+      import("./refresh-helpers.mjs?v=841bcc3"),
+      import("./transcript-model.mjs?v=841bcc3"),
+      import("./scrollback-helpers.mjs?v=841bcc3"),
+      import("./daemon-control-model.mjs?v=841bcc3"),
+      import("./composer-state.mjs?v=841bcc3"),
+      import("./app-menu-state.mjs?v=841bcc3"),
+      import("./graph-backoff.mjs?v=841bcc3"),
+      import("./share-model.mjs?v=841bcc3"),
+      import("./share-ui-state.mjs?v=841bcc3"),
+      import("./cockpit-health-model.mjs?v=841bcc3"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -3248,7 +3756,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=aa35c5e");
+      const guestModule = await import("./guest-app.mjs?v=841bcc3");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
