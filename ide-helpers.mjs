@@ -263,3 +263,26 @@ export function openTabsSourceHint(_openTabsSource) {
     "conversations), not a live IDE tab bar."
   );
 }
+
+// Tracker view (SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md,
+// same-day polish): Viktor wants Copilot vs Cowork distinguished in the
+// Browser group, not lumped together as one undifferentiated "Copilot" row.
+// A browser tab's `url` is only known once it has been the foreground tab at
+// least once since the mirror started (see matching.mjs#mergeBrowserTabs) --
+// live data confirmed a real Cowork tab's captured url contains a `/cowork`
+// path segment (e.g. "m365.cloud.microsoft/cowork?auth=..."), while a tab
+// whose url was never captured (still null) cannot be told apart at all.
+// Best-guess heuristic, like the mirror's own COPILOT_PATTERN -- defaults
+// the unknown case to the umbrella term "Copilot" (Viktor's own vocabulary:
+// Cowork is Copilot's own agentic mode, not a separate product) rather than
+// overclaiming a specific answer we don't have.
+const COWORK_URL_PATTERN = /\/cowork(?:[/?#]|$)/i;
+
+/**
+ * @param {string|null|undefined} url
+ * @returns {"cowork"|"copilot"}
+ */
+export function classifyCopilotKind(url) {
+  if (typeof url === "string" && COWORK_URL_PATTERN.test(url)) return "cowork";
+  return "copilot";
+}

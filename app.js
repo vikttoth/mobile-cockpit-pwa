@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-07 16:28 CEST 3d31379`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-07 16:28 CEST 3d31379";
+// `2026-10-07 16:53 CEST 16f350e`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-07 16:53 CEST 16f350e";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1444,7 +1444,12 @@ function appendTrackerGroup(container, label, rows, onActivate) {
   }
   for (const row of rows) {
     const li = document.createElement("li");
-    li.className = "cockpit-session-row";
+    // cockpit-tracker-row overrides cockpit-session-row's grid (designed for
+    // a fixed, always-present column set) with a flex layout where the title
+    // always gets the flexible space regardless of which optional siblings
+    // (dot / badge / time / info) are present on THIS row -- fixes rows
+    // looking left- vs right-aligned depending on source (AC-226).
+    li.className = "cockpit-session-row cockpit-tracker-row";
     li.tabIndex = 0;
     li.addEventListener("click", () => onActivate(row));
     li.addEventListener("keydown", (ev) => {
@@ -1467,12 +1472,38 @@ function appendTrackerGroup(container, label, rows, onActivate) {
     titleEl.textContent = IDE_HELPERS.formatTabTitle(row.title, 50);
     li.appendChild(titleEl);
 
+    // AC-227: Copilot vs Cowork in the row text itself -- they're otherwise
+    // indistinguishable (see ide-helpers.mjs#classifyCopilotKind).
+    if (row.sourceBadge) {
+      const badge = document.createElement("span");
+      badge.className = "cockpit-row-source-badge";
+      badge.textContent = row.sourceBadge;
+      li.appendChild(badge);
+    }
+
     if (row.lastActivityAt) {
       const time = document.createElement("time");
       time.className = "cockpit-row-time";
       time.dateTime = row.lastActivityAt;
       time.textContent = IDE_HELPERS.relativeIdeTime(row.lastActivityAt, Date.now());
       li.appendChild(time);
+    }
+
+    // AC-228: same hover/tap summary popover the IDE-tabs list already has
+    // (AC-197) -- Tracker rows never got it wired in the first ship.
+    if (typeof row.summary === "string" && row.summary.length > 0) {
+      const info = document.createElement("button");
+      info.type = "button";
+      info.className = "cockpit-row-info";
+      info.setAttribute("aria-label", "Show summary");
+      info.textContent = "ⓘ";
+      info.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        toggleIdeRowSummaryPopover(info, row.summary);
+      });
+      info.addEventListener("mouseenter", () => showIdeRowSummaryPopover(info, row.summary));
+      info.addEventListener("mouseleave", () => hideIdeRowSummaryPopover());
+      li.appendChild(info);
     }
 
     ul.appendChild(li);
@@ -1515,6 +1546,7 @@ async function renderTrackerView() {
       link: t.link || null,
       statusKind: IDE_HELPERS.isEmptyIdeTab(t) ? "none" : t.waitingOn || "none",
       statusLabel: IDE_HELPERS.ideTabStatusLabel(t),
+      summary: t.summary || null,
     }));
 
   // AC-219: ide-mirror's own open GUI tabs...
@@ -1524,6 +1556,7 @@ async function renderTrackerView() {
     composerId: t.composerId,
     statusKind: IDE_HELPERS.isEmptyIdeTab(t) ? "none" : t.waitingOn || "none",
     statusLabel: IDE_HELPERS.ideTabStatusLabel(t),
+    summary: t.summary || null,
     kind: "gui",
   }));
   // ...plus this cockpit's own non-archived v2 (CLI) sessions. `title` is
@@ -1547,12 +1580,16 @@ async function renderTrackerView() {
 
   // AC-220: every browser-tab-mirror entry, unfiltered. No status signal
   // exists for these (no agent/running concept for a browser tab) -- no
-  // dot, not a fabricated one.
+  // dot, not a fabricated one. sourceBadge distinguishes Copilot vs Cowork
+  // in the row text itself (Viktor's own ask -- they look identical
+  // otherwise), best-guess from the captured url, see
+  // ide-helpers.mjs#classifyCopilotKind.
   const browserRows = (Array.isArray(browserSnap.tabs) ? browserSnap.tabs : []).map((t) => ({
     title: t.title,
     link: t.url || null,
     statusKind: null,
     statusLabel: null,
+    sourceBadge: IDE_HELPERS.classifyCopilotKind(t.url) === "cowork" ? "Cowork" : "Copilot",
   }));
 
   groupsEl.innerHTML = "";
@@ -3716,18 +3753,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=3d31379"),
-      import("./ide-helpers.mjs?v=3d31379"),
-      import("./refresh-helpers.mjs?v=3d31379"),
-      import("./transcript-model.mjs?v=3d31379"),
-      import("./scrollback-helpers.mjs?v=3d31379"),
-      import("./daemon-control-model.mjs?v=3d31379"),
-      import("./composer-state.mjs?v=3d31379"),
-      import("./app-menu-state.mjs?v=3d31379"),
-      import("./graph-backoff.mjs?v=3d31379"),
-      import("./share-model.mjs?v=3d31379"),
-      import("./share-ui-state.mjs?v=3d31379"),
-      import("./cockpit-health-model.mjs?v=3d31379"),
+      import("./write-helpers.mjs?v=16f350e"),
+      import("./ide-helpers.mjs?v=16f350e"),
+      import("./refresh-helpers.mjs?v=16f350e"),
+      import("./transcript-model.mjs?v=16f350e"),
+      import("./scrollback-helpers.mjs?v=16f350e"),
+      import("./daemon-control-model.mjs?v=16f350e"),
+      import("./composer-state.mjs?v=16f350e"),
+      import("./app-menu-state.mjs?v=16f350e"),
+      import("./graph-backoff.mjs?v=16f350e"),
+      import("./share-model.mjs?v=16f350e"),
+      import("./share-ui-state.mjs?v=16f350e"),
+      import("./cockpit-health-model.mjs?v=16f350e"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -3758,7 +3795,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=3d31379");
+      const guestModule = await import("./guest-app.mjs?v=16f350e");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,

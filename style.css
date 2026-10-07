@@ -37,8 +37,17 @@ html, body {
   padding: 0;
   background: var(--cp-bg);
   color: var(--cp-fg);
-  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.4;
 }
+/* `html` is the single source of truth for font-size -- `body` inherits it
+   rather than carrying its own explicit value. Fixes a real bug (found
+   2026-10-07): the density media query below only ever changed `html`'s
+   font-size for `rem`-based rules; body's own explicit 16px (from the old
+   `font: 16px/1.4 ...` shorthand setting it directly on BOTH elements) kept
+   overriding it, so most row text silently never shrank on desktop at all. */
+html { font-size: 16px; }
+body { font-size: inherit; }
 
 body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 
@@ -1285,26 +1294,47 @@ body[data-view="tracker"] .cockpit-mode-toggle {
   display: flex;
   align-items: center;
   gap: var(--cp-gap);
-  padding: 6px var(--cp-gap);
+  padding: 4px var(--cp-gap);
   border-bottom: 1px solid var(--cp-border);
 }
 .cockpit-tracker-exit-btn {
-  min-height: 32px;
-  min-width: 32px;
+  min-height: 24px;
+  min-width: 24px;
   padding: 0;
-  font-size: 1.1rem;
+  font-size: 1rem;
   background: transparent;
   border: 1px solid var(--cp-border);
 }
-.cockpit-tracker-summary { font-size: 0.85rem; color: var(--cp-muted); }
+.cockpit-tracker-summary { font-size: 0.8rem; color: var(--cp-muted); }
 .cockpit-tracker-group-title {
   margin: 0;
-  padding: 4px var(--cp-gap) 2px;
-  font-size: 0.75rem;
+  padding: 2px var(--cp-gap) 1px;
+  font-size: 0.68rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--cp-muted);
+  line-height: 1.2;
+}
+/* The Tracker is the glance-dashboard use case: maximize rows per screen
+   (Viktor: "szinte ferjen el a kepernyo 1 hatodaban az egesz"). Overrides
+   cockpit-session-row's GRID (designed around a fixed, always-present
+   column set) with flex, so the title always claims the flexible space
+   regardless of which optional siblings (dot / badge / time / info) this
+   particular row happens to have -- fixes rows reading as left- vs
+   right-aligned depending on source (AC-226), and packs tighter than the
+   general desktop-density pass above on top of it. */
+.cockpit-tracker-row {
+  display: flex;
+  align-items: center;
+  line-height: 1.15;
+}
+.cockpit-tracker-row .cockpit-row-title { flex: 1 1 auto; min-width: 0; }
+.cockpit-tracker-row .cockpit-row-time,
+.cockpit-tracker-row .cockpit-row-source-badge,
+.cockpit-tracker-row .cockpit-row-info { flex: none; }
+@media (hover: hover) and (pointer: fine) {
+  .cockpit-session-row.cockpit-tracker-row { padding: 1px var(--cp-gap); }
 }
 /* Per-row status dot -- AC-221: running / waiting-on-you / idle-done, no
    4th "problem" color (no real error signal exists to key off yet). */
