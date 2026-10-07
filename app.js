@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-07 16:19 CEST 841bcc3`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-07 16:19 CEST 841bcc3";
+// `2026-10-07 16:28 CEST 3d31379`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-07 16:28 CEST 3d31379";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1502,11 +1502,13 @@ async function renderTrackerView() {
     return;
   }
 
-  // AC-218: Active-group filter, not the recency-window open set.
-  const activeIds = new Set(Array.isArray(claudeSnap.activeGroupComposerIds) ? claudeSnap.activeGroupComposerIds : []);
-  const claudeRows = [...(claudeSnap.openTabs || []), ...(claudeSnap.historyTabs || [])]
-    .filter((t) => activeIds.has(t.composerId))
-    .map((t) => ({
+  // AC-218 (revised): the same already-auto-refreshing "open" (recency)
+  // set the Claude Code IDE Tracker switcher already shows -- not the
+  // sidebar "Active" group, which would need a non-auto-refreshing manual
+  // snapshot to read (see SPEC-DELTA's "Active-group simplification"
+  // addendum). Same shape as cursorGuiRows below: open tabs only, no
+  // archive/history half.
+  const claudeRows = (claudeSnap.openTabs || []).map((t) => ({
       title: t.title,
       lastActivityAt: t.lastActivityAt,
       composerId: t.composerId,
@@ -3714,18 +3716,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=841bcc3"),
-      import("./ide-helpers.mjs?v=841bcc3"),
-      import("./refresh-helpers.mjs?v=841bcc3"),
-      import("./transcript-model.mjs?v=841bcc3"),
-      import("./scrollback-helpers.mjs?v=841bcc3"),
-      import("./daemon-control-model.mjs?v=841bcc3"),
-      import("./composer-state.mjs?v=841bcc3"),
-      import("./app-menu-state.mjs?v=841bcc3"),
-      import("./graph-backoff.mjs?v=841bcc3"),
-      import("./share-model.mjs?v=841bcc3"),
-      import("./share-ui-state.mjs?v=841bcc3"),
-      import("./cockpit-health-model.mjs?v=841bcc3"),
+      import("./write-helpers.mjs?v=3d31379"),
+      import("./ide-helpers.mjs?v=3d31379"),
+      import("./refresh-helpers.mjs?v=3d31379"),
+      import("./transcript-model.mjs?v=3d31379"),
+      import("./scrollback-helpers.mjs?v=3d31379"),
+      import("./daemon-control-model.mjs?v=3d31379"),
+      import("./composer-state.mjs?v=3d31379"),
+      import("./app-menu-state.mjs?v=3d31379"),
+      import("./graph-backoff.mjs?v=3d31379"),
+      import("./share-model.mjs?v=3d31379"),
+      import("./share-ui-state.mjs?v=3d31379"),
+      import("./cockpit-health-model.mjs?v=3d31379"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -3756,7 +3758,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=841bcc3");
+      const guestModule = await import("./guest-app.mjs?v=3d31379");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
