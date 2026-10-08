@@ -303,6 +303,9 @@ export function trackerHoverText(row, nowMs) {
   if (typeof row?.summary === "string" && row.summary.trim() && row.summary.trim() !== title) {
     lines.push(row.summary.trim());
   }
+  if (typeof row?.needsAction === "string" && row.needsAction.trim()) {
+    lines.push(`Needs you: ${row.needsAction.trim()}`);
+  }
   const meta = [];
   if (row?.sourceBadge) meta.push(row.sourceBadge);
   if (row?.statusLabel) meta.push(row.statusLabel);

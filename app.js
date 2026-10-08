@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-08 11:30 CEST 15f7c0b`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-08 11:30 CEST 15f7c0b";
+// `2026-10-08 12:22 CEST 89a4749`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-08 12:22 CEST 89a4749";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1537,18 +1537,68 @@ function hideTrackerRowPopover() {
   hideIdeRowSummaryPopover();
 }
 
-function appendTrackerGroup(container, label, rows, onActivate, sourceKey) {
+// Claude app sidebar groups the Tracker shows, in this order, followed by
+// Routines (Viktor, 2026-10-08: "csak az Active group es a Routines group
+// alattiakat"). Ungrouped and any other group (e.g. Dependent) stay hidden.
+const TRACKER_CLAUDE_GROUPS = ["Active"];
+
+// Same limit as the mirror's RUNNING_STALE_AFTER_MS (claude-code-mirror/lib/
+// tracker-model.mjs). The mirror applies it when it publishes, but a stopped
+// daemon (WSL shut down mid-turn happens on this machine) leaves the last
+// "running" frozen in the file -- so the page applies it again at render time.
+const TRACKER_RUNNING_STALE_MS = 30 * 60 * 1000;
+
+function claudeTrackerRow(r) {
+  const staleRunning =
+    r.statusKind === "agent" && r.lastActivityAt && Date.now() - Date.parse(r.lastActivityAt) > TRACKER_RUNNING_STALE_MS;
+  return {
+    title: r.title,
+    lastActivityAt: r.lastActivityAt,
+    link: r.link || null,
+    statusKind: staleRunning ? "none" : r.statusKind || null,
+    statusLabel: staleRunning ? "done" : r.statusLabel || null,
+    summary: r.summary || null,
+    needsAction: r.needsAction || null,
+  };
+}
+
+// `subgroups` ([{label, rows}]) renders labeled sub-lists under one source
+// header -- the Claude Code section's sidebar groups + Routines (AC-243).
+// `hint` is a small muted line under the header (e.g. why a section is empty).
+function appendTrackerGroup(container, label, rows, onActivate, sourceKey, subgroups = null, hint = null) {
   const section = document.createElement("section");
   section.className = "cockpit-tracker-group";
   section.dataset.trackerSource = sourceKey;
   container.appendChild(section);
 
+  const total = subgroups ? subgroups.reduce((n, sg) => n + sg.rows.length, 0) : rows.length;
   const title = document.createElement("h2");
   title.className = "cockpit-tracker-group-title";
   title.dataset.trackerSource = sourceKey;
-  title.textContent = `${label} (${rows.length})`;
+  title.textContent = `${label} (${total})`;
   section.appendChild(title);
 
+  if (hint) {
+    const p = document.createElement("p");
+    p.className = "cockpit-tracker-hint";
+    p.textContent = hint;
+    section.appendChild(p);
+  }
+
+  if (!subgroups) {
+    section.appendChild(buildTrackerList(rows, onActivate));
+    return;
+  }
+  for (const sg of subgroups) {
+    const sub = document.createElement("h3");
+    sub.className = "cockpit-tracker-subgroup-title";
+    sub.textContent = `${sg.label} (${sg.rows.length})`;
+    section.appendChild(sub);
+    section.appendChild(buildTrackerList(sg.rows, onActivate));
+  }
+}
+
+function buildTrackerList(rows, onActivate) {
   const ul = document.createElement("ul");
   ul.className = "cockpit-session-list";
   if (rows.length === 0) {
@@ -1626,7 +1676,7 @@ function appendTrackerGroup(container, label, rows, onActivate, sourceKey) {
 
     ul.appendChild(li);
   }
-  section.appendChild(ul);
+  return ul;
 }
 
 async function renderTrackerView() {
@@ -1651,21 +1701,39 @@ async function renderTrackerView() {
     return;
   }
 
-  // AC-218 (revised): the same already-auto-refreshing "open" (recency)
-  // set the Claude Code IDE Tracker switcher already shows -- not the
-  // sidebar "Active" group, which would need a non-auto-refreshing manual
-  // snapshot to read (see SPEC-DELTA's "Active-group simplification"
-  // addendum). Same shape as cursorGuiRows below: open tabs only, no
-  // archive/history half.
-  const claudeRows = (claudeSnap.openTabs || []).map((t) => ({
-      title: t.title,
-      lastActivityAt: t.lastActivityAt,
-      composerId: t.composerId,
-      link: t.link || null,
-      statusKind: IDE_HELPERS.isEmptyIdeTab(t) ? "none" : t.waitingOn || "none",
-      statusLabel: IDE_HELPERS.ideTabStatusLabel(t),
-      summary: t.summary || null,
-    }));
+  // AC-243 (2026-10-08, supersedes AC-225 at Viktor's ask): the Claude app's
+  // own sidebar -- only the groups in TRACKER_CLAUDE_GROUPS, then Routines --
+  // from the mirror's claudeTracker block, so moving a session to ungrouped
+  // in Claude makes it leave the Tracker. When the block is present it is
+  // authoritative -- even empty, even with an error: falling back to the
+  // recency list would show exactly the ungrouped sessions Viktor moved out.
+  // That list is only for a daemon too old to publish the block at all.
+  const claudeTracker = claudeSnap.claudeTracker;
+  const hasClaudeTracker = !!claudeTracker && Array.isArray(claudeTracker.groups) && Array.isArray(claudeTracker.routines);
+  const claudeSubgroups = hasClaudeTracker
+    ? [
+        ...TRACKER_CLAUDE_GROUPS.map((name) => ({
+          label: name,
+          rows: (claudeTracker.groups.find((g) => g.name === name)?.sessions || []).map(claudeTrackerRow),
+        })),
+        { label: "Routines", rows: (claudeTracker.routines || []).map(claudeTrackerRow) },
+      ]
+    : null;
+  const claudeRows = hasClaudeTracker
+    ? []
+    : (claudeSnap.openTabs || []).map((t) => ({
+        title: t.title,
+        lastActivityAt: t.lastActivityAt,
+        composerId: t.composerId,
+        link: t.link || null,
+        statusKind: IDE_HELPERS.isEmptyIdeTab(t) ? "none" : t.waitingOn || "none",
+        statusLabel: IDE_HELPERS.ideTabStatusLabel(t),
+        summary: t.summary || null,
+      }));
+  const claudeCount = claudeSubgroups ? claudeSubgroups.reduce((n, sg) => n + sg.rows.length, 0) : claudeRows.length;
+  // Only worth saying when there is nothing to show; with last-good data the
+  // mirror's error is transient and the rows are right.
+  const claudeHint = hasClaudeTracker && claudeTracker.error && claudeCount === 0 ? `Claude data unavailable: ${claudeTracker.error}` : null;
 
   // AC-219: ide-mirror's own open GUI tabs...
   const cursorGuiRows = (cursorSnap.openTabs || []).map((t) => ({
@@ -1711,7 +1779,7 @@ async function renderTrackerView() {
   }));
 
   groupsEl.innerHTML = "";
-  const totalRows = claudeRows.length + cursorRows.length + browserRows.length;
+  const totalRows = claudeCount + cursorRows.length + browserRows.length;
   if (summaryEl) summaryEl.textContent = `${totalRows} session${totalRows === 1 ? "" : "s"}`;
 
   if (totalRows === 0) {
@@ -1724,7 +1792,7 @@ async function renderTrackerView() {
 
   appendTrackerGroup(groupsEl, "Claude Code", claudeRows, (row) => {
     if (row.link) window.open(row.link, "_blank", "noopener");
-  }, "claude");
+  }, "claude", claudeSubgroups, claudeHint);
   appendTrackerGroup(groupsEl, "Cursor", cursorRows, (row) => {
     if (row.kind === "cli") {
       setView("v2-detail", { sessionId: row.sessionId });
@@ -3864,18 +3932,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=15f7c0b"),
-      import("./ide-helpers.mjs?v=15f7c0b"),
-      import("./refresh-helpers.mjs?v=15f7c0b"),
-      import("./transcript-model.mjs?v=15f7c0b"),
-      import("./scrollback-helpers.mjs?v=15f7c0b"),
-      import("./daemon-control-model.mjs?v=15f7c0b"),
-      import("./composer-state.mjs?v=15f7c0b"),
-      import("./app-menu-state.mjs?v=15f7c0b"),
-      import("./graph-backoff.mjs?v=15f7c0b"),
-      import("./share-model.mjs?v=15f7c0b"),
-      import("./share-ui-state.mjs?v=15f7c0b"),
-      import("./cockpit-health-model.mjs?v=15f7c0b"),
+      import("./write-helpers.mjs?v=89a4749"),
+      import("./ide-helpers.mjs?v=89a4749"),
+      import("./refresh-helpers.mjs?v=89a4749"),
+      import("./transcript-model.mjs?v=89a4749"),
+      import("./scrollback-helpers.mjs?v=89a4749"),
+      import("./daemon-control-model.mjs?v=89a4749"),
+      import("./composer-state.mjs?v=89a4749"),
+      import("./app-menu-state.mjs?v=89a4749"),
+      import("./graph-backoff.mjs?v=89a4749"),
+      import("./share-model.mjs?v=89a4749"),
+      import("./share-ui-state.mjs?v=89a4749"),
+      import("./cockpit-health-model.mjs?v=89a4749"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -3906,7 +3974,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=15f7c0b");
+      const guestModule = await import("./guest-app.mjs?v=89a4749");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,

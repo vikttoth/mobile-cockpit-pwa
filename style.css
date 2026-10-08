@@ -1360,6 +1360,16 @@ body[data-view="tracker"] .cockpit-mode-toggle {
   .cockpit-tracker-group[data-tracker-source="copilot"] { --cp-tracker-src: #c4b5fd; }
 }
 .cockpit-tracker-group + .cockpit-tracker-group { margin-top: 3px; }
+.cockpit-tracker-hint { margin: 0; padding: 0 var(--cp-gap); font-size: 0.7rem; line-height: 1.3; color: var(--cp-muted); }
+/* Claude Code's sidebar groups + Routines under the Claude band (AC-243). */
+.cockpit-tracker-subgroup-title {
+  margin: 1px 0 0;
+  padding: 0 var(--cp-gap);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--cp-tracker-src);
+}
 .cockpit-tracker-group-title {
   margin: 0;
   padding: 1px var(--cp-gap);
@@ -1417,6 +1427,8 @@ body[data-view="tracker"] .cockpit-mode-toggle {
 .cockpit-row-status-dot[data-status="user"] { background: var(--cp-warning); }
 .cockpit-row-status-dot[data-status="none"] { background: var(--cp-success); }
 .cockpit-row-status-dot[data-status="problem"] { background: var(--cp-error); }
+/* No status to show (e.g. a routine that has never run): hollow, same size. */
+.cockpit-row-status-dot[data-status="unknown"] { background: transparent; box-shadow: inset 0 0 0 1px var(--cp-muted); }
 /* Copilot vs Cowork badge: outlined for Copilot, filled for Cowork, both in
    the Copilot group's own color, so the two scan apart without reading. */
 .cockpit-row-source-badge {
