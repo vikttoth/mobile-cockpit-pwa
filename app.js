@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-08 13:06 CEST 1d1417c`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-08 13:06 CEST 1d1417c";
+// `2026-10-08 13:13 CEST 9ad3a09`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-08 13:13 CEST 9ad3a09";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1667,14 +1667,6 @@ function buildTrackerList(rows, onActivate) {
       li.appendChild(time);
     }
 
-    if (row.subtitle) {
-      li.dataset.hasSubtitle = "true";
-      const sub = document.createElement("span");
-      sub.className = "cockpit-row-subtitle";
-      sub.textContent = IDE_HELPERS.formatTabTitle(row.subtitle, 90);
-      li.appendChild(sub);
-    }
-
     // AC-234: hovering the row itself shows its detail card. No separate info
     // button -- its 32px touch-target min-height was what kept every
     // summary-carrying row about twice as tall as its text.
@@ -1787,8 +1779,6 @@ async function renderTrackerView() {
     statusKind: t.statusKind || null,
     statusLabel: t.statusLabel || null,
     summary: t.request ? `Request: ${t.request}` : null,
-    // Shown inline (hover does not exist on a phone): what was asked.
-    subtitle: t.request || null,
     sourceBadge: IDE_HELPERS.classifyCopilotKind(t.url) === "cowork" ? "Cowork" : "Copilot",
     tracked: t.source === "cdp",
   }));
@@ -3961,18 +3951,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=1d1417c"),
-      import("./ide-helpers.mjs?v=1d1417c"),
-      import("./refresh-helpers.mjs?v=1d1417c"),
-      import("./transcript-model.mjs?v=1d1417c"),
-      import("./scrollback-helpers.mjs?v=1d1417c"),
-      import("./daemon-control-model.mjs?v=1d1417c"),
-      import("./composer-state.mjs?v=1d1417c"),
-      import("./app-menu-state.mjs?v=1d1417c"),
-      import("./graph-backoff.mjs?v=1d1417c"),
-      import("./share-model.mjs?v=1d1417c"),
-      import("./share-ui-state.mjs?v=1d1417c"),
-      import("./cockpit-health-model.mjs?v=1d1417c"),
+      import("./write-helpers.mjs?v=9ad3a09"),
+      import("./ide-helpers.mjs?v=9ad3a09"),
+      import("./refresh-helpers.mjs?v=9ad3a09"),
+      import("./transcript-model.mjs?v=9ad3a09"),
+      import("./scrollback-helpers.mjs?v=9ad3a09"),
+      import("./daemon-control-model.mjs?v=9ad3a09"),
+      import("./composer-state.mjs?v=9ad3a09"),
+      import("./app-menu-state.mjs?v=9ad3a09"),
+      import("./graph-backoff.mjs?v=9ad3a09"),
+      import("./share-model.mjs?v=9ad3a09"),
+      import("./share-ui-state.mjs?v=9ad3a09"),
+      import("./cockpit-health-model.mjs?v=9ad3a09"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4003,7 +3993,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=1d1417c");
+      const guestModule = await import("./guest-app.mjs?v=9ad3a09");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
