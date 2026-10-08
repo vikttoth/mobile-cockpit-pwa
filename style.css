@@ -1473,6 +1473,13 @@ body[data-view="tracker"] .cockpit-mode-toggle {
 .cockpit-row-summary-popover[data-context="tracker"] {
   white-space: pre-line;
   pointer-events: none;
+  /* The card is click-through and cannot be scrolled (hover only), so it must show ALL its
+     text: no height cap, no scrollbar (the base rule's 160px / overflow-y: auto hid lines and
+     ate width). A little wider than the IDE-tabs popover so long summaries wrap less. */
+  max-height: none;
+  overflow: visible;
+  width: 360px;
+  overflow-wrap: anywhere;
 }
 
 /* ---------------------------------------------------------------------------
