@@ -286,3 +286,27 @@ export function classifyCopilotKind(url) {
   if (typeof url === "string" && COWORK_URL_PATTERN.test(url)) return "cowork";
   return "copilot";
 }
+
+/**
+ * Hover-card text for a Tracker row: full (untruncated) title, the mirror's
+ * longer summary when it adds something, then source / status / last
+ * activity. Every row gets a card -- including Copilot rows, which have no
+ * summary field at all -- so hovering any row always shows its detail.
+ *
+ * @param {{title?:string, summary?:string|null, sourceBadge?:string|null, statusLabel?:string|null, lastActivityAt?:string|number|null}} row
+ * @param {number} nowMs
+ * @returns {string} newline-separated lines
+ */
+export function trackerHoverText(row, nowMs) {
+  const title = (row && typeof row.title === "string" && row.title.trim()) || "(untitled)";
+  const lines = [title];
+  if (typeof row?.summary === "string" && row.summary.trim() && row.summary.trim() !== title) {
+    lines.push(row.summary.trim());
+  }
+  const meta = [];
+  if (row?.sourceBadge) meta.push(row.sourceBadge);
+  if (row?.statusLabel) meta.push(row.statusLabel);
+  if (row?.lastActivityAt) meta.push(`last active ${relativeIdeTime(row.lastActivityAt, nowMs)}`);
+  if (meta.length > 0) lines.push(meta.join(" · "));
+  return lines.join("\n");
+}

@@ -1324,15 +1324,67 @@ body[data-view="tracker"] .cockpit-mode-toggle {
   border: 1px solid var(--cp-border);
 }
 .cockpit-tracker-summary { font-size: 0.8rem; color: var(--cp-muted); }
+/* Tracker pin toggle (AC-233): the header's pin button is hidden in Tracker
+   mode, so the topbar carries its own. ON and OFF must read unambiguously at
+   a glance -- ON is a solid accent pill with a filled pin and "Pinned", OFF
+   is a hollow grey pill with an outlined, struck-through pin and "Not
+   pinned". Overrides the shared .cockpit-pin-btn look for this button only;
+   the header pin outside Tracker is unchanged. */
+.cockpit-pin-btn.cockpit-tracker-pin-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  min-height: 22px;
+  min-width: 0;
+  padding: 1px 8px;
+  border: 1px solid var(--cp-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--cp-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.cockpit-pin-btn.cockpit-tracker-pin-btn[aria-pressed]::after { content: none; }
+.cockpit-pin-btn.cockpit-tracker-pin-btn[aria-pressed="false"]:hover { border-color: var(--cp-accent); color: var(--cp-fg); }
+.cockpit-pin-btn.cockpit-tracker-pin-btn[aria-pressed="true"] {
+  background: var(--cp-accent);
+  border-color: var(--cp-accent);
+  color: #fff;
+}
+.cockpit-pin-icon { width: 12px; height: 12px; flex: none; }
+.cockpit-tracker-pin-btn[aria-pressed="true"] .cockpit-pin-icon-off,
+.cockpit-tracker-pin-btn[aria-pressed="true"] .cockpit-pin-label-off,
+.cockpit-tracker-pin-btn[aria-pressed="false"] .cockpit-pin-icon-on,
+.cockpit-tracker-pin-btn[aria-pressed="false"] .cockpit-pin-label-on { display: none; }
+
+/* Each source gets its own color (AC-235) so Claude Code / Cursor / Copilot
+   are told apart at a glance: a tinted header band with a bold colored
+   label, no divider lines. Hues deliberately avoid the status-dot colors
+   (blue / amber / green / red). */
+.cockpit-tracker-group { --cp-tracker-src: var(--cp-muted); }
+.cockpit-tracker-group[data-tracker-source="claude"] { --cp-tracker-src: #b4532a; }
+.cockpit-tracker-group[data-tracker-source="cursor"] { --cp-tracker-src: #475569; }
+.cockpit-tracker-group[data-tracker-source="copilot"] { --cp-tracker-src: #7c3aed; }
+@media (prefers-color-scheme: dark) {
+  .cockpit-tracker-group[data-tracker-source="claude"] { --cp-tracker-src: #f0a07f; }
+  .cockpit-tracker-group[data-tracker-source="cursor"] { --cp-tracker-src: #cbd5e1; }
+  .cockpit-tracker-group[data-tracker-source="copilot"] { --cp-tracker-src: #c4b5fd; }
+}
+.cockpit-tracker-group + .cockpit-tracker-group { margin-top: 3px; }
 .cockpit-tracker-group-title {
   margin: 0;
-  padding: 2px var(--cp-gap) 1px;
-  font-size: 0.68rem;
-  font-weight: 700;
+  padding: 1px var(--cp-gap);
+  font-size: 0.75rem;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--cp-muted);
-  line-height: 1.2;
+  letter-spacing: 0.05em;
+  line-height: 1.3;
+  color: var(--cp-tracker-src);
+  background: color-mix(in srgb, var(--cp-tracker-src) 15%, transparent);
+  border-radius: 3px;
 }
 /* The Tracker is the glance-dashboard use case: maximize rows per screen
    (Viktor: "szinte ferjen el a kepernyo 1 hatodaban az egesz"). Overrides
@@ -1345,7 +1397,8 @@ body[data-view="tracker"] .cockpit-mode-toggle {
 .cockpit-tracker-row {
   display: flex;
   align-items: center;
-  line-height: 1.15;
+  gap: 6px;
+  line-height: 1.2;
   /* Viktor: "vonalak se kellenek kozejuk, mintha egy entert utnek" -- no
      divider between rows, spacing like consecutive text lines, not
      bordered cards. Applies regardless of device; it's a visual choice,
@@ -1355,13 +1408,14 @@ body[data-view="tracker"] .cockpit-mode-toggle {
 }
 .cockpit-tracker-row .cockpit-row-title { flex: 1 1 auto; min-width: 0; }
 .cockpit-tracker-row .cockpit-row-time,
-.cockpit-tracker-row .cockpit-row-source-badge,
-.cockpit-tracker-row .cockpit-row-info { flex: none; }
-@media (hover: hover) and (pointer: fine) {
-  /* Zero vertical padding -- rows are separated purely by their own
-     line-height, i.e. exactly "like pressing Enter" between lines. */
-  .cockpit-session-row.cockpit-tracker-row { padding: 0 var(--cp-gap); }
-}
+.cockpit-tracker-row .cockpit-row-source-badge { flex: none; }
+/* Zero vertical padding and no min-height -- a row is exactly one text line
+   tall, nothing on it (no 32px info button any more) can stretch it. NOT
+   gated on (hover: hover) and (pointer: fine) like the general desktop
+   density pass: a touch-capable laptop or a narrow window can flip that
+   query and silently bring back the 44px phone touch-target rows, and
+   density is the Tracker's whole purpose. Overrides only Tracker rows. */
+.cockpit-session-row.cockpit-tracker-row { padding: 0 var(--cp-gap); min-height: 0; }
 /* Per-row status dot -- AC-221: running / waiting-on-you / idle-done, no
    4th "problem" color (no real error signal exists to key off yet). */
 .cockpit-row-status-dot {
@@ -1375,13 +1429,20 @@ body[data-view="tracker"] .cockpit-mode-toggle {
 .cockpit-row-status-dot[data-status="user"] { background: var(--cp-warning); }
 .cockpit-row-status-dot[data-status="none"] { background: var(--cp-success); }
 .cockpit-row-status-dot[data-status="problem"] { background: var(--cp-error); }
+/* Copilot vs Cowork badge: outlined for Copilot, filled for Cowork, both in
+   the Copilot group's own color, so the two scan apart without reading. */
 .cockpit-row-source-badge {
   font-size: 0.7rem;
-  padding: 1px 6px;
+  padding: 0 5px;
+  line-height: 1.3;
   border-radius: 999px;
-  border: 1px solid var(--cp-border);
-  color: var(--cp-muted);
+  border: 1px solid var(--cp-tracker-src, var(--cp-border));
+  color: var(--cp-tracker-src, var(--cp-muted));
   white-space: nowrap;
+}
+.cockpit-row-source-badge[data-kind="cowork"] {
+  background: var(--cp-tracker-src, var(--cp-muted));
+  color: var(--cp-bg);
 }
 
 /* SPEC-DELTA-2026-10-06-ide-tracker-summary-and-open-link (AC-197): one
@@ -1405,6 +1466,13 @@ body[data-view="tracker"] .cockpit-mode-toggle {
   color: var(--cp-fg);
 }
 .cockpit-row-summary-popover[hidden] { display: none; }
+/* Tracker row hover card (AC-234): multi-line (title / summary / status),
+   and click-through so moving the mouse down onto the next row isn't
+   blocked by the card itself. Only set while a Tracker row shows it. */
+.cockpit-row-summary-popover[data-context="tracker"] {
+  white-space: pre-line;
+  pointer-events: none;
+}
 
 /* ---------------------------------------------------------------------------
    Session sharing Stage 2 (SPEC-DELTA-2026-09-29-session-sharing-stage2)
