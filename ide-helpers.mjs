@@ -288,6 +288,44 @@ export function classifyCopilotKind(url) {
 }
 
 /**
+ * Content hash of a row's current activity (FNV-1a, sync so the PWA and the
+ * digest daemon compute the exact same value). A stored LLM digest is only
+ * shown while its hash still matches (SPEC-DELTA-2026-10-08-tracker-hover-
+ * digest.md, AC-256); the language is deliberately NOT part of it.
+ */
+export function activityHash(activity) {
+  const s = `${activity?.ask ?? ""}\u0001${activity?.reply ?? ""}`;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
+/** Stable key a row's digest is stored under (digests.json `entries`). */
+export function digestRowKey(source, row) {
+  if (source === "claude") {
+    const id = row?.sessionId || row?.composerId;
+    return id ? `claude:${id}` : null;
+  }
+  if (source === "cursor") {
+    const id = row?.composerId || row?.sessionId;
+    return id ? `cursor:${id}` : null;
+  }
+  if (source === "browser") return row?.title ? `browser:${row.title}` : null;
+  return null;
+}
+
+/** The stored digest for `key`, or null when absent or stale vs the row's current activity. */
+export function pickDigest(digestsDoc, key, activity) {
+  if (!key) return null;
+  const entry = digestsDoc && digestsDoc.entries ? digestsDoc.entries[key] : null;
+  if (!entry || typeof entry.text !== "string" || !entry.text) return null;
+  return entry.hash === activityHash(activity) ? entry.text : null;
+}
+
+/**
  * Hover-card text for a Tracker row: full (untruncated) title, the mirror's
  * longer summary when it adds something, then source / status / last
  * activity. Every row gets a card -- including Copilot rows, which have no
@@ -300,7 +338,18 @@ export function classifyCopilotKind(url) {
 export function trackerHoverText(row, nowMs) {
   const title = (row && typeof row.title === "string" && row.title.trim()) || "(untitled)";
   const lines = [title];
-  if (typeof row?.summary === "string" && row.summary.trim() && row.summary.trim() !== title) {
+  // SPEC-DELTA-2026-10-08-tracker-hover-digest.md (AC-251): what it is doing
+  // NOW (last reply / last ask) replaces the first-message summary, which goes
+  // stale; the summary stays as the fallback for rows without activity.
+  // Layer B (optional LLM digest, already matched to this row's current
+  // activity by pickDigest): one crisp line right under the title.
+  if (typeof row?.digest === "string" && row.digest.trim()) lines.push(row.digest.trim());
+  const reply = typeof row?.activity?.reply === "string" ? row.activity.reply.trim() : "";
+  const ask = typeof row?.activity?.ask === "string" ? row.activity.ask.trim() : "";
+  if (reply || ask) {
+    if (reply) lines.push(`Now: ${reply}`);
+    if (ask) lines.push(`Asked: ${ask}`);
+  } else if (typeof row?.summary === "string" && row.summary.trim() && row.summary.trim() !== title) {
     lines.push(row.summary.trim());
   }
   if (typeof row?.needsAction === "string" && row.needsAction.trim()) {

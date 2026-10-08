@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-08 13:20 CEST 7c0402d`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-08 13:20 CEST 7c0402d";
+// `2026-10-08 14:58 CEST a1eba29`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-08 14:58 CEST a1eba29";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1553,11 +1553,13 @@ function claudeTrackerRow(r) {
     r.statusKind === "agent" && r.lastActivityAt && Date.now() - Date.parse(r.lastActivityAt) > TRACKER_RUNNING_STALE_MS;
   return {
     title: r.title,
+    sessionId: r.sessionId || null,
     lastActivityAt: r.lastActivityAt,
     link: r.link || null,
     statusKind: staleRunning ? "none" : r.statusKind || null,
     statusLabel: staleRunning ? "done" : r.statusLabel || null,
     summary: r.summary || null,
+    activity: r.activity || null,
     needsAction: r.needsAction || null,
   };
 }
@@ -1688,13 +1690,17 @@ async function renderTrackerView() {
   errorEl.hidden = true;
   errorEl.textContent = "";
 
-  let claudeSnap, cursorSnap, browserSnap, v2IndexResult;
+  let claudeSnap, cursorSnap, browserSnap, v2IndexResult, digestsDoc;
   try {
-    [claudeSnap, cursorSnap, browserSnap, v2IndexResult] = await Promise.all([
+    [claudeSnap, cursorSnap, browserSnap, v2IndexResult, digestsDoc] = await Promise.all([
       fetchSnapshotByConfigKey("claudeCodeTabs"),
       fetchSnapshotByConfigKey("ideTabs"),
       fetchSnapshotByConfigKey("browserTabs"),
       loadV2Index().catch(() => ({ index: { sessions: [] } })),
+      // Layer B (optional LLM digest, SPEC-DELTA-2026-10-08-tracker-hover-
+      // digest.md): absent / failing / not configured must never affect the
+      // Tracker -- the hover card then shows the deterministic text.
+      fetchSnapshotByConfigKey("digests").catch(() => null),
     ]);
   } catch (err) {
     showTrackerError(err.message);
@@ -1730,6 +1736,7 @@ async function renderTrackerView() {
         statusKind: IDE_HELPERS.isEmptyIdeTab(t) ? "none" : t.waitingOn || "none",
         statusLabel: IDE_HELPERS.ideTabStatusLabel(t),
         summary: t.summary || null,
+        activity: t.activity || null,
       }));
   const claudeCount = claudeSubgroups ? claudeSubgroups.reduce((n, sg) => n + sg.rows.length, 0) : claudeRows.length;
   // Only worth saying when there is nothing to show; with last-good data the
@@ -1744,6 +1751,7 @@ async function renderTrackerView() {
     statusKind: IDE_HELPERS.isEmptyIdeTab(t) ? "none" : t.waitingOn || "none",
     statusLabel: IDE_HELPERS.ideTabStatusLabel(t),
     summary: t.summary || null,
+    activity: t.activity || null,
     kind: "gui",
   }));
   // ...plus this cockpit's own non-archived v2 (CLI) sessions. `title` is
@@ -1779,6 +1787,7 @@ async function renderTrackerView() {
     statusKind: t.statusKind || null,
     statusLabel: t.statusLabel || null,
     summary: t.request ? `Request: ${t.request}` : null,
+    activity: t.activity || null,
     sourceBadge: IDE_HELPERS.classifyCopilotKind(t.url) === "cowork" ? "Cowork" : "Copilot",
     tracked: t.source === "cdp",
   }));
@@ -1786,6 +1795,16 @@ async function renderTrackerView() {
   // go to their own group at the very bottom (Viktor, 2026-10-08).
   const trackedBrowserRows = browserRows.filter((r) => r.tracked);
   const untrackedBrowserRows = browserRows.filter((r) => !r.tracked);
+
+  // Layer B: join each row's stored LLM digest (shown only while it still
+  // matches the row's current activity -- pickDigest drops stale ones).
+  const attachDigests = (source, rows) => {
+    for (const r of rows) r.digest = IDE_HELPERS.pickDigest(digestsDoc, IDE_HELPERS.digestRowKey(source, r), r.activity);
+  };
+  attachDigests("claude", claudeRows);
+  for (const sg of claudeSubgroups || []) attachDigests("claude", sg.rows);
+  attachDigests("cursor", cursorGuiRows);
+  attachDigests("browser", browserRows);
 
   groupsEl.innerHTML = "";
   const totalRows = claudeCount + cursorRows.length + browserRows.length;
@@ -3952,18 +3971,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=7c0402d"),
-      import("./ide-helpers.mjs?v=7c0402d"),
-      import("./refresh-helpers.mjs?v=7c0402d"),
-      import("./transcript-model.mjs?v=7c0402d"),
-      import("./scrollback-helpers.mjs?v=7c0402d"),
-      import("./daemon-control-model.mjs?v=7c0402d"),
-      import("./composer-state.mjs?v=7c0402d"),
-      import("./app-menu-state.mjs?v=7c0402d"),
-      import("./graph-backoff.mjs?v=7c0402d"),
-      import("./share-model.mjs?v=7c0402d"),
-      import("./share-ui-state.mjs?v=7c0402d"),
-      import("./cockpit-health-model.mjs?v=7c0402d"),
+      import("./write-helpers.mjs?v=a1eba29"),
+      import("./ide-helpers.mjs?v=a1eba29"),
+      import("./refresh-helpers.mjs?v=a1eba29"),
+      import("./transcript-model.mjs?v=a1eba29"),
+      import("./scrollback-helpers.mjs?v=a1eba29"),
+      import("./daemon-control-model.mjs?v=a1eba29"),
+      import("./composer-state.mjs?v=a1eba29"),
+      import("./app-menu-state.mjs?v=a1eba29"),
+      import("./graph-backoff.mjs?v=a1eba29"),
+      import("./share-model.mjs?v=a1eba29"),
+      import("./share-ui-state.mjs?v=a1eba29"),
+      import("./cockpit-health-model.mjs?v=a1eba29"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -3994,7 +4013,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=7c0402d");
+      const guestModule = await import("./guest-app.mjs?v=a1eba29");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,

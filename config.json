@@ -39,6 +39,11 @@
     "endpoint": "/me/drive/root:/cursor-cockpit/browser-tabs.json",
     "pollIntervalSeconds": 30
   },
+  "digests": {
+    "_comment": "SPEC-DELTA-2026-10-08-tracker-hover-digest.md (Layer B, optional). Written by flows/mobile-cockpit/summary-digest/poll.mjs only when DIGEST_ENABLED; a missing file just means the hover card shows the deterministic text. relativePath MUST match DIGESTS_RELATIVE_PATH in lib/config.mjs.",
+    "relativePath": "cursor-cockpit/digests.json",
+    "endpoint": "/me/drive/root:/cursor-cockpit/digests.json"
+  },
   "health": {
     "_comment": "SPEC task 12 (AC-008), wired 2026-09-25. relativePath MUST match HEALTH_RELATIVE_PATH in lib/config.mjs. Coherence enforced by pwa-config-coherence.sh.",
     "relativePath": "cursor-cockpit/health.json",
