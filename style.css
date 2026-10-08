@@ -1335,6 +1335,17 @@ body[data-view="tracker"] .cockpit-mode-toggle {
   border: 1px solid var(--cp-border);
 }
 .cockpit-tracker-summary { font-size: 0.8rem; color: var(--cp-muted); }
+/* One thin line explaining the status dots (AC-242). */
+.cockpit-tracker-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  padding: 2px var(--cp-gap);
+  font-size: 0.75rem;
+  line-height: 1.3;
+  color: var(--cp-muted);
+}
+.cockpit-tracker-legend > span { display: inline-flex; align-items: center; gap: 4px; }
 /* Each source gets its own color (AC-235) so Claude Code / Cursor / Copilot
    are told apart at a glance: a tinted header band with a bold colored
    label, no divider lines. Hues deliberately avoid the status-dot colors
