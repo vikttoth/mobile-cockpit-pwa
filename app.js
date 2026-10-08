@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-08 13:13 CEST 9ad3a09`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-08 13:13 CEST 9ad3a09";
+// `2026-10-08 13:15 CEST 3488eb9`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-08 13:15 CEST 3488eb9";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1833,11 +1833,12 @@ async function renderTrackerView() {
       if (!activated && row.link) window.open(row.link, "_blank", "noopener");
     });
   };
-  appendTrackerGroup(groupsEl, "Copilot / Cowork", trackedBrowserRows, activateBrowserRow, "copilot", null,
-    trackedBrowserRows.length === 0 ? "Open Copilot/Cowork in the Copilot Edge window to see status + request here." : null);
+  // One section, two named sub-groups (same shape as Claude Code's Routines/Active).
+  const copilotSubgroups = [{ label: "Tracked (Copilot Edge)", rows: trackedBrowserRows }];
   if (untrackedBrowserRows.length > 0) {
-    appendTrackerGroup(groupsEl, "Copilot / Cowork in plain Chrome/Edge (not trackable)", untrackedBrowserRows, activateBrowserRow, "copilot");
+    copilotSubgroups.push({ label: "Not trackable (plain Chrome/Edge)", rows: untrackedBrowserRows });
   }
+  appendTrackerGroup(groupsEl, "Copilot / Cowork", [], activateBrowserRow, "copilot", copilotSubgroups);
 }
 
 // -----------------------------------------------------------------------------
@@ -3951,18 +3952,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=9ad3a09"),
-      import("./ide-helpers.mjs?v=9ad3a09"),
-      import("./refresh-helpers.mjs?v=9ad3a09"),
-      import("./transcript-model.mjs?v=9ad3a09"),
-      import("./scrollback-helpers.mjs?v=9ad3a09"),
-      import("./daemon-control-model.mjs?v=9ad3a09"),
-      import("./composer-state.mjs?v=9ad3a09"),
-      import("./app-menu-state.mjs?v=9ad3a09"),
-      import("./graph-backoff.mjs?v=9ad3a09"),
-      import("./share-model.mjs?v=9ad3a09"),
-      import("./share-ui-state.mjs?v=9ad3a09"),
-      import("./cockpit-health-model.mjs?v=9ad3a09"),
+      import("./write-helpers.mjs?v=3488eb9"),
+      import("./ide-helpers.mjs?v=3488eb9"),
+      import("./refresh-helpers.mjs?v=3488eb9"),
+      import("./transcript-model.mjs?v=3488eb9"),
+      import("./scrollback-helpers.mjs?v=3488eb9"),
+      import("./daemon-control-model.mjs?v=3488eb9"),
+      import("./composer-state.mjs?v=3488eb9"),
+      import("./app-menu-state.mjs?v=3488eb9"),
+      import("./graph-backoff.mjs?v=3488eb9"),
+      import("./share-model.mjs?v=3488eb9"),
+      import("./share-ui-state.mjs?v=3488eb9"),
+      import("./cockpit-health-model.mjs?v=3488eb9"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -3993,7 +3994,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=9ad3a09");
+      const guestModule = await import("./guest-app.mjs?v=3488eb9");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
