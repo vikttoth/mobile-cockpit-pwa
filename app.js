@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-08 12:49 CEST 80073f5`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-08 12:49 CEST 80073f5";
+// `2026-10-08 13:03 CEST 8161e98`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-08 13:03 CEST 8161e98";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1667,6 +1667,14 @@ function buildTrackerList(rows, onActivate) {
       li.appendChild(time);
     }
 
+    if (row.subtitle) {
+      li.dataset.hasSubtitle = "true";
+      const sub = document.createElement("span");
+      sub.className = "cockpit-row-subtitle";
+      sub.textContent = IDE_HELPERS.formatTabTitle(row.subtitle, 90);
+      li.appendChild(sub);
+    }
+
     // AC-234: hovering the row itself shows its detail card. No separate info
     // button -- its 32px touch-target min-height was what kept every
     // summary-carrying row about twice as tall as its text.
@@ -1712,11 +1720,12 @@ async function renderTrackerView() {
   const hasClaudeTracker = !!claudeTracker && Array.isArray(claudeTracker.groups) && Array.isArray(claudeTracker.routines);
   const claudeSubgroups = hasClaudeTracker
     ? [
+        // Routines first, as in the Claude app's own sidebar (Viktor, 2026-10-08).
+        { label: "Routines", rows: (claudeTracker.routines || []).map(claudeTrackerRow) },
         ...TRACKER_CLAUDE_GROUPS.map((name) => ({
           label: name,
           rows: (claudeTracker.groups.find((g) => g.name === name)?.sessions || []).map(claudeTrackerRow),
         })),
-        { label: "Routines", rows: (claudeTracker.routines || []).map(claudeTrackerRow) },
       ]
     : null;
   const claudeRows = hasClaudeTracker
@@ -1773,8 +1782,13 @@ async function renderTrackerView() {
   const browserRows = (Array.isArray(browserSnap.tabs) ? browserSnap.tabs : []).map((t) => ({
     title: t.title,
     link: t.url || null,
-    statusKind: null,
-    statusLabel: null,
+    // CDP-sourced tabs (copilot-watch Edge, SPEC-DELTA-2026-10-08) carry a
+    // real status + the last request; UIA-only tabs have neither.
+    statusKind: t.statusKind || null,
+    statusLabel: t.statusLabel || null,
+    summary: t.request ? `Request: ${t.request}` : null,
+    // Shown inline (hover does not exist on a phone): what was asked.
+    subtitle: t.request || null,
     sourceBadge: IDE_HELPERS.classifyCopilotKind(t.url) === "cowork" ? "Cowork" : "Copilot",
   }));
 
@@ -1793,6 +1807,11 @@ async function renderTrackerView() {
   appendTrackerGroup(groupsEl, "Claude Code", claudeRows, (row) => {
     if (row.link) window.open(row.link, "_blank", "noopener");
   }, "claude", claudeSubgroups, claudeHint);
+  // Open GUI tabs first, then this cockpit's CLI sessions (Viktor, 2026-10-08).
+  const cursorSubgroups = [
+    { label: "GUI tabs", rows: cursorGuiRows },
+    { label: "CLI sessions", rows: cursorCliRows },
+  ];
   appendTrackerGroup(groupsEl, "Cursor", cursorRows, (row) => {
     if (row.kind === "cli") {
       setView("v2-detail", { sessionId: row.sessionId });
@@ -1811,7 +1830,7 @@ async function renderTrackerView() {
       cachedIdeSnapshot = cursorSnap;
       setView("ide-tab-detail", { composerId: row.composerId });
     });
-  }, "cursor");
+  }, "cursor", cursorSubgroups);
   appendTrackerGroup(groupsEl, "Copilot / Cowork", browserRows, (row) => {
     // AC-241: only open the url when the existing tab really couldn't be
     // activated -- falling back early is what opened duplicate Copilot tabs.
@@ -3932,18 +3951,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=80073f5"),
-      import("./ide-helpers.mjs?v=80073f5"),
-      import("./refresh-helpers.mjs?v=80073f5"),
-      import("./transcript-model.mjs?v=80073f5"),
-      import("./scrollback-helpers.mjs?v=80073f5"),
-      import("./daemon-control-model.mjs?v=80073f5"),
-      import("./composer-state.mjs?v=80073f5"),
-      import("./app-menu-state.mjs?v=80073f5"),
-      import("./graph-backoff.mjs?v=80073f5"),
-      import("./share-model.mjs?v=80073f5"),
-      import("./share-ui-state.mjs?v=80073f5"),
-      import("./cockpit-health-model.mjs?v=80073f5"),
+      import("./write-helpers.mjs?v=8161e98"),
+      import("./ide-helpers.mjs?v=8161e98"),
+      import("./refresh-helpers.mjs?v=8161e98"),
+      import("./transcript-model.mjs?v=8161e98"),
+      import("./scrollback-helpers.mjs?v=8161e98"),
+      import("./daemon-control-model.mjs?v=8161e98"),
+      import("./composer-state.mjs?v=8161e98"),
+      import("./app-menu-state.mjs?v=8161e98"),
+      import("./graph-backoff.mjs?v=8161e98"),
+      import("./share-model.mjs?v=8161e98"),
+      import("./share-ui-state.mjs?v=8161e98"),
+      import("./cockpit-health-model.mjs?v=8161e98"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -3974,7 +3993,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=80073f5");
+      const guestModule = await import("./guest-app.mjs?v=8161e98");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,

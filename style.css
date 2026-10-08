@@ -1405,6 +1405,18 @@ body[data-view="tracker"] .cockpit-mode-toggle {
 .cockpit-tracker-row .cockpit-row-title { flex: 1 1 auto; min-width: 0; }
 /* A jump to the real Cursor/Copilot tab is in flight (~1-3 s, AC-241). */
 .cockpit-tracker-row[data-activating] { cursor: progress; opacity: 0.55; }
+/* Copilot rows: the last request on its own muted line under the title. */
+.cockpit-tracker-row[data-has-subtitle] { flex-wrap: wrap; }
+.cockpit-tracker-row .cockpit-row-subtitle {
+  flex: 1 1 100%;
+  order: 10;
+  padding-left: 14px;
+  font-size: 0.75rem;
+  color: var(--cp-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .cockpit-tracker-row .cockpit-row-time,
 .cockpit-tracker-row .cockpit-row-source-badge { flex: none; }
 /* Zero vertical padding and no min-height -- a row is exactly one text line
