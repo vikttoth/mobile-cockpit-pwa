@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-07 16:53 CEST 16f350e`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-07 16:53 CEST 16f350e";
+// `2026-10-08 10:16 CEST d5548db`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-08 10:16 CEST d5548db";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1393,9 +1393,13 @@ async function tryToggleWindowPin(desired) {
   }
 }
 
+// Two buttons share this state (header + Tracker topbar, since the header
+// -- and the pin button in it -- is hidden entirely while Tracker is open,
+// per Viktor's own ask that the pin control stay reachable there too).
 function syncPinButton(pinned) {
-  const btn = document.getElementById("btn-pin-topmost");
-  if (btn) btn.setAttribute("aria-pressed", pinned ? "true" : "false");
+  document.querySelectorAll(".cockpit-pin-btn").forEach((btn) => {
+    btn.setAttribute("aria-pressed", pinned ? "true" : "false");
+  });
 }
 
 // -----------------------------------------------------------------------------
@@ -3719,14 +3723,13 @@ async function bootstrap() {
   tryToggleWindowPin("true").then((result) => {
     if (result) syncPinButton(result.pinned);
   });
-  const btnPin = document.getElementById("btn-pin-topmost");
-  if (btnPin) {
+  document.querySelectorAll(".cockpit-pin-btn").forEach((btnPin) => {
     btnPin.addEventListener("click", () => {
       tryToggleWindowPin("toggle").then((result) => {
         if (result) syncPinButton(result.pinned);
       });
     });
-  }
+  });
   const buildStampEl = document.getElementById("build-stamp");
   if (buildStampEl) buildStampEl.textContent = BUILD_STAMP;
   const connEl = document.getElementById("conn-state");
@@ -3753,18 +3756,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=16f350e"),
-      import("./ide-helpers.mjs?v=16f350e"),
-      import("./refresh-helpers.mjs?v=16f350e"),
-      import("./transcript-model.mjs?v=16f350e"),
-      import("./scrollback-helpers.mjs?v=16f350e"),
-      import("./daemon-control-model.mjs?v=16f350e"),
-      import("./composer-state.mjs?v=16f350e"),
-      import("./app-menu-state.mjs?v=16f350e"),
-      import("./graph-backoff.mjs?v=16f350e"),
-      import("./share-model.mjs?v=16f350e"),
-      import("./share-ui-state.mjs?v=16f350e"),
-      import("./cockpit-health-model.mjs?v=16f350e"),
+      import("./write-helpers.mjs?v=d5548db"),
+      import("./ide-helpers.mjs?v=d5548db"),
+      import("./refresh-helpers.mjs?v=d5548db"),
+      import("./transcript-model.mjs?v=d5548db"),
+      import("./scrollback-helpers.mjs?v=d5548db"),
+      import("./daemon-control-model.mjs?v=d5548db"),
+      import("./composer-state.mjs?v=d5548db"),
+      import("./app-menu-state.mjs?v=d5548db"),
+      import("./graph-backoff.mjs?v=d5548db"),
+      import("./share-model.mjs?v=d5548db"),
+      import("./share-ui-state.mjs?v=d5548db"),
+      import("./cockpit-health-model.mjs?v=d5548db"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -3795,7 +3798,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=16f350e");
+      const guestModule = await import("./guest-app.mjs?v=d5548db");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,

@@ -1269,8 +1269,16 @@ body[data-view="v2-detail"] main {
 .cockpit-app-menu .cockpit-daemon-control { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .cockpit-app-menu-build { color: var(--cp-muted); font-size: 0.8rem; }
 
-/* SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md */
+/* SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md. Two buttons
+   share this class (header + Tracker topbar -- the header is hidden
+   entirely while Tracker is open, so the pin control needs its own copy
+   there, see index.html). A color-only state change read as too subtle in
+   a small icon (Viktor's own feedback) -- the "off" state now also draws a
+   diagonal slash over the glyph via ::after, a plain CSS overlay rather
+   than a second emoji code point, so it renders identically regardless of
+   font/emoji support. */
 .cockpit-pin-btn {
+  position: relative;
   min-height: 32px;
   min-width: 32px;
   padding: 0;
@@ -1282,6 +1290,16 @@ body[data-view="v2-detail"] main {
 .cockpit-pin-btn[aria-pressed="true"] {
   color: var(--cp-accent);
   border-color: var(--cp-accent);
+}
+.cockpit-pin-btn[aria-pressed="false"]::after {
+  content: "";
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  top: 50%;
+  height: 2px;
+  background: currentColor;
+  transform: translateY(-50%) rotate(-45deg);
 }
 
 /* Tracker view: chrome-free, grouped rows only -- the whole point is
@@ -1328,13 +1346,21 @@ body[data-view="tracker"] .cockpit-mode-toggle {
   display: flex;
   align-items: center;
   line-height: 1.15;
+  /* Viktor: "vonalak se kellenek kozejuk, mintha egy entert utnek" -- no
+     divider between rows, spacing like consecutive text lines, not
+     bordered cards. Applies regardless of device; it's a visual choice,
+     not a touch-target one (min-height/padding for touch stay governed by
+     cockpit-session-row itself, untouched here). */
+  border-bottom: none;
 }
 .cockpit-tracker-row .cockpit-row-title { flex: 1 1 auto; min-width: 0; }
 .cockpit-tracker-row .cockpit-row-time,
 .cockpit-tracker-row .cockpit-row-source-badge,
 .cockpit-tracker-row .cockpit-row-info { flex: none; }
 @media (hover: hover) and (pointer: fine) {
-  .cockpit-session-row.cockpit-tracker-row { padding: 1px var(--cp-gap); }
+  /* Zero vertical padding -- rows are separated purely by their own
+     line-height, i.e. exactly "like pressing Enter" between lines. */
+  .cockpit-session-row.cockpit-tracker-row { padding: 0 var(--cp-gap); }
 }
 /* Per-row status dot -- AC-221: running / waiting-on-you / idle-done, no
    4th "problem" color (no real error signal exists to key off yet). */

@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-10-07 16:53 CEST 16f350e in config.json + app.js).
+  script (replaces 2026-10-08 10:16 CEST d5548db in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -45,11 +45,11 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=16f350e")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=d5548db")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=16f350e" />
+  <link rel="stylesheet" href="./style.css?v=d5548db" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
@@ -172,6 +172,8 @@
         <button type="button" id="btn-tracker-exit" class="cockpit-tracker-exit-btn cockpit-back-btn"
                 data-target-view="v2-list" aria-label="Back to cockpit">&#8592;</button>
         <span id="tracker-summary" class="cockpit-tracker-summary" aria-live="polite"></span>
+        <button type="button" id="btn-pin-topmost-tracker" class="cockpit-pin-btn" aria-pressed="false"
+                title="Pin this window always on top">&#128204;</button>
       </div>
       <div id="tracker-groups">
         <!-- Populated by app.js#renderTrackerView() with one <section> per
@@ -661,6 +663,6 @@
   </main>
 
 
-  <script src="./app.js?v=16f350e" defer></script>
+  <script src="./app.js?v=d5548db" defer></script>
 </body>
 </html>
