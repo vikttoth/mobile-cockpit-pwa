@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-08 14:58 CEST a1eba29`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-08 14:58 CEST a1eba29";
+// `2026-10-08 15:18 CEST c223ac9`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-08 15:18 CEST c223ac9";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1351,7 +1351,7 @@ async function tryActivateCursorTab(title, timeoutMs = CURSOR_ACTIVATE_TIMEOUT_M
 // Cowork) activation endpoint.
 const BROWSER_ACTIVATE_URL = "http://127.0.0.1:4127/api/browser-tabs/activate";
 
-async function tryActivateBrowserTab(title, timeoutMs = CURSOR_ACTIVATE_TIMEOUT_MS) {
+async function tryActivateBrowserTab(title, timeoutMs = CURSOR_ACTIVATE_TIMEOUT_MS, url = null) {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -1360,7 +1360,7 @@ async function tryActivateBrowserTab(title, timeoutMs = CURSOR_ACTIVATE_TIMEOUT_
       res = await fetch(BROWSER_ACTIVATE_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title }),
+        body: JSON.stringify(url ? { title, url } : { title }),
         signal: controller.signal,
       });
     } finally {
@@ -1848,7 +1848,7 @@ async function renderTrackerView() {
   const activateBrowserRow = (row) => {
     // AC-241: only open the url when the existing tab really couldn't be
     // activated -- falling back early is what opened duplicate Copilot tabs.
-    return tryActivateBrowserTab(row.title, TRACKER_BROWSER_ACTIVATE_TIMEOUT_MS).then((activated) => {
+    return tryActivateBrowserTab(row.title, TRACKER_BROWSER_ACTIVATE_TIMEOUT_MS, row.tracked ? row.link : null).then((activated) => {
       if (!activated && row.link) window.open(row.link, "_blank", "noopener");
     });
   };
@@ -3971,18 +3971,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=a1eba29"),
-      import("./ide-helpers.mjs?v=a1eba29"),
-      import("./refresh-helpers.mjs?v=a1eba29"),
-      import("./transcript-model.mjs?v=a1eba29"),
-      import("./scrollback-helpers.mjs?v=a1eba29"),
-      import("./daemon-control-model.mjs?v=a1eba29"),
-      import("./composer-state.mjs?v=a1eba29"),
-      import("./app-menu-state.mjs?v=a1eba29"),
-      import("./graph-backoff.mjs?v=a1eba29"),
-      import("./share-model.mjs?v=a1eba29"),
-      import("./share-ui-state.mjs?v=a1eba29"),
-      import("./cockpit-health-model.mjs?v=a1eba29"),
+      import("./write-helpers.mjs?v=c223ac9"),
+      import("./ide-helpers.mjs?v=c223ac9"),
+      import("./refresh-helpers.mjs?v=c223ac9"),
+      import("./transcript-model.mjs?v=c223ac9"),
+      import("./scrollback-helpers.mjs?v=c223ac9"),
+      import("./daemon-control-model.mjs?v=c223ac9"),
+      import("./composer-state.mjs?v=c223ac9"),
+      import("./app-menu-state.mjs?v=c223ac9"),
+      import("./graph-backoff.mjs?v=c223ac9"),
+      import("./share-model.mjs?v=c223ac9"),
+      import("./share-ui-state.mjs?v=c223ac9"),
+      import("./cockpit-health-model.mjs?v=c223ac9"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4013,7 +4013,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=a1eba29");
+      const guestModule = await import("./guest-app.mjs?v=c223ac9");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
