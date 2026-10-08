@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-08 13:03 CEST 8161e98`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-08 13:03 CEST 8161e98";
+// `2026-10-08 13:06 CEST 1d1417c`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-08 13:06 CEST 1d1417c";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1790,7 +1790,12 @@ async function renderTrackerView() {
     // Shown inline (hover does not exist on a phone): what was asked.
     subtitle: t.request || null,
     sourceBadge: IDE_HELPERS.classifyCopilotKind(t.url) === "cowork" ? "Cowork" : "Copilot",
+    tracked: t.source === "cdp",
   }));
+  // Tabs in a plain Chrome/Edge are title-only (no status, no request): they
+  // go to their own group at the very bottom (Viktor, 2026-10-08).
+  const trackedBrowserRows = browserRows.filter((r) => r.tracked);
+  const untrackedBrowserRows = browserRows.filter((r) => !r.tracked);
 
   groupsEl.innerHTML = "";
   const totalRows = claudeCount + cursorRows.length + browserRows.length;
@@ -1831,13 +1836,18 @@ async function renderTrackerView() {
       setView("ide-tab-detail", { composerId: row.composerId });
     });
   }, "cursor", cursorSubgroups);
-  appendTrackerGroup(groupsEl, "Copilot / Cowork", browserRows, (row) => {
+  const activateBrowserRow = (row) => {
     // AC-241: only open the url when the existing tab really couldn't be
     // activated -- falling back early is what opened duplicate Copilot tabs.
     return tryActivateBrowserTab(row.title, TRACKER_BROWSER_ACTIVATE_TIMEOUT_MS).then((activated) => {
       if (!activated && row.link) window.open(row.link, "_blank", "noopener");
     });
-  }, "copilot");
+  };
+  appendTrackerGroup(groupsEl, "Copilot / Cowork", trackedBrowserRows, activateBrowserRow, "copilot", null,
+    trackedBrowserRows.length === 0 ? "Open Copilot/Cowork in the Copilot Edge window to see status + request here." : null);
+  if (untrackedBrowserRows.length > 0) {
+    appendTrackerGroup(groupsEl, "Copilot / Cowork in plain Chrome/Edge (not trackable)", untrackedBrowserRows, activateBrowserRow, "copilot");
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -3951,18 +3961,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=8161e98"),
-      import("./ide-helpers.mjs?v=8161e98"),
-      import("./refresh-helpers.mjs?v=8161e98"),
-      import("./transcript-model.mjs?v=8161e98"),
-      import("./scrollback-helpers.mjs?v=8161e98"),
-      import("./daemon-control-model.mjs?v=8161e98"),
-      import("./composer-state.mjs?v=8161e98"),
-      import("./app-menu-state.mjs?v=8161e98"),
-      import("./graph-backoff.mjs?v=8161e98"),
-      import("./share-model.mjs?v=8161e98"),
-      import("./share-ui-state.mjs?v=8161e98"),
-      import("./cockpit-health-model.mjs?v=8161e98"),
+      import("./write-helpers.mjs?v=1d1417c"),
+      import("./ide-helpers.mjs?v=1d1417c"),
+      import("./refresh-helpers.mjs?v=1d1417c"),
+      import("./transcript-model.mjs?v=1d1417c"),
+      import("./scrollback-helpers.mjs?v=1d1417c"),
+      import("./daemon-control-model.mjs?v=1d1417c"),
+      import("./composer-state.mjs?v=1d1417c"),
+      import("./app-menu-state.mjs?v=1d1417c"),
+      import("./graph-backoff.mjs?v=1d1417c"),
+      import("./share-model.mjs?v=1d1417c"),
+      import("./share-ui-state.mjs?v=1d1417c"),
+      import("./cockpit-health-model.mjs?v=1d1417c"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -3993,7 +4003,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=8161e98");
+      const guestModule = await import("./guest-app.mjs?v=1d1417c");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
