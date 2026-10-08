@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-10-08 10:16 CEST d5548db in config.json + app.js).
+  script (replaces 2026-10-08 10:17 CEST d6d1b42 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -30,6 +30,9 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>Mobile cockpit</title>
+  <link rel="icon" href="favicon.ico" sizes="any" />
+  <link rel="icon" href="icon-192.png" type="image/png" sizes="192x192" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
 
   <!--
     MSAL Browser v4 LTS — public client / SPA / PKCE.
@@ -45,11 +48,11 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=d5548db")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=d6d1b42")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=d5548db" />
+  <link rel="stylesheet" href="./style.css?v=d6d1b42" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
@@ -663,6 +666,6 @@
   </main>
 
 
-  <script src="./app.js?v=d5548db" defer></script>
+  <script src="./app.js?v=d6d1b42" defer></script>
 </body>
 </html>

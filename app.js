@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-08 10:16 CEST d5548db`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-08 10:16 CEST d5548db";
+// `2026-10-08 10:17 CEST d6d1b42`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-08 10:17 CEST d6d1b42";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -3756,18 +3756,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=d5548db"),
-      import("./ide-helpers.mjs?v=d5548db"),
-      import("./refresh-helpers.mjs?v=d5548db"),
-      import("./transcript-model.mjs?v=d5548db"),
-      import("./scrollback-helpers.mjs?v=d5548db"),
-      import("./daemon-control-model.mjs?v=d5548db"),
-      import("./composer-state.mjs?v=d5548db"),
-      import("./app-menu-state.mjs?v=d5548db"),
-      import("./graph-backoff.mjs?v=d5548db"),
-      import("./share-model.mjs?v=d5548db"),
-      import("./share-ui-state.mjs?v=d5548db"),
-      import("./cockpit-health-model.mjs?v=d5548db"),
+      import("./write-helpers.mjs?v=d6d1b42"),
+      import("./ide-helpers.mjs?v=d6d1b42"),
+      import("./refresh-helpers.mjs?v=d6d1b42"),
+      import("./transcript-model.mjs?v=d6d1b42"),
+      import("./scrollback-helpers.mjs?v=d6d1b42"),
+      import("./daemon-control-model.mjs?v=d6d1b42"),
+      import("./composer-state.mjs?v=d6d1b42"),
+      import("./app-menu-state.mjs?v=d6d1b42"),
+      import("./graph-backoff.mjs?v=d6d1b42"),
+      import("./share-model.mjs?v=d6d1b42"),
+      import("./share-ui-state.mjs?v=d6d1b42"),
+      import("./cockpit-health-model.mjs?v=d6d1b42"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -3798,7 +3798,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=d5548db");
+      const guestModule = await import("./guest-app.mjs?v=d6d1b42");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
