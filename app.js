@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-08 10:40 CEST f211de0`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-08 10:40 CEST f211de0";
+// `2026-10-08 11:07 CEST 13e3125`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-08 11:07 CEST 13e3125";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1370,11 +1370,16 @@ async function tryActivateBrowserTab(title) {
 // -----------------------------------------------------------------------------
 
 const WINDOW_PIN_URL = "http://127.0.0.1:4127/api/window/pin";
+// Measured 2026-10-08: a pin round trip is ~0.9-1.1 s (the daemon spawns
+// powershell.exe across WSL interop each time). Reusing the 500 ms Cursor
+// activation budget aborted EVERY request before the answer came back -- the
+// window still toggled, but the button never updated and looked dead.
+const WINDOW_PIN_TIMEOUT_MS = 5000;
 
 async function tryToggleWindowPin(desired) {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), CURSOR_ACTIVATE_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), WINDOW_PIN_TIMEOUT_MS);
     let res;
     try {
       res = await fetch(WINDOW_PIN_URL, {
@@ -1393,18 +1398,86 @@ async function tryToggleWindowPin(desired) {
   }
 }
 
-// Two buttons share this state (header + Tracker topbar, since the header
-// -- and the pin button in it -- is hidden entirely while Tracker is open,
-// per Viktor's own ask that the pin control stay reachable there too).
-function syncPinButton(pinned) {
+// AC-237/AC-238: every .cockpit-pin-btn (header + Tracker topbar) shows ONE
+// shared state, and that state is always the daemon's answer about the REAL
+// window (set-window-topmost.ps1), never a local guess -- so a change made in
+// any view, any open cockpit window, or outside the PWA shows up everywhere.
+const PIN_TITLES = {
+  on: "Always on top. Click to unpin.",
+  off: "Not on top. Click to keep this window always on top.",
+  unknown: "Click to keep this window always on top.",
+  unavailable: "Pin unavailable: the cockpit's local service isn't answering (daemon not running, or not on this laptop). Click to retry.",
+  nowindow: "Pin works in the standalone cockpit window (desktop shortcut), not in a browser tab.",
+};
+let pinChannel = null;
+// Latest-request-wins: clicking the pin in an unfocused window fires a focus
+// refresh ("query") and the click ("toggle") together; whichever answer
+// arrives last must not overwrite a newer request's result.
+let pinRequestSeq = 0;
+
+function applyPinState(state, titleKey = state) {
   document.querySelectorAll(".cockpit-pin-btn").forEach((btn) => {
-    btn.setAttribute("aria-pressed", pinned ? "true" : "false");
-    if (btn.classList.contains("cockpit-tracker-pin-btn")) {
-      btn.title = pinned
-        ? "Pinned: always on top. Click to unpin."
-        : "Not pinned. Click to keep this window always on top.";
-    }
+    btn.dataset.pinState = state;
+    btn.setAttribute("aria-pressed", state === "on" ? "true" : "false");
+    btn.title = PIN_TITLES[titleKey] || PIN_TITLES.unknown;
   });
+}
+
+function syncPinButton(pinned) {
+  applyPinState(pinned ? "on" : "off");
+}
+
+function requestPinState(desired, { broadcast = false } = {}) {
+  const seq = ++pinRequestSeq;
+  return tryToggleWindowPin(desired).then((result) => {
+    if (seq !== pinRequestSeq) return;
+    if (!result) {
+      applyPinState("unavailable");
+      return;
+    }
+    if (result.status !== "ok") {
+      applyPinState("unavailable", "nowindow");
+      return;
+    }
+    syncPinButton(result.pinned);
+    if (broadcast && pinChannel) pinChannel.postMessage({ pinned: !!result.pinned });
+  });
+}
+
+function wirePinButtons() {
+  if (typeof BroadcastChannel === "function") {
+    pinChannel = new BroadcastChannel("cockpit-window-pin");
+    pinChannel.onmessage = (ev) => {
+      if (ev.data && typeof ev.data.pinned === "boolean") syncPinButton(ev.data.pinned);
+    };
+  }
+  // A toggle takes ~1 s; a second click inside that window would toggle the
+  // window straight back. Ignore clicks while one is in flight, and show it.
+  let pinToggleInFlight = false;
+  const setPinBusy = (busy) => {
+    document.querySelectorAll(".cockpit-pin-btn").forEach((btn) => {
+      if (busy) btn.dataset.pinBusy = "true";
+      else delete btn.dataset.pinBusy;
+    });
+  };
+  document.querySelectorAll(".cockpit-pin-btn").forEach((btnPin) => {
+    btnPin.addEventListener("click", () => {
+      if (pinToggleInFlight) return;
+      pinToggleInFlight = true;
+      setPinBusy(true);
+      requestPinState("toggle", { broadcast: true }).finally(() => {
+        pinToggleInFlight = false;
+        setPinBusy(false);
+      });
+    });
+  });
+  window.addEventListener("focus", () => requestPinState("query"));
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) requestPinState("query");
+  });
+  // AC-214: explicit "true", not a toggle -- a page reload while already
+  // pinned must never un-pin it.
+  requestPinState("true", { broadcast: true });
 }
 
 // -----------------------------------------------------------------------------
@@ -3735,19 +3808,9 @@ function updateAppMenuAlert() {
 async function bootstrap() {
   wireAppMenu();
   wireIdeRowSummaryPopover();
-  // SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md (AC-214):
-  // explicit "true", not a toggle -- a page reload while already pinned
-  // must never un-pin it. Silent no-op off the laptop (e.g. the phone).
-  tryToggleWindowPin("true").then((result) => {
-    if (result) syncPinButton(result.pinned);
-  });
-  document.querySelectorAll(".cockpit-pin-btn").forEach((btnPin) => {
-    btnPin.addEventListener("click", () => {
-      tryToggleWindowPin("toggle").then((result) => {
-        if (result) syncPinButton(result.pinned);
-      });
-    });
-  });
+  // SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md: auto-pin on
+  // load + click-to-toggle + real-state refresh on focus, all pin buttons.
+  wirePinButtons();
   const buildStampEl = document.getElementById("build-stamp");
   if (buildStampEl) buildStampEl.textContent = BUILD_STAMP;
   const connEl = document.getElementById("conn-state");
@@ -3774,18 +3837,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=f211de0"),
-      import("./ide-helpers.mjs?v=f211de0"),
-      import("./refresh-helpers.mjs?v=f211de0"),
-      import("./transcript-model.mjs?v=f211de0"),
-      import("./scrollback-helpers.mjs?v=f211de0"),
-      import("./daemon-control-model.mjs?v=f211de0"),
-      import("./composer-state.mjs?v=f211de0"),
-      import("./app-menu-state.mjs?v=f211de0"),
-      import("./graph-backoff.mjs?v=f211de0"),
-      import("./share-model.mjs?v=f211de0"),
-      import("./share-ui-state.mjs?v=f211de0"),
-      import("./cockpit-health-model.mjs?v=f211de0"),
+      import("./write-helpers.mjs?v=13e3125"),
+      import("./ide-helpers.mjs?v=13e3125"),
+      import("./refresh-helpers.mjs?v=13e3125"),
+      import("./transcript-model.mjs?v=13e3125"),
+      import("./scrollback-helpers.mjs?v=13e3125"),
+      import("./daemon-control-model.mjs?v=13e3125"),
+      import("./composer-state.mjs?v=13e3125"),
+      import("./app-menu-state.mjs?v=13e3125"),
+      import("./graph-backoff.mjs?v=13e3125"),
+      import("./share-model.mjs?v=13e3125"),
+      import("./share-ui-state.mjs?v=13e3125"),
+      import("./cockpit-health-model.mjs?v=13e3125"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -3816,7 +3879,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=f211de0");
+      const guestModule = await import("./guest-app.mjs?v=13e3125");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,

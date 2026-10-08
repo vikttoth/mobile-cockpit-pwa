@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-10-08 10:40 CEST f211de0 in config.json + app.js).
+  script (replaces 2026-10-08 11:07 CEST 13e3125 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -48,11 +48,11 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=f211de0")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=13e3125")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=f211de0" />
+  <link rel="stylesheet" href="./style.css?v=13e3125" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
@@ -61,7 +61,18 @@
          window always-on-top (daemon/lib/window-pin.mjs, local-only --
          no-ops silently off the laptop, e.g. on the phone). Auto-pinned
          once at bootstrap too; this button is for re-pinning/unpinning. -->
-    <button type="button" id="btn-pin-topmost" class="cockpit-pin-btn" aria-pressed="false" title="Pin this window always on top">&#128204;</button>
+    <button type="button" id="btn-pin-topmost" class="cockpit-pin-btn" data-pin-state="unknown" aria-pressed="false"
+            aria-label="Always on top" title="Click to keep this window always on top.">
+      <svg class="cockpit-pin-icon cockpit-pin-icon-on" viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="5.5" r="4" fill="currentColor"/>
+        <path d="M8 9.5v5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <svg class="cockpit-pin-icon cockpit-pin-icon-off" viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="5.5" r="3.25" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M8 9.5v5.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M2.5 2.5l11 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
     <!-- SPEC-DELTA-2026-09-29-app-menu: account button (initials) + a red dot
          when something needs attention; the panel holds what used to be the
          header badge and the footer. Element ids unchanged. -->
@@ -175,11 +186,11 @@
         <button type="button" id="btn-tracker-exit" class="cockpit-tracker-exit-btn cockpit-back-btn"
                 data-target-view="v2-list" aria-label="Back to cockpit">&#8592;</button>
         <span id="tracker-summary" class="cockpit-tracker-summary" aria-live="polite"></span>
-        <!-- Tracker-only pin toggle: ON = solid accent pill + filled pin +
-             "Pinned"; OFF = hollow grey pill + outlined, struck-through pin +
-             "Not pinned". style.css shows exactly one icon/label per state. -->
-        <button type="button" id="btn-pin-topmost-tracker" class="cockpit-pin-btn cockpit-tracker-pin-btn" aria-pressed="false"
-                title="Not pinned. Click to keep this window always on top.">
+        <!-- Same pin toggle as the header's (#btn-pin-topmost): identical
+             markup and styling, same shared state -- the header is hidden
+             in Tracker mode, so the topbar carries its own copy. -->
+        <button type="button" id="btn-pin-topmost-tracker" class="cockpit-pin-btn" data-pin-state="unknown" aria-pressed="false"
+                aria-label="Always on top" title="Click to keep this window always on top.">
           <svg class="cockpit-pin-icon cockpit-pin-icon-on" viewBox="0 0 16 16" aria-hidden="true">
             <circle cx="8" cy="5.5" r="4" fill="currentColor"/>
             <path d="M8 9.5v5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -189,8 +200,6 @@
             <path d="M8 9.5v5.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
             <path d="M2.5 2.5l11 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
           </svg>
-          <span class="cockpit-pin-label cockpit-pin-label-on">Pinned</span>
-          <span class="cockpit-pin-label cockpit-pin-label-off">Not pinned</span>
         </button>
       </div>
       <div id="tracker-groups">
@@ -681,6 +690,6 @@
   </main>
 
 
-  <script src="./app.js?v=f211de0" defer></script>
+  <script src="./app.js?v=13e3125" defer></script>
 </body>
 </html>

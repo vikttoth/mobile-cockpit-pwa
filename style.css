@@ -376,12 +376,17 @@ body[data-view="shared-detail"] .cockpit-mode-toggle {
    mouse-driven -- the 44px touch-target rows and rem-based type below are
    correct for the phone PWA (real touch targets there) but waste most of a
    window this size. Scoped to hover+fine-pointer so the phone experience is
-   byte-for-byte unchanged. */
+   byte-for-byte unchanged.
+   2026-10-08 (Viktor: "lehet nagyobb"): the 11px root font moved out of here
+   -- the non-Tracker views are back at the normal 16px; only the Tracker
+   keeps a small font (its own rule below), a little larger than before. */
 @media (hover: hover) and (pointer: fine) {
   :root { --cp-gap: 8px; }
-  html { font-size: 11px; }
   .cockpit-session-row { padding: 3px var(--cp-gap); min-height: auto; }
 }
+/* Tracker-only root font (rem-based Tracker sizes scale with it); not
+   media-gated, same as the Tracker's one-line rows. */
+html:has(body[data-view="tracker"]) { font-size: 12px; }
 
 .cockpit-session-row {
   display: grid;
@@ -1269,38 +1274,44 @@ body[data-view="v2-detail"] main {
 .cockpit-app-menu .cockpit-daemon-control { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .cockpit-app-menu-build { color: var(--cp-muted); font-size: 0.8rem; }
 
-/* SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md. Two buttons
-   share this class (header + Tracker topbar -- the header is hidden
-   entirely while Tracker is open, so the pin control needs its own copy
-   there, see index.html). A color-only state change read as too subtle in
-   a small icon (Viktor's own feedback) -- the "off" state now also draws a
-   diagonal slash over the glyph via ::after, a plain CSS overlay rather
-   than a second emoji code point, so it renders identically regardless of
-   font/emoji support. */
+/* Pin toggle (AC-237), SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-
+   view.md. ONE look everywhere it appears -- the header and the Tracker
+   topbar (the header is hidden in Tracker mode) carry identical markup and
+   share every rule here. Icon only, no text (Viktor's ask). data-pin-state
+   is set by app.js from the daemon's REAL answer:
+     on          -> solid accent circle, filled pin
+     off/unknown -> hollow circle, outlined struck-through pin
+     unavailable -> the off look, dimmed: the local pin service didn't answer
+                    (daemon not running, or not at the laptop) */
 .cockpit-pin-btn {
-  position: relative;
-  min-height: 32px;
-  min-width: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  min-height: 26px;
   padding: 0;
-  font-size: 1rem;
+  border-radius: 50%;
+  border: 1px solid var(--cp-border);
   background: transparent;
-  border: 1px solid transparent;
   color: var(--cp-muted);
+  cursor: pointer;
 }
-.cockpit-pin-btn[aria-pressed="true"] {
-  color: var(--cp-accent);
+.cockpit-pin-btn:hover { border-color: var(--cp-accent); color: var(--cp-fg); }
+.cockpit-pin-btn[data-pin-state="on"] {
+  background: var(--cp-accent);
   border-color: var(--cp-accent);
+  color: #fff;
 }
-.cockpit-pin-btn[aria-pressed="false"]::after {
-  content: "";
-  position: absolute;
-  left: 18%;
-  right: 18%;
-  top: 50%;
-  height: 2px;
-  background: currentColor;
-  transform: translateY(-50%) rotate(-45deg);
-}
+.cockpit-pin-btn[data-pin-state="unavailable"] { opacity: 0.4; }
+.cockpit-pin-btn[data-pin-busy] { opacity: 0.6; cursor: progress; }
+.cockpit-pin-icon { width: 14px; height: 14px; flex: none; }
+.cockpit-pin-btn .cockpit-pin-icon-on,
+.cockpit-pin-btn[data-pin-state="on"] .cockpit-pin-icon-off { display: none; }
+.cockpit-pin-btn[data-pin-state="on"] .cockpit-pin-icon-on { display: block; }
+.cockpit-tracker-topbar .cockpit-pin-btn { margin-left: auto; }
 
 /* Tracker view: chrome-free, grouped rows only -- the whole point is
    maximizing usable rows in a small pinned window (AC-217). */
@@ -1324,42 +1335,6 @@ body[data-view="tracker"] .cockpit-mode-toggle {
   border: 1px solid var(--cp-border);
 }
 .cockpit-tracker-summary { font-size: 0.8rem; color: var(--cp-muted); }
-/* Tracker pin toggle (AC-233): the header's pin button is hidden in Tracker
-   mode, so the topbar carries its own. ON and OFF must read unambiguously at
-   a glance -- ON is a solid accent pill with a filled pin and "Pinned", OFF
-   is a hollow grey pill with an outlined, struck-through pin and "Not
-   pinned". Overrides the shared .cockpit-pin-btn look for this button only;
-   the header pin outside Tracker is unchanged. */
-.cockpit-pin-btn.cockpit-tracker-pin-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  min-height: 22px;
-  min-width: 0;
-  padding: 1px 8px;
-  border: 1px solid var(--cp-border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--cp-muted);
-  font-size: 0.8rem;
-  font-weight: 600;
-  line-height: 1.2;
-  cursor: pointer;
-}
-.cockpit-pin-btn.cockpit-tracker-pin-btn[aria-pressed]::after { content: none; }
-.cockpit-pin-btn.cockpit-tracker-pin-btn[aria-pressed="false"]:hover { border-color: var(--cp-accent); color: var(--cp-fg); }
-.cockpit-pin-btn.cockpit-tracker-pin-btn[aria-pressed="true"] {
-  background: var(--cp-accent);
-  border-color: var(--cp-accent);
-  color: #fff;
-}
-.cockpit-pin-icon { width: 12px; height: 12px; flex: none; }
-.cockpit-tracker-pin-btn[aria-pressed="true"] .cockpit-pin-icon-off,
-.cockpit-tracker-pin-btn[aria-pressed="true"] .cockpit-pin-label-off,
-.cockpit-tracker-pin-btn[aria-pressed="false"] .cockpit-pin-icon-on,
-.cockpit-tracker-pin-btn[aria-pressed="false"] .cockpit-pin-label-on { display: none; }
-
 /* Each source gets its own color (AC-235) so Claude Code / Cursor / Copilot
    are told apart at a glance: a tinted header band with a bold colored
    label, no divider lines. Hues deliberately avoid the status-dot colors
