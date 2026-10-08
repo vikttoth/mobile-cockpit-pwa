@@ -1407,6 +1407,7 @@ body[data-view="tracker"] .cockpit-mode-toggle {
 .cockpit-tracker-row[data-activating] { cursor: progress; opacity: 0.55; }
 .cockpit-tracker-row .cockpit-row-time,
 .cockpit-tracker-row .cockpit-row-source-badge { flex: none; }
+#view-tracker .cockpit-row-where { flex: none; font-size: 0.72rem; opacity: 0.7; white-space: nowrap; }
 /* Zero vertical padding and no min-height -- a row is exactly one text line
    tall, nothing on it (no 32px info button any more) can stretch it. NOT
    gated on (hover: hover) and (pointer: fine) like the general desktop

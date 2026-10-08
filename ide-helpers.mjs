@@ -357,6 +357,7 @@ export function trackerHoverText(row, nowMs) {
   }
   const meta = [];
   if (row?.sourceBadge) meta.push(row.sourceBadge);
+  if (row?.where) meta.push(row.where);
   if (row?.statusLabel) meta.push(row.statusLabel);
   if (row?.lastActivityAt) meta.push(`last active ${relativeIdeTime(row.lastActivityAt, nowMs)}`);
   if (meta.length > 0) lines.push(meta.join(" · "));

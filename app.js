@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-08 15:18 CEST c223ac9`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-08 15:18 CEST c223ac9";
+// `2026-10-08 16:56 CEST 051dc74`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-08 16:56 CEST 051dc74";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1312,7 +1312,7 @@ const CURSOR_ACTIVATE_TIMEOUT_MS = 500;
 // stays under Chromium's ~5 s user-activation window, so the window.open
 // fallback is never popup-blocked. The IDE Tracker list views keep the
 // 500 ms default (Viktor's Tracker-only rule).
-const TRACKER_CURSOR_ACTIVATE_TIMEOUT_MS = 10000;
+const TRACKER_CURSOR_ACTIVATE_TIMEOUT_MS = 40000;
 const TRACKER_BROWSER_ACTIVATE_TIMEOUT_MS = 4000;
 
 /**
@@ -1340,7 +1340,9 @@ async function tryActivateCursorTab(title, timeoutMs = CURSOR_ACTIVATE_TIMEOUT_M
     }
     if (!res.ok) return false;
     const data = await res.json();
-    return data.status === "activated";
+    // "window_only": Cursor was restored to the front but its tab tree is still rebuilding;
+    // the app is up, so do NOT also open the in-app thread view.
+    return data.status === "activated" || data.status === "window_only";
   } catch {
     return false;
   }
@@ -1351,7 +1353,7 @@ async function tryActivateCursorTab(title, timeoutMs = CURSOR_ACTIVATE_TIMEOUT_M
 // Cowork) activation endpoint.
 const BROWSER_ACTIVATE_URL = "http://127.0.0.1:4127/api/browser-tabs/activate";
 
-async function tryActivateBrowserTab(title, timeoutMs = CURSOR_ACTIVATE_TIMEOUT_MS, url = null) {
+async function tryActivateBrowserTab(title, timeoutMs = CURSOR_ACTIVATE_TIMEOUT_MS, target = null) {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -1360,7 +1362,7 @@ async function tryActivateBrowserTab(title, timeoutMs = CURSOR_ACTIVATE_TIMEOUT_
       res = await fetch(BROWSER_ACTIVATE_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(url ? { title, url } : { title }),
+        body: JSON.stringify(target ? { title, ...target } : { title }),
         signal: controller.signal,
       });
     } finally {
@@ -1660,6 +1662,13 @@ function buildTrackerList(rows, onActivate) {
       badge.textContent = row.sourceBadge;
       li.appendChild(badge);
     }
+    // Where this tab lives ("Chrome · tab 9", "2/3"): rows can share a title.
+    if (row.where) {
+      const where = document.createElement("span");
+      where.className = "cockpit-row-where";
+      where.textContent = row.where;
+      li.appendChild(where);
+    }
 
     if (row.lastActivityAt) {
       const time = document.createElement("time");
@@ -1790,7 +1799,19 @@ async function renderTrackerView() {
     activity: t.activity || null,
     sourceBadge: IDE_HELPERS.classifyCopilotKind(t.url) === "cowork" ? "Cowork" : "Copilot",
     tracked: t.source === "cdp",
+    // Precise identity of THIS tab (SPEC-DELTA-2026-10-08-tracker-activation-fixes.md): a CDP page
+    // id, or the plain browser's window handle + tab position -- identical titles are common.
+    targetId: t.targetId || null,
+    windowHandle: t.windowHandle ?? null,
+    tabIndex: t.tabIndex ?? null,
+    where: t.windowHandle != null && t.tabIndex != null ? `${t.browser || "Browser"} · tab ${t.tabIndex}` : null,
   }));
+  // Rows with the very same title and no position (e.g. two CDP "New chat" tabs) get "n/m".
+  const sameTitle = new Map();
+  for (const r of browserRows) if (!r.where) sameTitle.set(r.title, [...(sameTitle.get(r.title) || []), r]);
+  for (const group of sameTitle.values()) {
+    if (group.length > 1) group.forEach((r, i) => { r.where = `${i + 1}/${group.length}`; });
+  }
   // Tabs in a plain Chrome/Edge are title-only (no status, no request): they
   // go to their own group at the very bottom (Viktor, 2026-10-08).
   const trackedBrowserRows = browserRows.filter((r) => r.tracked);
@@ -1848,7 +1869,12 @@ async function renderTrackerView() {
   const activateBrowserRow = (row) => {
     // AC-241: only open the url when the existing tab really couldn't be
     // activated -- falling back early is what opened duplicate Copilot tabs.
-    return tryActivateBrowserTab(row.title, TRACKER_BROWSER_ACTIVATE_TIMEOUT_MS, row.tracked ? row.link : null).then((activated) => {
+    const target = row.tracked
+      ? { url: row.link, targetId: row.targetId }
+      : row.windowHandle != null && row.tabIndex != null
+        ? { windowHandle: row.windowHandle, tabIndex: row.tabIndex }
+        : null;
+    return tryActivateBrowserTab(row.title, TRACKER_BROWSER_ACTIVATE_TIMEOUT_MS, target).then((activated) => {
       if (!activated && row.link) window.open(row.link, "_blank", "noopener");
     });
   };
@@ -3971,18 +3997,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=c223ac9"),
-      import("./ide-helpers.mjs?v=c223ac9"),
-      import("./refresh-helpers.mjs?v=c223ac9"),
-      import("./transcript-model.mjs?v=c223ac9"),
-      import("./scrollback-helpers.mjs?v=c223ac9"),
-      import("./daemon-control-model.mjs?v=c223ac9"),
-      import("./composer-state.mjs?v=c223ac9"),
-      import("./app-menu-state.mjs?v=c223ac9"),
-      import("./graph-backoff.mjs?v=c223ac9"),
-      import("./share-model.mjs?v=c223ac9"),
-      import("./share-ui-state.mjs?v=c223ac9"),
-      import("./cockpit-health-model.mjs?v=c223ac9"),
+      import("./write-helpers.mjs?v=051dc74"),
+      import("./ide-helpers.mjs?v=051dc74"),
+      import("./refresh-helpers.mjs?v=051dc74"),
+      import("./transcript-model.mjs?v=051dc74"),
+      import("./scrollback-helpers.mjs?v=051dc74"),
+      import("./daemon-control-model.mjs?v=051dc74"),
+      import("./composer-state.mjs?v=051dc74"),
+      import("./app-menu-state.mjs?v=051dc74"),
+      import("./graph-backoff.mjs?v=051dc74"),
+      import("./share-model.mjs?v=051dc74"),
+      import("./share-ui-state.mjs?v=051dc74"),
+      import("./cockpit-health-model.mjs?v=051dc74"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4013,7 +4039,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=c223ac9");
+      const guestModule = await import("./guest-app.mjs?v=051dc74");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
