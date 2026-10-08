@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-10-08 12:22 CEST 89a4749 in config.json + app.js).
+  script (replaces 2026-10-08 12:49 CEST 80073f5 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -48,11 +48,11 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=89a4749")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=80073f5")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=89a4749" />
+  <link rel="stylesheet" href="./style.css?v=80073f5" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
@@ -209,6 +209,7 @@
         <span><span class="cockpit-row-status-dot" data-status="user"></span>waiting on you</span>
         <span><span class="cockpit-row-status-dot" data-status="none"></span>done / idle</span>
         <span><span class="cockpit-row-status-dot" data-status="problem"></span>problem</span>
+        <span><span class="cockpit-row-status-dot" data-status="unknown"></span>no runs yet / paused</span>
       </div>
       <div id="tracker-groups">
         <!-- Populated by app.js#renderTrackerView() with one <section> per
@@ -277,11 +278,14 @@
         No IDE tabs in this list yet.
       </p>
       <p id="ide-tabs-error-state" class="cockpit-error" hidden role="alert"></p>
-      <!-- SPEC-DELTA-2026-10-06-ide-tracker-summary-and-open-link.md: one shared,
-           fixed-size popover (repositioned/repopulated per row), not one DOM node
-           per row -- same "single shared sheet" pattern as #v2-settings-sheet. -->
-      <div id="ide-row-summary-popover" class="cockpit-row-summary-popover" hidden role="status"></div>
     </section>
+    <!-- SPEC-DELTA-2026-10-06-ide-tracker-summary-and-open-link.md: one shared,
+         fixed-size popover (repositioned/repopulated per row), not one DOM node
+         per row -- same "single shared sheet" pattern as #v2-settings-sheet.
+         Deliberately OUTSIDE any <section class="cockpit-view">: the Tracker
+         shows it too, and a descendant of the hidden #view-ide-tabs never
+         renders (the Tracker hover card was invisible until 2026-10-08). -->
+    <div id="ide-row-summary-popover" class="cockpit-row-summary-popover" hidden role="status"></div>
 
     <!--
       View 5: single IDE-tab detail (M2.1, read-only).
@@ -698,6 +702,6 @@
   </main>
 
 
-  <script src="./app.js?v=89a4749" defer></script>
+  <script src="./app.js?v=80073f5" defer></script>
 </body>
 </html>
