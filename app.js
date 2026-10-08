@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-08 13:15 CEST 3488eb9`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-08 13:15 CEST 3488eb9";
+// `2026-10-08 13:20 CEST 7c0402d`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-08 13:20 CEST 7c0402d";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1834,7 +1834,7 @@ async function renderTrackerView() {
     });
   };
   // One section, two named sub-groups (same shape as Claude Code's Routines/Active).
-  const copilotSubgroups = [{ label: "Tracked (Copilot Edge)", rows: trackedBrowserRows }];
+  const copilotSubgroups = [{ label: "Tracked (Playwright Edge)", rows: trackedBrowserRows }];
   if (untrackedBrowserRows.length > 0) {
     copilotSubgroups.push({ label: "Not trackable (plain Chrome/Edge)", rows: untrackedBrowserRows });
   }
@@ -3952,18 +3952,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=3488eb9"),
-      import("./ide-helpers.mjs?v=3488eb9"),
-      import("./refresh-helpers.mjs?v=3488eb9"),
-      import("./transcript-model.mjs?v=3488eb9"),
-      import("./scrollback-helpers.mjs?v=3488eb9"),
-      import("./daemon-control-model.mjs?v=3488eb9"),
-      import("./composer-state.mjs?v=3488eb9"),
-      import("./app-menu-state.mjs?v=3488eb9"),
-      import("./graph-backoff.mjs?v=3488eb9"),
-      import("./share-model.mjs?v=3488eb9"),
-      import("./share-ui-state.mjs?v=3488eb9"),
-      import("./cockpit-health-model.mjs?v=3488eb9"),
+      import("./write-helpers.mjs?v=7c0402d"),
+      import("./ide-helpers.mjs?v=7c0402d"),
+      import("./refresh-helpers.mjs?v=7c0402d"),
+      import("./transcript-model.mjs?v=7c0402d"),
+      import("./scrollback-helpers.mjs?v=7c0402d"),
+      import("./daemon-control-model.mjs?v=7c0402d"),
+      import("./composer-state.mjs?v=7c0402d"),
+      import("./app-menu-state.mjs?v=7c0402d"),
+      import("./graph-backoff.mjs?v=7c0402d"),
+      import("./share-model.mjs?v=7c0402d"),
+      import("./share-ui-state.mjs?v=7c0402d"),
+      import("./cockpit-health-model.mjs?v=7c0402d"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -3994,7 +3994,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=3488eb9");
+      const guestModule = await import("./guest-app.mjs?v=7c0402d");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
