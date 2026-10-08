@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-08 11:07 CEST 13e3125`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-08 11:07 CEST 13e3125";
+// `2026-10-08 11:19 CEST ffc3e18`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-08 11:19 CEST ffc3e18";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1304,18 +1304,29 @@ async function renderIdeTabsList() {
 // CORS for this PWA's own known hosted origins.
 const CURSOR_ACTIVATE_URL = "http://127.0.0.1:4127/api/cursor-tabs/activate";
 const CURSOR_ACTIVATE_TIMEOUT_MS = 500;
+// Tracker only (AC-241). Measured 2026-10-08 with a title matching no tab:
+// Cursor activation ~2.7 s (UI Automation priming + tree walk), browser-tab
+// activation ~0.75 s. A 500 ms budget made every Tracker click BOTH fall
+// back (in-app view / open the url in a new tab) AND, a moment later,
+// really jump -- a duplicate Copilot tab every time. The browser budget
+// stays under Chromium's ~5 s user-activation window, so the window.open
+// fallback is never popup-blocked. The IDE Tracker list views keep the
+// 500 ms default (Viktor's Tracker-only rule).
+const TRACKER_CURSOR_ACTIVATE_TIMEOUT_MS = 10000;
+const TRACKER_BROWSER_ACTIVATE_TIMEOUT_MS = 4000;
 
 /**
- * Best-effort, fast-failing: true only when the daemon's local server is up
- * AND found exactly one live Cursor tab matching `title`. Any failure
- * (daemon not running, not at the laptop, ambiguous/not-found match) resolves
- * to false quickly via the short timeout, so the caller can fall back to the
- * in-app preview without a visible hang.
+ * Best-effort: true only when the daemon's local server is up AND found
+ * exactly one live Cursor tab matching `title`. Any failure (daemon not
+ * running, not at the laptop, ambiguous/not-found match, `timeoutMs` passed)
+ * resolves to false, so the caller can fall back to the in-app preview.
+ * The default budget is short (IDE Tracker list views); the Tracker passes a
+ * realistic one (AC-241).
  */
-async function tryActivateCursorTab(title) {
+async function tryActivateCursorTab(title, timeoutMs = CURSOR_ACTIVATE_TIMEOUT_MS) {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), CURSOR_ACTIVATE_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     let res;
     try {
       res = await fetch(CURSOR_ACTIVATE_URL, {
@@ -1340,10 +1351,10 @@ async function tryActivateCursorTab(title) {
 // Cowork) activation endpoint.
 const BROWSER_ACTIVATE_URL = "http://127.0.0.1:4127/api/browser-tabs/activate";
 
-async function tryActivateBrowserTab(title) {
+async function tryActivateBrowserTab(title, timeoutMs = CURSOR_ACTIVATE_TIMEOUT_MS) {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), CURSOR_ACTIVATE_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     let res;
     try {
       res = await fetch(BROWSER_ACTIVATE_URL, {
@@ -1555,11 +1566,23 @@ function appendTrackerGroup(container, label, rows, onActivate, sourceKey) {
     // looking left- vs right-aligned depending on source (AC-226).
     li.className = "cockpit-session-row cockpit-tracker-row";
     li.tabIndex = 0;
-    li.addEventListener("click", () => onActivate(row));
+    // A jump can take ~1-3 s (AC-241): mark the row busy meanwhile and
+    // ignore repeat clicks on it, so one click is exactly one jump.
+    const activate = () => {
+      if (li.dataset.activating) return;
+      const pending = onActivate(row);
+      if (pending && typeof pending.finally === "function") {
+        li.dataset.activating = "true";
+        pending.finally(() => {
+          delete li.dataset.activating;
+        });
+      }
+    };
+    li.addEventListener("click", activate);
     li.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" || ev.key === " ") {
         ev.preventDefault();
-        onActivate(row);
+        activate();
       }
     });
 
@@ -1712,7 +1735,9 @@ async function renderTrackerView() {
     // cursorSnap before opening the in-app detail view -- otherwise it could
     // show stale or wrong-source data left over from whatever the Cursor/
     // Claude Code/Browser sub-views last loaded.
-    tryActivateCursorTab(row.title).then((activated) => {
+    // AC-241: wait for the daemon's real answer (~2.7 s for Cursor) before
+    // falling back -- see TRACKER_CURSOR_ACTIVATE_TIMEOUT_MS.
+    return tryActivateCursorTab(row.title, TRACKER_CURSOR_ACTIVATE_TIMEOUT_MS).then((activated) => {
       if (activated) return;
       ideTrackerSource = "cursor";
       cachedIdeSnapshot = cursorSnap;
@@ -1720,7 +1745,9 @@ async function renderTrackerView() {
     });
   }, "cursor");
   appendTrackerGroup(groupsEl, "Copilot / Cowork", browserRows, (row) => {
-    tryActivateBrowserTab(row.title).then((activated) => {
+    // AC-241: only open the url when the existing tab really couldn't be
+    // activated -- falling back early is what opened duplicate Copilot tabs.
+    return tryActivateBrowserTab(row.title, TRACKER_BROWSER_ACTIVATE_TIMEOUT_MS).then((activated) => {
       if (!activated && row.link) window.open(row.link, "_blank", "noopener");
     });
   }, "copilot");
@@ -3837,18 +3864,18 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=13e3125"),
-      import("./ide-helpers.mjs?v=13e3125"),
-      import("./refresh-helpers.mjs?v=13e3125"),
-      import("./transcript-model.mjs?v=13e3125"),
-      import("./scrollback-helpers.mjs?v=13e3125"),
-      import("./daemon-control-model.mjs?v=13e3125"),
-      import("./composer-state.mjs?v=13e3125"),
-      import("./app-menu-state.mjs?v=13e3125"),
-      import("./graph-backoff.mjs?v=13e3125"),
-      import("./share-model.mjs?v=13e3125"),
-      import("./share-ui-state.mjs?v=13e3125"),
-      import("./cockpit-health-model.mjs?v=13e3125"),
+      import("./write-helpers.mjs?v=ffc3e18"),
+      import("./ide-helpers.mjs?v=ffc3e18"),
+      import("./refresh-helpers.mjs?v=ffc3e18"),
+      import("./transcript-model.mjs?v=ffc3e18"),
+      import("./scrollback-helpers.mjs?v=ffc3e18"),
+      import("./daemon-control-model.mjs?v=ffc3e18"),
+      import("./composer-state.mjs?v=ffc3e18"),
+      import("./app-menu-state.mjs?v=ffc3e18"),
+      import("./graph-backoff.mjs?v=ffc3e18"),
+      import("./share-model.mjs?v=ffc3e18"),
+      import("./share-ui-state.mjs?v=ffc3e18"),
+      import("./cockpit-health-model.mjs?v=ffc3e18"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -3879,7 +3906,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=13e3125");
+      const guestModule = await import("./guest-app.mjs?v=ffc3e18");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
