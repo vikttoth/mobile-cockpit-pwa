@@ -400,6 +400,60 @@ export function trackerHoverText(row, nowMs) {
   return lines.join("\n");
 }
 
+const HOVER_MAX_BULLETS = 4;
+const HOVER_MAX_BULLET_CHARS = 160;
+
+/** Splits free text into short bullets: lines, then sentences; markers stripped; capped. */
+export function hoverBullets(text) {
+  if (typeof text !== "string") return [];
+  const parts = [];
+  for (const line of text.split(/\r?\n/)) {
+    const clean = line.replace(/^\s*(?:[-*\u2022]|\d+[.)])\s+/, "").trim();
+    if (!clean) continue;
+    for (const sentence of clean.split(/(?<=[.!?])\s+/)) {
+      const t = sentence.trim();
+      if (t) parts.push(t);
+    }
+  }
+  const clamp = (t) => (t.length > HOVER_MAX_BULLET_CHARS ? `${t.slice(0, HOVER_MAX_BULLET_CHARS - 1).trimEnd()}\u2026` : t);
+  const out = parts.slice(0, HOVER_MAX_BULLETS).map(clamp);
+  if (parts.length > HOVER_MAX_BULLETS && !out[out.length - 1].endsWith("\u2026")) out[out.length - 1] += "\u2026";
+  return out;
+}
+
+/**
+ * Structured model for the Tracker hover card (SPEC-DELTA-2026-10-09-tracker-hover-structured.md):
+ * what to see first (needs / TL;DR), then labelled bullet sections, footer last.
+ * Content is passed through untranslated.
+ * @returns {{title:string, status:{label:string,kind:string|null}|null, needs:string|null, tldr:string|null, sections:{label:string,bullets:string[]}[], meta:string}}
+ */
+export function trackerHoverModel(row, nowMs) {
+  const str = (v) => (typeof v === "string" ? v.trim() : "");
+  const title = str(row?.title) || "(untitled)";
+  const reply = str(row?.activity?.reply);
+  const ask = str(row?.activity?.ask);
+  const summary = str(row?.summary);
+  let tldr = str(row?.digest) || null;
+  if (!tldr && !reply && !ask && summary && summary !== title) tldr = summary;
+  const sections = [];
+  const nowBullets = hoverBullets(reply);
+  const askBullets = hoverBullets(ask);
+  if (nowBullets.length) sections.push({ label: "Now", bullets: nowBullets });
+  if (askBullets.length) sections.push({ label: "Asked", bullets: askBullets });
+  const meta = [];
+  if (row?.sourceBadge) meta.push(row.sourceBadge);
+  if (row?.where) meta.push(row.where);
+  if (row?.lastActivityAt) meta.push(`last active ${relativeIdeTime(row.lastActivityAt, nowMs)}`);
+  return {
+    title,
+    status: row?.statusLabel ? { label: row.statusLabel, kind: row.statusKind || null } : null,
+    needs: str(row?.needsAction) || null,
+    tldr,
+    sections,
+    meta: meta.join(" \u00b7 "),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tracker collapsible groups (SPEC-DELTA-2026-10-09-tracker-collapsible-groups.md,
 // AC-288..AC-292). The state is a plain array of "closed" keys.

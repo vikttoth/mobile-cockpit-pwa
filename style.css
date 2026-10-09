@@ -1534,6 +1534,39 @@ body[data-view="tracker"] .cockpit-mode-toggle {
   width: 360px;
   overflow-wrap: anywhere;
 }
+/* Structured card (SPEC-DELTA-2026-10-09-tracker-hover-structured): headline first. */
+.cockpit-row-summary-popover[data-context="tracker"]:has(.tk-hover-head) { white-space: normal; }
+.tk-hover-head { display: flex; align-items: flex-start; gap: 8px; }
+.tk-hover-title { flex: 1 1 auto; min-width: 0; font-weight: 700; font-size: 0.95rem; line-height: 1.3; }
+.tk-hover-chip {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--cp-muted);
+}
+.tk-hover-chip[data-status="agent"] { background: var(--cp-accent); }
+.tk-hover-chip[data-status="user"] { background: var(--cp-warning); }
+.tk-hover-chip[data-status="none"] { background: var(--cp-success); }
+.tk-hover-chip[data-status="problem"] { background: var(--cp-error); }
+.tk-hover-needs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--cp-warning);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--cp-warning) 14%, transparent);
+}
+.tk-hover-needs strong { color: var(--cp-warning); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.tk-hover-tldr { margin-top: 8px; font-weight: 600; font-size: 0.92rem; line-height: 1.35; }
+.tk-hover-label { margin-top: 8px; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--cp-muted); }
+.tk-hover-list { margin: 2px 0 0; padding-left: 18px; }
+.tk-hover-list li { margin: 1px 0; }
+.tk-hover-meta { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--cp-border); font-size: 0.75rem; color: var(--cp-muted); }
 
 /* ---------------------------------------------------------------------------
    Session sharing Stage 2 (SPEC-DELTA-2026-09-29-session-sharing-stage2)

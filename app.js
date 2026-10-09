@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-09 09:18 CEST ae82311`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-09 09:18 CEST ae82311";
+// `2026-10-09 09:47 CEST d925426`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-09 09:47 CEST d925426";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1597,10 +1597,48 @@ function v2StatusToTrackerStatus(status) {
 // (Viktor asked for detail on hovering the ROW, not via a separate button).
 // data-context lets style.css give it multi-line + click-through behavior
 // in the Tracker only, leaving the IDE-tabs list's popover untouched.
-function showTrackerRowPopover(anchorEl, text) {
+function showTrackerRowPopover(anchorEl, text, model) {
   showIdeRowSummaryPopover(anchorEl, text);
   const popover = document.getElementById("ide-row-summary-popover");
-  if (popover) popover.dataset.context = "tracker";
+  if (!popover) return;
+  popover.dataset.context = "tracker";
+  if (model) {
+    renderTrackerHoverCard(popover, model);
+    positionIdeRowSummaryPopover(popover, anchorEl);
+  }
+}
+
+// SPEC-DELTA-2026-10-09-tracker-hover-structured.md: textContent only, never innerHTML.
+function renderTrackerHoverCard(popover, model) {
+  const el = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  };
+  popover.textContent = "";
+  const head = el("div", "tk-hover-head");
+  head.appendChild(el("div", "tk-hover-title", model.title));
+  if (model.status) {
+    const chip = el("span", "tk-hover-chip", model.status.label);
+    if (model.status.kind) chip.dataset.status = model.status.kind;
+    head.appendChild(chip);
+  }
+  popover.appendChild(head);
+  if (model.needs) {
+    const bar = el("div", "tk-hover-needs");
+    bar.appendChild(el("strong", null, "Needs you"));
+    bar.appendChild(el("span", null, model.needs));
+    popover.appendChild(bar);
+  }
+  if (model.tldr) popover.appendChild(el("div", "tk-hover-tldr", model.tldr));
+  for (const sec of model.sections) {
+    popover.appendChild(el("div", "tk-hover-label", sec.label));
+    const ul = el("ul", "tk-hover-list");
+    for (const b of sec.bullets) ul.appendChild(el("li", null, b));
+    popover.appendChild(ul);
+  }
+  if (model.meta) popover.appendChild(el("div", "tk-hover-meta", model.meta));
 }
 
 function hideTrackerRowPopover() {
@@ -1859,7 +1897,8 @@ function buildTrackerList(rows, onActivate, action = null) {
     // button -- its 32px touch-target min-height was what kept every
     // summary-carrying row about twice as tall as its text.
     const hoverText = IDE_HELPERS.trackerHoverText(row, Date.now());
-    li.addEventListener("mouseenter", () => showTrackerRowPopover(li, hoverText));
+    const hoverModel = IDE_HELPERS.trackerHoverModel(row, Date.now());
+    li.addEventListener("mouseenter", () => showTrackerRowPopover(li, hoverText, hoverModel));
     li.addEventListener("mouseleave", hideTrackerRowPopover);
 
     ul.appendChild(li);
@@ -4193,19 +4232,19 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE] = await Promise.all([
-      import("./write-helpers.mjs?v=ae82311"),
-      import("./ide-helpers.mjs?v=ae82311"),
-      import("./refresh-helpers.mjs?v=ae82311"),
-      import("./transcript-model.mjs?v=ae82311"),
-      import("./scrollback-helpers.mjs?v=ae82311"),
-      import("./daemon-control-model.mjs?v=ae82311"),
-      import("./composer-state.mjs?v=ae82311"),
-      import("./app-menu-state.mjs?v=ae82311"),
-      import("./graph-backoff.mjs?v=ae82311"),
-      import("./share-model.mjs?v=ae82311"),
-      import("./share-ui-state.mjs?v=ae82311"),
-      import("./cockpit-health-model.mjs?v=ae82311"),
-      import("./model-choice.mjs?v=ae82311"),
+      import("./write-helpers.mjs?v=d925426"),
+      import("./ide-helpers.mjs?v=d925426"),
+      import("./refresh-helpers.mjs?v=d925426"),
+      import("./transcript-model.mjs?v=d925426"),
+      import("./scrollback-helpers.mjs?v=d925426"),
+      import("./daemon-control-model.mjs?v=d925426"),
+      import("./composer-state.mjs?v=d925426"),
+      import("./app-menu-state.mjs?v=d925426"),
+      import("./graph-backoff.mjs?v=d925426"),
+      import("./share-model.mjs?v=d925426"),
+      import("./share-ui-state.mjs?v=d925426"),
+      import("./cockpit-health-model.mjs?v=d925426"),
+      import("./model-choice.mjs?v=d925426"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4236,7 +4275,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=ae82311");
+      const guestModule = await import("./guest-app.mjs?v=d925426");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
