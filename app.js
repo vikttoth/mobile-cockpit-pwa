@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-08 17:28 CEST 8cc9777`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-08 17:28 CEST 8cc9777";
+// `2026-10-09 08:22 CEST 7d8a394`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-09 08:22 CEST 7d8a394";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -137,6 +137,10 @@ let suppressHashSync = false;
  *  byte-for-byte mirror of lib/transcript-model.mjs (see
  *  pwa-transcript-model-coherence.sh). Populated by bootstrap(). */
 let V2_MODEL = null;
+
+/** Pure "is this model id one the CLI accepts?" helpers -- ./model-choice.mjs
+ *  (SPEC-DELTA-2026-10-08-model-catalog-drift-guard). Populated by bootstrap(). */
+let MODEL_CHOICE = null;
 
 /** Cached last-known v2 sessions.json index. */
 let cachedV2Index = null;
@@ -957,12 +961,21 @@ function translateErrorMessage(raw) {
 // catalog (mirrored from lib/config.mjs#MODEL_OPTIONS).
 const LAST_MODEL_STORAGE_KEY = "mc-last-model";
 
+/** Ids currently offered by CONFIG.session.modelOptions (== lib/config.mjs#MODEL_OPTIONS). */
+function modelOptionIds() {
+  return ((CONFIG && CONFIG.session && CONFIG.session.modelOptions) || []).map((o) => o.id);
+}
+
 function getLastUsedModel() {
+  let stored = "auto";
   try {
-    return localStorage.getItem(LAST_MODEL_STORAGE_KEY) || "auto";
+    stored = localStorage.getItem(LAST_MODEL_STORAGE_KEY) || "auto";
   } catch (_err) {
-    return "auto";
+    stored = "auto";
   }
+  // AC-275 (SPEC-DELTA-2026-10-08-model-catalog-drift-guard): a stored id the
+  // catalog no longer offers must not preselect nothing -- it falls back to auto.
+  return MODEL_CHOICE ? MODEL_CHOICE.resolveModelChoice(stored, modelOptionIds()).model : stored;
 }
 
 function setLastUsedModel(model) {
@@ -1006,7 +1019,9 @@ function populateModelSelect(selectId) {
   const select = document.getElementById(selectId);
   if (!select) return;
   const options = (CONFIG.session && CONFIG.session.modelOptions) || [];
-  if (select.options.length === options.length) return;
+  // The stale-model option (syncStaleModelOption) is extra, not part of the catalog.
+  const catalogCount = Array.from(select.options).filter((o) => !o.dataset.stale).length;
+  if (catalogCount === options.length) return;
   select.innerHTML = "";
 
   const byId = new Map(options.map((o) => [o.id, o]));
@@ -1032,6 +1047,31 @@ function populateModelSelect(selectId) {
     cliGroup.appendChild(opt);
   }
   if (cliGroup.childElementCount > 0) select.appendChild(cliGroup);
+}
+
+/**
+ * AC-277 (SPEC-DELTA-2026-10-08-model-catalog-drift-guard): a session whose
+ * recorded model the catalog no longer offers would render a blank select.
+ * Show it instead as one disabled, selected option ("<id> (unavailable — runs
+ * as Auto)"); the daemon runs such a session as `auto` (AC-278). Idempotent,
+ * and removes the option again once the record's model is a listed one.
+ *
+ * @param {HTMLSelectElement|null} select
+ * @param {string|null|undefined} recordModel
+ */
+function syncStaleModelOption(select, recordModel) {
+  if (!select) return;
+  const stale = MODEL_CHOICE ? MODEL_CHOICE.describeStaleModelOption(recordModel, modelOptionIds()) : null;
+  for (const o of Array.from(select.options)) {
+    if (o.dataset.stale && (!stale || o.value !== stale.value)) o.remove();
+  }
+  if (!stale || Array.from(select.options).some((o) => o.dataset.stale)) return;
+  const opt = document.createElement("option");
+  opt.value = stale.value;
+  opt.textContent = stale.label;
+  opt.disabled = stale.disabled;
+  opt.dataset.stale = "1";
+  select.insertBefore(opt, select.firstChild);
 }
 
 /**
@@ -2455,6 +2495,7 @@ async function renderV2Detail(sessionId) {
 
   populateModelSelect("v2-detail-model-input");
   const modelInput = document.getElementById("v2-detail-model-input");
+  syncStaleModelOption(modelInput, record.model);
   if (modelInput) {
     modelInput.value = record.model || "auto";
     modelInput.dataset.priorValue = modelInput.value;
@@ -3007,15 +3048,19 @@ async function handleV2NewSubmit(ev) {
   // Item C: no "Session id" field to validate -- v2CreateSession mints an
   // internal id automatically.
   if (submitBtn) submitBtn.disabled = true;
+  // AC-276: an empty/unlisted value is never sent -- resolveModelChoice falls back to auto.
+  const model = MODEL_CHOICE
+    ? MODEL_CHOICE.resolveModelChoice(modelEl ? modelEl.value : "", modelOptionIds()).model
+    : (modelEl ? modelEl.value.trim() : "") || "auto";
   try {
     const record = await v2CreateSession({
       cwd: cwdEl ? cwdEl.value : "",
-      model: modelEl ? modelEl.value.trim() : "",
+      model,
       mode: modeEl ? modeEl.value : "",
       parentId: null,
       firstMessage: messageEl ? messageEl.value : "",
     });
-    setLastUsedModel(modelEl ? modelEl.value.trim() : "");
+    setLastUsedModel(model);
     setView("v2-detail", { sessionId: record.id });
   } catch (err) {
     showV2NewError(err.message);
@@ -3996,19 +4041,20 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     let GRAPH_BACKOFF_HELPERS;
-    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=8cc9777"),
-      import("./ide-helpers.mjs?v=8cc9777"),
-      import("./refresh-helpers.mjs?v=8cc9777"),
-      import("./transcript-model.mjs?v=8cc9777"),
-      import("./scrollback-helpers.mjs?v=8cc9777"),
-      import("./daemon-control-model.mjs?v=8cc9777"),
-      import("./composer-state.mjs?v=8cc9777"),
-      import("./app-menu-state.mjs?v=8cc9777"),
-      import("./graph-backoff.mjs?v=8cc9777"),
-      import("./share-model.mjs?v=8cc9777"),
-      import("./share-ui-state.mjs?v=8cc9777"),
-      import("./cockpit-health-model.mjs?v=8cc9777"),
+    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE] = await Promise.all([
+      import("./write-helpers.mjs?v=7d8a394"),
+      import("./ide-helpers.mjs?v=7d8a394"),
+      import("./refresh-helpers.mjs?v=7d8a394"),
+      import("./transcript-model.mjs?v=7d8a394"),
+      import("./scrollback-helpers.mjs?v=7d8a394"),
+      import("./daemon-control-model.mjs?v=7d8a394"),
+      import("./composer-state.mjs?v=7d8a394"),
+      import("./app-menu-state.mjs?v=7d8a394"),
+      import("./graph-backoff.mjs?v=7d8a394"),
+      import("./share-model.mjs?v=7d8a394"),
+      import("./share-ui-state.mjs?v=7d8a394"),
+      import("./cockpit-health-model.mjs?v=7d8a394"),
+      import("./model-choice.mjs?v=7d8a394"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4039,7 +4085,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=8cc9777");
+      const guestModule = await import("./guest-app.mjs?v=7d8a394");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
