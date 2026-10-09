@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-09 10:01 CEST c3454ad`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-09 10:01 CEST c3454ad";
+// `2026-10-09 10:19 CEST 0358800`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-09 10:19 CEST 0358800";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1946,8 +1946,7 @@ async function renderTrackerView() {
   const hasClaudeTracker = !!claudeTracker && Array.isArray(claudeTracker.groups) && Array.isArray(claudeTracker.routines);
   const claudeSubgroups = hasClaudeTracker
     ? [
-        // Pinned on top, then Routines, as in the Claude app's own sidebar (Viktor, 2026-10-08/09).
-        { label: "Pinned", rows: (claudeTracker.pinned || []).map(claudeTrackerRow) },
+        // Routines first, as in the Claude app's own sidebar (Viktor, 2026-10-08).
         { label: "Routines", rows: (claudeTracker.routines || []).map(claudeTrackerRow) },
         ...TRACKER_CLAUDE_GROUPS.map((name) => ({
           label: name,
@@ -1955,6 +1954,8 @@ async function renderTrackerView() {
         })),
       ]
     : null;
+  // Pinned is its own section above everything, as in the Claude app (Viktor, 2026-10-09).
+  const claudePinnedRows = hasClaudeTracker ? (claudeTracker.pinned || []).map(claudeTrackerRow) : [];
   const claudeRows = hasClaudeTracker
     ? []
     : (claudeSnap.openTabs || []).map((t) => ({
@@ -1967,7 +1968,7 @@ async function renderTrackerView() {
         summary: t.summary || null,
         activity: t.activity || null,
       }));
-  const claudeCount = claudeSubgroups ? claudeSubgroups.reduce((n, sg) => n + sg.rows.length, 0) : claudeRows.length;
+  const claudeCount = (claudeSubgroups ? claudeSubgroups.reduce((n, sg) => n + sg.rows.length, 0) : claudeRows.length) + claudePinnedRows.length;
   // Only worth saying when there is nothing to show; with last-good data the
   // mirror's error is transient and the rows are right.
   const claudeHint = hasClaudeTracker && claudeTracker.error && claudeCount === 0 ? `Claude data unavailable: ${claudeTracker.error}` : null;
@@ -2043,6 +2044,7 @@ async function renderTrackerView() {
     for (const r of rows) r.digest = IDE_HELPERS.pickDigest(digestsDoc, IDE_HELPERS.digestRowKey(source, r), r.activity);
   };
   attachDigests("claude", claudeRows);
+  attachDigests("claude", claudePinnedRows);
   for (const sg of claudeSubgroups || []) attachDigests("claude", sg.rows);
   attachDigests("cursor", cursorGuiRows);
   attachDigests("browser", browserRows);
@@ -2066,6 +2068,10 @@ async function renderTrackerView() {
   empty.hidden = true;
   groupsEl.hidden = false;
 
+  const openClaudeRow = (row) => {
+    if (row.link) window.open(row.link, "_blank", "noopener");
+  };
+  if (claudePinnedRows.length > 0) appendTrackerGroup(groupsEl, "Pinned", claudePinnedRows, openClaudeRow, "pinned");
   appendTrackerGroup(groupsEl, "Claude Code", claudeRows, (row) => {
     if (row.link) window.open(row.link, "_blank", "noopener");
   }, "claude", claudeSubgroups, claudeHint);
@@ -4235,19 +4241,19 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE] = await Promise.all([
-      import("./write-helpers.mjs?v=c3454ad"),
-      import("./ide-helpers.mjs?v=c3454ad"),
-      import("./refresh-helpers.mjs?v=c3454ad"),
-      import("./transcript-model.mjs?v=c3454ad"),
-      import("./scrollback-helpers.mjs?v=c3454ad"),
-      import("./daemon-control-model.mjs?v=c3454ad"),
-      import("./composer-state.mjs?v=c3454ad"),
-      import("./app-menu-state.mjs?v=c3454ad"),
-      import("./graph-backoff.mjs?v=c3454ad"),
-      import("./share-model.mjs?v=c3454ad"),
-      import("./share-ui-state.mjs?v=c3454ad"),
-      import("./cockpit-health-model.mjs?v=c3454ad"),
-      import("./model-choice.mjs?v=c3454ad"),
+      import("./write-helpers.mjs?v=0358800"),
+      import("./ide-helpers.mjs?v=0358800"),
+      import("./refresh-helpers.mjs?v=0358800"),
+      import("./transcript-model.mjs?v=0358800"),
+      import("./scrollback-helpers.mjs?v=0358800"),
+      import("./daemon-control-model.mjs?v=0358800"),
+      import("./composer-state.mjs?v=0358800"),
+      import("./app-menu-state.mjs?v=0358800"),
+      import("./graph-backoff.mjs?v=0358800"),
+      import("./share-model.mjs?v=0358800"),
+      import("./share-ui-state.mjs?v=0358800"),
+      import("./cockpit-health-model.mjs?v=0358800"),
+      import("./model-choice.mjs?v=0358800"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4297,7 +4303,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=c3454ad");
+      const guestModule = await import("./guest-app.mjs?v=0358800");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
