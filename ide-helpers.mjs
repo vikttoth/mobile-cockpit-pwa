@@ -287,6 +287,42 @@ export function classifyCopilotKind(url) {
   return "copilot";
 }
 
+// How long after a successful launch the Start row keeps saying "Starting…": the
+// next browser-tabs snapshot (poll + OneDrive + PWA refresh) lags the real Edge.
+export const COPILOT_EDGE_LAUNCH_GRACE_MS = 90_000;
+
+/**
+ * SPEC-DELTA-2026-10-08-copilot-edge-start-button.md (AC-283/AC-284): the one
+ * "Playwright Edge is not running" row of the Tracker's "Tracked (Playwright
+ * Edge)" sub-group. null unless the snapshot says the watch Edge is DOWN --
+ * a snapshot without `copilotWatch` (older daemon) is "unknown", never "down".
+ * @param {{up?: boolean}|null|undefined} copilotWatch  the snapshot's field
+ * @param {{state: "idle"|"starting"|"launched"|"failed", at?: number}} start  the PWA's own start state
+ * @param {number} nowMs
+ * @returns {null|{title: string, actionLabel: string|null, busy: boolean}}
+ */
+export function copilotWatchStartRow(copilotWatch, start, nowMs) {
+  if (!copilotWatch || copilotWatch.up !== false) return null;
+  const state = start?.state;
+  if (state === "starting") return { title: "Starting…", actionLabel: null, busy: true };
+  if (state === "launched" && Number.isFinite(start.at) && nowMs - start.at < COPILOT_EDGE_LAUNCH_GRACE_MS) {
+    return { title: "Starting…", actionLabel: null, busy: true };
+  }
+  if (state === "failed") return { title: "Start failed — tap to retry", actionLabel: "Start", busy: false };
+  return { title: "Playwright Edge is not running", actionLabel: "Start", busy: false };
+}
+
+/**
+ * The PWA's start state after the daemon answered (or did not) a Start tap.
+ * @param {{status?: string}|null|undefined} answer parsed response body, null when there was none
+ * @param {number} nowMs
+ * @returns {{state: "launched", at: number}|{state: "failed"}}
+ */
+export function copilotEdgeStartOutcome(answer, nowMs) {
+  const status = answer && answer.status;
+  return status === "started" || status === "already_running" ? { state: "launched", at: nowMs } : { state: "failed" };
+}
+
 /**
  * Content hash of a row's current activity (FNV-1a, sync so the PWA and the
  * digest daemon compute the exact same value). A stored LLM digest is only

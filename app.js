@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-09 08:22 CEST 7d8a394`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-09 08:22 CEST 7d8a394";
+// `2026-10-09 08:33 CEST 8910066`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-09 08:33 CEST 8910066";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1416,6 +1416,36 @@ async function tryActivateBrowserTab(title, timeoutMs = CURSOR_ACTIVATE_TIMEOUT_
   }
 }
 
+// SPEC-DELTA-2026-10-08-copilot-edge-start-button.md: the Tracker's Start row brings the
+// closed Playwright (copilot-watch) Edge back. Same local-only shape as the activations
+// above: off the laptop the fetch just fails and the row says so.
+const COPILOT_EDGE_START_URL = "http://127.0.0.1:4127/api/copilot-edge/start";
+// The daemon answers when the launcher is done (a cold Edge start can take ~90 s).
+const COPILOT_EDGE_START_TIMEOUT_MS = 125000;
+// idle | starting | launched | failed -- see ide-helpers.mjs#copilotWatchStartRow.
+let copilotEdgeStart = { state: "idle" };
+
+async function tryStartCopilotEdge() {
+  if (copilotEdgeStart.state === "starting") return;
+  copilotEdgeStart = { state: "starting" };
+  renderTrackerView();
+  let answer = null;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), COPILOT_EDGE_START_TIMEOUT_MS);
+    try {
+      const res = await fetch(COPILOT_EDGE_START_URL, { method: "POST", signal: controller.signal });
+      if (res.ok) answer = await res.json();
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    answer = null;
+  }
+  copilotEdgeStart = IDE_HELPERS.copilotEdgeStartOutcome(answer, Date.now());
+  renderTrackerView();
+}
+
 // -----------------------------------------------------------------------------
 // Window pin (SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md).
 // Same local-only, silent-off-the-laptop shape as tryActivateCursorTab/
@@ -1638,14 +1668,50 @@ function appendTrackerGroup(container, label, rows, onActivate, sourceKey, subgr
     sub.className = "cockpit-tracker-subgroup-title";
     sub.textContent = `${sg.label} (${sg.rows.length})`;
     section.appendChild(sub);
-    section.appendChild(buildTrackerList(sg.rows, onActivate));
+    section.appendChild(buildTrackerList(sg.rows, onActivate, sg.action || null));
   }
 }
 
-function buildTrackerList(rows, onActivate) {
+// One non-counted action row at the end of a sub-group (the Playwright Edge "Start" row).
+// `action` = {title, actionLabel, busy, onActivate} (ide-helpers.mjs#copilotWatchStartRow).
+function buildTrackerActionRow(action) {
+  const li = document.createElement("li");
+  li.className = "cockpit-session-row cockpit-tracker-row cockpit-tracker-action-row";
+  li.dataset.busy = action.busy ? "true" : "false";
+  li.tabIndex = 0;
+  const dot = document.createElement("span");
+  dot.className = "cockpit-row-status-dot";
+  dot.dataset.status = action.busy ? "agent" : "unknown";
+  li.appendChild(dot);
+  const titleEl = document.createElement("span");
+  titleEl.className = "cockpit-row-title";
+  titleEl.textContent = action.title;
+  li.appendChild(titleEl);
+  if (action.actionLabel) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cockpit-tracker-action-btn";
+    btn.textContent = action.actionLabel;
+    li.appendChild(btn);
+  }
+  const run = () => {
+    if (!action.busy) action.onActivate();
+  };
+  // The button's own click bubbles here; Enter/Space only count on the row itself.
+  li.addEventListener("click", run);
+  li.addEventListener("keydown", (ev) => {
+    if (ev.target === li && (ev.key === "Enter" || ev.key === " ")) {
+      ev.preventDefault();
+      run();
+    }
+  });
+  return li;
+}
+
+function buildTrackerList(rows, onActivate, action = null) {
   const ul = document.createElement("ul");
   ul.className = "cockpit-session-list";
-  if (rows.length === 0) {
+  if (rows.length === 0 && !action) {
     const li = document.createElement("li");
     li.className = "cockpit-hint";
     li.textContent = "Nothing open.";
@@ -1727,6 +1793,7 @@ function buildTrackerList(rows, onActivate) {
 
     ul.appendChild(li);
   }
+  if (action) ul.appendChild(buildTrackerActionRow(action));
   return ul;
 }
 
@@ -1867,11 +1934,18 @@ async function renderTrackerView() {
   attachDigests("cursor", cursorGuiRows);
   attachDigests("browser", browserRows);
 
+  // SPEC-DELTA-2026-10-08-copilot-edge-start-button.md: the snapshot says the Playwright
+  // Edge is closed -> one Start row in its sub-group (never counted as a session).
+  if (browserSnap.copilotWatch?.up === true && copilotEdgeStart.state !== "idle" && copilotEdgeStart.state !== "starting") {
+    copilotEdgeStart = { state: "idle" }; // it is back: forget the old launch/failure
+  }
+  const watchStartRow = IDE_HELPERS.copilotWatchStartRow(browserSnap.copilotWatch, copilotEdgeStart, Date.now());
+
   groupsEl.innerHTML = "";
   const totalRows = claudeCount + cursorRows.length + browserRows.length;
   if (summaryEl) summaryEl.textContent = `${totalRows} session${totalRows === 1 ? "" : "s"}`;
 
-  if (totalRows === 0) {
+  if (totalRows === 0 && !watchStartRow) {
     empty.hidden = false;
     groupsEl.hidden = true;
     return;
@@ -1919,7 +1993,11 @@ async function renderTrackerView() {
     });
   };
   // One section, two named sub-groups (same shape as Claude Code's Routines/Active).
-  const copilotSubgroups = [{ label: "Tracked (Playwright Edge)", rows: trackedBrowserRows }];
+  const copilotSubgroups = [{
+    label: "Tracked (Playwright Edge)",
+    rows: trackedBrowserRows,
+    action: watchStartRow ? { ...watchStartRow, onActivate: tryStartCopilotEdge } : null,
+  }];
   if (untrackedBrowserRows.length > 0) {
     copilotSubgroups.push({ label: "Not trackable (plain Chrome/Edge)", rows: untrackedBrowserRows });
   }
@@ -4042,19 +4120,19 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE] = await Promise.all([
-      import("./write-helpers.mjs?v=7d8a394"),
-      import("./ide-helpers.mjs?v=7d8a394"),
-      import("./refresh-helpers.mjs?v=7d8a394"),
-      import("./transcript-model.mjs?v=7d8a394"),
-      import("./scrollback-helpers.mjs?v=7d8a394"),
-      import("./daemon-control-model.mjs?v=7d8a394"),
-      import("./composer-state.mjs?v=7d8a394"),
-      import("./app-menu-state.mjs?v=7d8a394"),
-      import("./graph-backoff.mjs?v=7d8a394"),
-      import("./share-model.mjs?v=7d8a394"),
-      import("./share-ui-state.mjs?v=7d8a394"),
-      import("./cockpit-health-model.mjs?v=7d8a394"),
-      import("./model-choice.mjs?v=7d8a394"),
+      import("./write-helpers.mjs?v=8910066"),
+      import("./ide-helpers.mjs?v=8910066"),
+      import("./refresh-helpers.mjs?v=8910066"),
+      import("./transcript-model.mjs?v=8910066"),
+      import("./scrollback-helpers.mjs?v=8910066"),
+      import("./daemon-control-model.mjs?v=8910066"),
+      import("./composer-state.mjs?v=8910066"),
+      import("./app-menu-state.mjs?v=8910066"),
+      import("./graph-backoff.mjs?v=8910066"),
+      import("./share-model.mjs?v=8910066"),
+      import("./share-ui-state.mjs?v=8910066"),
+      import("./cockpit-health-model.mjs?v=8910066"),
+      import("./model-choice.mjs?v=8910066"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4085,7 +4163,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=7d8a394");
+      const guestModule = await import("./guest-app.mjs?v=8910066");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
