@@ -502,3 +502,79 @@ export function trackerCollapseAll(allKeys, collapsed) {
   if (trackerCollapseAllLabel(allKeys, collapsed) === "Expand all") return collapsed.filter((k) => !allKeys.includes(k));
   return [...new Set([...collapsed, ...allKeys])];
 }
+
+// ---------------------------------------------------------------------------
+// Tracker attention (SPEC-DELTA-2026-10-09-tracker-attention-auto-open.md,
+// AC-305..AC-308): a closed group that hides something needing Viktor says so
+// in words, and opens by itself when a row NEWLY needs him.
+// ---------------------------------------------------------------------------
+
+export const TRACKER_SEEN_STORAGE_KEY = "cockpit.tracker.attentionSeen";
+
+/** Rows that need Viktor: waiting on him ("user") or a problem. */
+export function trackerAttentionCounts(rows) {
+  const counts = { user: 0, problem: 0 };
+  if (!Array.isArray(rows)) return counts;
+  for (const r of rows) {
+    if (r && r.statusKind === "user") counts.user += 1;
+    else if (r && r.statusKind === "problem") counts.problem += 1;
+  }
+  return counts;
+}
+
+/** Badge text for a closed header: "2 need you", "1 problem", "2 need you · 1 problem"; "" when none. */
+export function trackerAttentionBadge(rows) {
+  const c = trackerAttentionCounts(rows);
+  const parts = [];
+  if (c.user) parts.push(`${c.user} need you`);
+  if (c.problem) parts.push(`${c.problem} problem${c.problem === 1 ? "" : "s"}`);
+  return parts.join(" \u00b7 ");
+}
+
+/** Stable identity of a row across polls; null when it has nothing to hold on to. */
+export function trackerAttentionRowKey(source, row) {
+  const id = row && (row.sessionId || row.composerId || row.link || row.title);
+  return id ? `${source}:${id}` : null;
+}
+
+/** Keys of the rows that currently need Viktor. */
+export function trackerAttentionKeys(source, rows) {
+  if (!Array.isArray(rows)) return [];
+  const out = [];
+  for (const r of rows) {
+    if (!r || (r.statusKind !== "user" && r.statusKind !== "problem")) continue;
+    const key = trackerAttentionRowKey(source, r);
+    if (key) out.push(key);
+  }
+  return out;
+}
+
+/** The stored seen-set; anything unparsable means "never seen" (null = no baseline yet). */
+export function parseTrackerSeen(raw) {
+  if (typeof raw !== "string" || !raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((k) => typeof k === "string") : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Opens every closed group that holds a row which needs Viktor and was not in the previous
+ * render's attention set. No baseline (`seen === null`) opens nothing -- the very first render
+ * must not undo his collapsing. Returns the new closed-set, the keys that opened, and the new baseline.
+ * @param {string[]} collapsed
+ * @param {Record<string, string[]>} attentionByGroup collapse key -> attention row keys inside it
+ * @param {string[]|null} seen
+ */
+export function trackerOpenForAttention(collapsed, attentionByGroup, seen) {
+  const current = new Set(Object.values(attentionByGroup || {}).flat());
+  if (seen === null || seen === undefined) return { collapsed, opened: [], seen: [...current] };
+  const before = new Set(seen);
+  const opened = [];
+  for (const [groupKey, keys] of Object.entries(attentionByGroup || {})) {
+    if (collapsed.includes(groupKey) && keys.some((k) => !before.has(k))) opened.push(groupKey);
+  }
+  return { collapsed: collapsed.filter((k) => !opened.includes(k)), opened, seen: [...current] };
+}

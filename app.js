@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-09 10:21 CEST 8f14bf7`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-09 10:21 CEST 8f14bf7";
+// `2026-10-09 10:25 CEST 1748353`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-09 10:25 CEST 1748353";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1695,6 +1695,27 @@ function setTrackerCollapsed(next) {
   applyTrackerCollapsed();
 }
 
+// Group collapse key -> keys of the rows in it that need Viktor; refilled on every render.
+let trackerAttentionByGroup = {};
+
+// After a render: open the closed groups that hold a row which newly needs Viktor (AC-306),
+// then remember what needs him now (AC-308, localStorage; no baseline yet = open nothing).
+function openGroupsForAttention() {
+  let seen = null;
+  try {
+    seen = IDE_HELPERS.parseTrackerSeen(localStorage.getItem(IDE_HELPERS.TRACKER_SEEN_STORAGE_KEY));
+  } catch {
+    // blocked storage: no baseline, nothing auto-opens
+  }
+  const result = IDE_HELPERS.trackerOpenForAttention(trackerCollapsed, trackerAttentionByGroup, seen);
+  try {
+    localStorage.setItem(IDE_HELPERS.TRACKER_SEEN_STORAGE_KEY, JSON.stringify(result.seen));
+  } catch {
+    // not persisted
+  }
+  if (result.opened.length > 0) setTrackerCollapsed(result.collapsed);
+}
+
 // Re-paints every header's open/closed state in place (no refetch) and the Collapse/Expand all label.
 function applyTrackerCollapsed() {
   const keys = [];
@@ -1735,6 +1756,13 @@ function appendTrackerToggle(heading, key, labelText, rows) {
   text.className = "cockpit-tracker-toggle-label";
   text.textContent = labelText;
   btn.append(chevron, text);
+  const attention = IDE_HELPERS.trackerAttentionBadge(rows);
+  if (attention) {
+    const badge = document.createElement("span");
+    badge.className = "cockpit-tracker-toggle-badge";
+    badge.textContent = attention;
+    btn.appendChild(badge);
+  }
   const signal = IDE_HELPERS.trackerCollapsedSignal(rows);
   if (signal) {
     const dot = document.createElement("span");
@@ -1756,6 +1784,14 @@ function appendTrackerGroup(container, label, rows, onActivate, sourceKey, subgr
   container.appendChild(section);
 
   const total = subgroups ? subgroups.reduce((n, sg) => n + sg.rows.length, 0) : rows.length;
+  // SPEC-DELTA-2026-10-09-tracker-attention-auto-open.md: remember which rows need Viktor per group.
+  trackerAttentionByGroup[IDE_HELPERS.trackerCollapseKey(sourceKey)] = IDE_HELPERS.trackerAttentionKeys(
+    sourceKey,
+    subgroups ? subgroups.flatMap((sg) => sg.rows) : rows,
+  );
+  for (const sg of subgroups || []) {
+    trackerAttentionByGroup[IDE_HELPERS.trackerCollapseKey(sourceKey, sg.label)] = IDE_HELPERS.trackerAttentionKeys(sourceKey, sg.rows);
+  }
   const title = document.createElement("h2");
   title.className = "cockpit-tracker-group-title";
   title.dataset.trackerSource = sourceKey;
@@ -2056,6 +2092,7 @@ async function renderTrackerView() {
   const watchStartRow = IDE_HELPERS.copilotWatchStartRow(browserSnap.copilotWatch, copilotEdgeStart, Date.now());
 
   groupsEl.innerHTML = "";
+  trackerAttentionByGroup = {};
   const totalRows = claudeCount + cursorRows.length + browserRows.length;
   if (summaryEl) summaryEl.textContent = `${totalRows} session${totalRows === 1 ? "" : "s"}`;
 
@@ -2117,6 +2154,7 @@ async function renderTrackerView() {
   }
   appendTrackerGroup(groupsEl, "Copilot / Cowork", [], activateBrowserRow, "copilot", copilotSubgroups);
   applyTrackerCollapsed();
+  openGroupsForAttention();
 }
 
 // -----------------------------------------------------------------------------
@@ -4236,19 +4274,19 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE] = await Promise.all([
-      import("./write-helpers.mjs?v=8f14bf7"),
-      import("./ide-helpers.mjs?v=8f14bf7"),
-      import("./refresh-helpers.mjs?v=8f14bf7"),
-      import("./transcript-model.mjs?v=8f14bf7"),
-      import("./scrollback-helpers.mjs?v=8f14bf7"),
-      import("./daemon-control-model.mjs?v=8f14bf7"),
-      import("./composer-state.mjs?v=8f14bf7"),
-      import("./app-menu-state.mjs?v=8f14bf7"),
-      import("./graph-backoff.mjs?v=8f14bf7"),
-      import("./share-model.mjs?v=8f14bf7"),
-      import("./share-ui-state.mjs?v=8f14bf7"),
-      import("./cockpit-health-model.mjs?v=8f14bf7"),
-      import("./model-choice.mjs?v=8f14bf7"),
+      import("./write-helpers.mjs?v=1748353"),
+      import("./ide-helpers.mjs?v=1748353"),
+      import("./refresh-helpers.mjs?v=1748353"),
+      import("./transcript-model.mjs?v=1748353"),
+      import("./scrollback-helpers.mjs?v=1748353"),
+      import("./daemon-control-model.mjs?v=1748353"),
+      import("./composer-state.mjs?v=1748353"),
+      import("./app-menu-state.mjs?v=1748353"),
+      import("./graph-backoff.mjs?v=1748353"),
+      import("./share-model.mjs?v=1748353"),
+      import("./share-ui-state.mjs?v=1748353"),
+      import("./cockpit-health-model.mjs?v=1748353"),
+      import("./model-choice.mjs?v=1748353"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4298,7 +4336,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=8f14bf7");
+      const guestModule = await import("./guest-app.mjs?v=1748353");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
