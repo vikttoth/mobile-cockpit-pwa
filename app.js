@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-09 10:47 CEST d1dd22b`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-09 10:47 CEST d1dd22b";
+// `2026-10-09 10:52 CEST 2cda3cb`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-09 10:52 CEST 2cda3cb";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1824,15 +1824,108 @@ function appendTrackerGroup(container, label, rows, onActivate, sourceKey, subgr
   }
 
   if (!subgroups) {
-    section.appendChild(buildTrackerList(rows, onActivate));
+    const list = buildTrackerList(rows, onActivate);
+    tagTrackerRows(list, rows, sourceKey);
+    section.appendChild(list);
+    trackerGroupRowKeys[IDE_HELPERS.trackerCollapseKey(sourceKey)] = rowKeysOf(sourceKey, rows);
     return;
   }
+  trackerGroupRowKeys[IDE_HELPERS.trackerCollapseKey(sourceKey)] = rowKeysOf(sourceKey, subgroups.flatMap((sg) => sg.rows));
   for (const sg of subgroups) {
     const sub = document.createElement("h3");
     sub.className = "cockpit-tracker-subgroup-title";
     appendTrackerToggle(sub, IDE_HELPERS.trackerCollapseKey(sourceKey, sg.label), `${sg.label} (${sg.rows.length})`, sg.rows);
     section.appendChild(sub);
-    section.appendChild(buildTrackerList(sg.rows, onActivate, sg.action || null));
+    const list = buildTrackerList(sg.rows, onActivate, sg.action || null);
+    tagTrackerRows(list, sg.rows, sourceKey);
+    section.appendChild(list);
+    trackerGroupRowKeys[IDE_HELPERS.trackerCollapseKey(sourceKey, sg.label)] = rowKeysOf(sourceKey, sg.rows);
+  }
+}
+
+// SPEC-DELTA-2026-10-09-tracker-status-change-marks.md: every row with a status is remembered
+// between renders; one whose status KIND changed is marked until clicked or 30 min pass, and its
+// group header counts them.
+let trackerStatusState = null;
+let trackerStatusLoaded = false;
+let trackerRowIndex = {}; // row key -> {kind, label}, rebuilt every render
+let trackerGroupRowKeys = {}; // collapse key -> row keys inside it, rebuilt every render
+
+function rowKeysOf(sourceKey, rows) {
+  return rows.map((r) => IDE_HELPERS.trackerAttentionRowKey(sourceKey, r)).filter(Boolean);
+}
+
+// buildTrackerList renders one <li> per row, in order (the optional action row comes last).
+function tagTrackerRows(list, rows, sourceKey) {
+  rows.forEach((row, i) => {
+    const li = list.children[i];
+    const key = IDE_HELPERS.trackerAttentionRowKey(sourceKey, row);
+    if (!li || !key) return;
+    li.dataset.rowKey = key;
+    li.addEventListener("click", () => acknowledgeTrackerChange(key));
+    if (row.statusKind) trackerRowIndex[key] = { kind: row.statusKind, label: row.statusLabel || row.statusKind };
+  });
+}
+
+function saveTrackerStatusState() {
+  try {
+    localStorage.setItem(IDE_HELPERS.TRACKER_STATUS_STORAGE_KEY, JSON.stringify(trackerStatusState));
+  } catch {
+    // not persisted; still applies for this page's lifetime
+  }
+}
+
+// After a render: fold this render's statuses into the remembered state, then paint the marks.
+function updateTrackerStatusState() {
+  if (!trackerStatusLoaded) {
+    trackerStatusLoaded = true;
+    try {
+      trackerStatusState = IDE_HELPERS.parseTrackerStatusState(localStorage.getItem(IDE_HELPERS.TRACKER_STATUS_STORAGE_KEY));
+    } catch {
+      trackerStatusState = null;
+    }
+  }
+  const rows = Object.entries(trackerRowIndex).map(([key, v]) => ({ key, kind: v.kind, label: v.label }));
+  trackerStatusState = IDE_HELPERS.trackerUpdateStatusState(trackerStatusState, rows, Date.now());
+  saveTrackerStatusState();
+  applyTrackerChanges();
+}
+
+function acknowledgeTrackerChange(key) {
+  const next = IDE_HELPERS.trackerAckChange(trackerStatusState, key);
+  if (next === trackerStatusState) return;
+  trackerStatusState = next;
+  saveTrackerStatusState();
+  applyTrackerChanges();
+}
+
+// Paints (or clears) the "running -> done" tag on rows and the "N changed" pill on group headers.
+function applyTrackerChanges() {
+  const now = Date.now();
+  for (const li of document.querySelectorAll("#tracker-groups li[data-row-key]")) {
+    li.querySelector(".cockpit-row-change")?.remove();
+    const change = IDE_HELPERS.trackerChangeFor(trackerStatusState, li.dataset.rowKey, now);
+    if (!change) {
+      delete li.dataset.changed;
+      continue;
+    }
+    li.dataset.changed = "true";
+    const tag = document.createElement("span");
+    tag.className = "cockpit-row-change";
+    tag.textContent = `${change.from} → ${change.to}`;
+    tag.title = "Status changed since you last looked. Click the row to dismiss.";
+    (li.querySelector(".cockpit-row-title") || li).after(tag);
+  }
+  for (const heading of document.querySelectorAll("#tracker-groups [data-collapse-key]")) {
+    const btn = heading.querySelector(".cockpit-tracker-toggle");
+    if (!btn) continue;
+    btn.querySelector(".cockpit-tracker-toggle-changed")?.remove();
+    const n = IDE_HELPERS.trackerGroupChangeCount(trackerStatusState, trackerGroupRowKeys[heading.dataset.collapseKey], now);
+    if (n === 0) continue;
+    const pill = document.createElement("span");
+    pill.className = "cockpit-tracker-toggle-changed";
+    pill.textContent = `● ${n} changed`;
+    btn.appendChild(pill);
   }
 }
 
@@ -2109,6 +2202,8 @@ async function renderTrackerView() {
 
   groupsEl.innerHTML = "";
   trackerAttentionByGroup = {};
+  trackerGroupRowKeys = {};
+  trackerRowIndex = {};
   const totalRows = claudeCount + cursorRows.length + browserRows.length;
   if (summaryEl) summaryEl.textContent = `${totalRows} session${totalRows === 1 ? "" : "s"}`;
 
@@ -2171,6 +2266,7 @@ async function renderTrackerView() {
   appendTrackerGroup(groupsEl, "Copilot / Cowork", [], activateBrowserRow, "copilot", copilotSubgroups);
   applyTrackerCollapsed();
   openGroupsForAttention();
+  updateTrackerStatusState();
 }
 
 // -----------------------------------------------------------------------------
@@ -4290,19 +4386,19 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE] = await Promise.all([
-      import("./write-helpers.mjs?v=d1dd22b"),
-      import("./ide-helpers.mjs?v=d1dd22b"),
-      import("./refresh-helpers.mjs?v=d1dd22b"),
-      import("./transcript-model.mjs?v=d1dd22b"),
-      import("./scrollback-helpers.mjs?v=d1dd22b"),
-      import("./daemon-control-model.mjs?v=d1dd22b"),
-      import("./composer-state.mjs?v=d1dd22b"),
-      import("./app-menu-state.mjs?v=d1dd22b"),
-      import("./graph-backoff.mjs?v=d1dd22b"),
-      import("./share-model.mjs?v=d1dd22b"),
-      import("./share-ui-state.mjs?v=d1dd22b"),
-      import("./cockpit-health-model.mjs?v=d1dd22b"),
-      import("./model-choice.mjs?v=d1dd22b"),
+      import("./write-helpers.mjs?v=2cda3cb"),
+      import("./ide-helpers.mjs?v=2cda3cb"),
+      import("./refresh-helpers.mjs?v=2cda3cb"),
+      import("./transcript-model.mjs?v=2cda3cb"),
+      import("./scrollback-helpers.mjs?v=2cda3cb"),
+      import("./daemon-control-model.mjs?v=2cda3cb"),
+      import("./composer-state.mjs?v=2cda3cb"),
+      import("./app-menu-state.mjs?v=2cda3cb"),
+      import("./graph-backoff.mjs?v=2cda3cb"),
+      import("./share-model.mjs?v=2cda3cb"),
+      import("./share-ui-state.mjs?v=2cda3cb"),
+      import("./cockpit-health-model.mjs?v=2cda3cb"),
+      import("./model-choice.mjs?v=2cda3cb"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4352,7 +4448,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=d1dd22b");
+      const guestModule = await import("./guest-app.mjs?v=2cda3cb");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,

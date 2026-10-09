@@ -614,3 +614,79 @@ export function trackerIdeTabStatus(tab, nowMs) {
   }
   return { statusKind: "none", statusLabel: "done" };
 }
+
+// ---------------------------------------------------------------------------
+// Tracker status-change marks (SPEC-DELTA-2026-10-09-tracker-status-change-marks.md,
+// AC-314..AC-319): any row whose status KIND changed between two renders is marked
+// ("running -> done") until Viktor clicks it or 30 min pass; its group header counts them.
+// State = { status: {rowKey: {kind, label}}, changes: {rowKey: {from, to, at}} }.
+// ---------------------------------------------------------------------------
+
+export const TRACKER_STATUS_STORAGE_KEY = "cockpit.tracker.statusState";
+export const TRACKER_CHANGE_TTL_MS = 30 * 60 * 1000;
+const TRACKER_STATUS_MAX_ENTRIES = 600;
+
+/** A stored state, or null (= no baseline yet) for anything unparsable. */
+export function parseTrackerStatusState(raw) {
+  if (typeof raw !== "string" || !raw) return null;
+  try {
+    const p = JSON.parse(raw);
+    if (!p || typeof p !== "object" || !p.status || typeof p.status !== "object") return null;
+    return { status: p.status, changes: p.changes && typeof p.changes === "object" ? p.changes : {} };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {{status: object, changes: object}|null} prev
+ * @param {Array<{key: string, kind: string, label: string}>} rows current rows that have a status
+ * @param {number} nowMs
+ * @returns {{status: object, changes: object}} the new state. No baseline (`prev` null) = no changes.
+ *   Rows missing from this render keep their last status (a source that failed to load must not
+ *   turn into a false change when it comes back).
+ */
+export function trackerUpdateStatusState(prev, rows, nowMs) {
+  const status = { ...(prev ? prev.status : {}) };
+  const changes = {};
+  if (prev) {
+    for (const [k, c] of Object.entries(prev.changes || {})) {
+      if (c && Number.isFinite(c.at) && nowMs - c.at < TRACKER_CHANGE_TTL_MS) changes[k] = c;
+    }
+  }
+  for (const r of rows) {
+    if (!r || !r.key) continue;
+    const kind = r.kind || "none";
+    const before = prev ? prev.status[r.key] : null;
+    if (before && before.kind !== kind) changes[r.key] = { from: before.label || before.kind, to: r.label || kind, at: nowMs };
+    status[r.key] = { kind, label: r.label || kind };
+  }
+  const keys = Object.keys(status);
+  if (keys.length > TRACKER_STATUS_MAX_ENTRIES) {
+    const present = new Set(rows.map((r) => r && r.key));
+    for (const k of keys.filter((k) => !present.has(k)).slice(0, keys.length - TRACKER_STATUS_MAX_ENTRIES)) {
+      delete status[k];
+      delete changes[k];
+    }
+  }
+  return { status, changes };
+}
+
+/** The live (unacknowledged, unexpired) change of a row, or null. */
+export function trackerChangeFor(state, key, nowMs) {
+  const c = state && state.changes ? state.changes[key] : null;
+  return c && Number.isFinite(c.at) && nowMs - c.at < TRACKER_CHANGE_TTL_MS ? c : null;
+}
+
+/** The state after Viktor looked at (clicked) a row. */
+export function trackerAckChange(state, key) {
+  if (!state || !state.changes || !(key in state.changes)) return state;
+  const { [key]: _gone, ...rest } = state.changes;
+  return { status: state.status, changes: rest };
+}
+
+/** How many of a group's rows carry a live change. */
+export function trackerGroupChangeCount(state, keys, nowMs) {
+  if (!Array.isArray(keys)) return 0;
+  return keys.filter((k) => trackerChangeFor(state, k, nowMs)).length;
+}

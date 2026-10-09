@@ -1385,6 +1385,33 @@ body[data-view="tracker"] .cockpit-mode-toggle {
 .cockpit-tracker-group-title[data-collapsed="true"] ~ * { display: none; }
 .cockpit-tracker-subgroup-title[data-collapsed="true"] + .cockpit-session-list { display: none; }
 [data-collapsed="true"] .cockpit-tracker-toggle-signal[data-status] { display: inline-block; }
+/* AC-314..AC-317: a row whose status changed says "running -> done"; its group counts them. */
+.cockpit-row-change {
+  flex: none;
+  margin-left: 6px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.5;
+  white-space: nowrap;
+  color: #fff;
+  background: var(--cp-accent);
+}
+.cockpit-tracker-row[data-changed="true"] { box-shadow: inset 3px 0 0 var(--cp-accent); }
+.cockpit-tracker-toggle .cockpit-tracker-toggle-changed {
+  margin-left: 4px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+  color: #fff;
+  background: var(--cp-accent);
+}
 /* AC-305: a closed group that hides something for Viktor says so in words. */
 .cockpit-tracker-toggle .cockpit-tracker-toggle-badge { display: none; }
 [data-collapsed="true"] .cockpit-tracker-toggle-badge {
