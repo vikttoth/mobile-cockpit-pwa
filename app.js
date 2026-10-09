@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-09 10:25 CEST 1748353`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-09 10:25 CEST 1748353";
+// `2026-10-09 10:33 CEST 1790a61`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-09 10:33 CEST 1790a61";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1281,7 +1281,7 @@ async function renderIdeTabsList() {
     const hasLink = typeof t.link === "string" && t.link.length > 0;
     const activateRow = async () => {
       if (hasLink) {
-        window.open(t.link, "_blank", "noopener");
+        openAppLink(t.link);
         return;
       }
       const activated = await tryActivateCursorTab(t.title);
@@ -1363,6 +1363,23 @@ const TRACKER_BROWSER_ACTIVATE_TIMEOUT_MS = 4000;
  * The default budget is short (IDE Tracker list views); the Tracker passes a
  * realistic one (AC-241).
  */
+// SPEC-DELTA-2026-10-09-claude-link-no-new-tab.md: a custom-protocol deep link (claude://...)
+// must be handed to the OS without opening a browser tab -- window.open(..., "_blank") made Edge
+// open a blank tab and switch to it. A web link still opens in a new tab.
+function openAppLink(url) {
+  if (IDE_HELPERS.isCustomProtocolLink(url)) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.rel = "noopener";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    return;
+  }
+  window.open(url, "_blank", "noopener");
+}
+
 async function tryActivateCursorTab(title, timeoutMs = CURSOR_ACTIVATE_TIMEOUT_MS) {
   try {
     const controller = new AbortController();
@@ -2105,7 +2122,7 @@ async function renderTrackerView() {
   groupsEl.hidden = false;
 
   appendTrackerGroup(groupsEl, "Claude Code", claudeRows, (row) => {
-    if (row.link) window.open(row.link, "_blank", "noopener");
+    if (row.link) openAppLink(row.link);
   }, "claude", claudeSubgroups, claudeHint);
   // Open GUI tabs first, then this cockpit's CLI sessions (Viktor, 2026-10-08).
   const cursorSubgroups = [
@@ -4274,19 +4291,19 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE] = await Promise.all([
-      import("./write-helpers.mjs?v=1748353"),
-      import("./ide-helpers.mjs?v=1748353"),
-      import("./refresh-helpers.mjs?v=1748353"),
-      import("./transcript-model.mjs?v=1748353"),
-      import("./scrollback-helpers.mjs?v=1748353"),
-      import("./daemon-control-model.mjs?v=1748353"),
-      import("./composer-state.mjs?v=1748353"),
-      import("./app-menu-state.mjs?v=1748353"),
-      import("./graph-backoff.mjs?v=1748353"),
-      import("./share-model.mjs?v=1748353"),
-      import("./share-ui-state.mjs?v=1748353"),
-      import("./cockpit-health-model.mjs?v=1748353"),
-      import("./model-choice.mjs?v=1748353"),
+      import("./write-helpers.mjs?v=1790a61"),
+      import("./ide-helpers.mjs?v=1790a61"),
+      import("./refresh-helpers.mjs?v=1790a61"),
+      import("./transcript-model.mjs?v=1790a61"),
+      import("./scrollback-helpers.mjs?v=1790a61"),
+      import("./daemon-control-model.mjs?v=1790a61"),
+      import("./composer-state.mjs?v=1790a61"),
+      import("./app-menu-state.mjs?v=1790a61"),
+      import("./graph-backoff.mjs?v=1790a61"),
+      import("./share-model.mjs?v=1790a61"),
+      import("./share-ui-state.mjs?v=1790a61"),
+      import("./cockpit-health-model.mjs?v=1790a61"),
+      import("./model-choice.mjs?v=1790a61"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4336,7 +4353,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=1748353");
+      const guestModule = await import("./guest-app.mjs?v=1790a61");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,

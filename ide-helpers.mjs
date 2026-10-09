@@ -578,3 +578,14 @@ export function trackerOpenForAttention(collapsed, attentionByGroup, seen) {
   }
   return { collapsed: collapsed.filter((k) => !opened.includes(k)), opened, seen: [...current] };
 }
+
+/**
+ * True for a deep link that the OS (not the browser) handles: `claude://...`, `cursor://...`.
+ * Web (http/https), blob/data/javascript and relative links are not -- those still open in a new tab.
+ */
+export function isCustomProtocolLink(url) {
+  if (typeof url !== "string") return false;
+  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(url.trim());
+  if (!m) return false;
+  return !["http", "https", "about", "blob", "data", "file", "javascript", "mailto", "tel"].includes(m[1].toLowerCase());
+}
