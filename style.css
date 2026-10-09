@@ -1352,12 +1352,10 @@ body[data-view="tracker"] .cockpit-mode-toggle {
    (blue / amber / green / red). */
 .cockpit-tracker-group { --cp-tracker-src: var(--cp-muted); }
 .cockpit-tracker-group[data-tracker-source="claude"] { --cp-tracker-src: #b4532a; }
-.cockpit-tracker-group[data-tracker-source="pinned"] { --cp-tracker-src: #b4532a; }
 .cockpit-tracker-group[data-tracker-source="cursor"] { --cp-tracker-src: #475569; }
 .cockpit-tracker-group[data-tracker-source="copilot"] { --cp-tracker-src: #7c3aed; }
 @media (prefers-color-scheme: dark) {
   .cockpit-tracker-group[data-tracker-source="claude"] { --cp-tracker-src: #f0a07f; }
-  .cockpit-tracker-group[data-tracker-source="pinned"] { --cp-tracker-src: #f0a07f; }
   .cockpit-tracker-group[data-tracker-source="cursor"] { --cp-tracker-src: #cbd5e1; }
   .cockpit-tracker-group[data-tracker-source="copilot"] { --cp-tracker-src: #c4b5fd; }
 }
