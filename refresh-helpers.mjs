@@ -90,3 +90,24 @@ export function maxSessionStamp(sessions) {
 function isoOrNull(v) {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
+
+/**
+ * Stale-build self-heal (SPEC-DELTA-2026-10-09-stale-index-self-heal.md).
+ * GitHub Pages serves index.html with max-age=600, so after a publish a page
+ * can run an OLD index.html (and thus the old ?v= assets) for up to 10 minutes.
+ * config.json is fetched no-store, so its stamp is the truth: when it differs
+ * from the stamp this page was built with, reload once to a cache-busting URL.
+ * `triedStamp` (kept in sessionStorage) stops a reload loop when the CDN still
+ * serves the old index.html after the reload.
+ *
+ * @param {string|null|undefined} runningStamp  the BUILD_STAMP baked into this app.js
+ * @param {string|null|undefined} configStamp   config.pwa.buildStamp from the fresh config.json
+ * @param {string|null|undefined} triedStamp    the configStamp a reload was already attempted for
+ * @returns {boolean} true = reload now
+ */
+export function shouldReloadForNewBuild(runningStamp, configStamp, triedStamp) {
+  const ok = (s) => typeof s === "string" && s.trim() !== "" && !s.includes("2026-10-09 10:01 CEST c3454ad");
+  if (!ok(runningStamp) || !ok(configStamp)) return false;
+  if (runningStamp === configStamp) return false;
+  return triedStamp !== configStamp;
+}

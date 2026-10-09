@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-09 09:47 CEST d925426`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-09 09:47 CEST d925426";
+// `2026-10-09 10:01 CEST c3454ad`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-09 10:01 CEST c3454ad";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1651,6 +1651,8 @@ function hideTrackerRowPopover() {
 // Routines (Viktor, 2026-10-08: "csak az Active group es a Routines group
 // alattiakat"). Ungrouped and any other group (e.g. Dependent) stay hidden.
 const TRACKER_CLAUDE_GROUPS = ["Active"];
+// SPEC-DELTA-2026-10-09-tracker-pinned-group.md: "Pinned" (the app's own star) is not a custom
+// group, so the mirror publishes it as claudeTracker.pinned and it is listed first.
 
 // Same limit as the mirror's RUNNING_STALE_AFTER_MS (claude-code-mirror/lib/
 // tracker-model.mjs). The mirror applies it when it publishes, but a stopped
@@ -1944,7 +1946,8 @@ async function renderTrackerView() {
   const hasClaudeTracker = !!claudeTracker && Array.isArray(claudeTracker.groups) && Array.isArray(claudeTracker.routines);
   const claudeSubgroups = hasClaudeTracker
     ? [
-        // Routines first, as in the Claude app's own sidebar (Viktor, 2026-10-08).
+        // Pinned on top, then Routines, as in the Claude app's own sidebar (Viktor, 2026-10-08/09).
+        { label: "Pinned", rows: (claudeTracker.pinned || []).map(claudeTrackerRow) },
         { label: "Routines", rows: (claudeTracker.routines || []).map(claudeTrackerRow) },
         ...TRACKER_CLAUDE_GROUPS.map((name) => ({
           label: name,
@@ -4232,24 +4235,43 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE] = await Promise.all([
-      import("./write-helpers.mjs?v=d925426"),
-      import("./ide-helpers.mjs?v=d925426"),
-      import("./refresh-helpers.mjs?v=d925426"),
-      import("./transcript-model.mjs?v=d925426"),
-      import("./scrollback-helpers.mjs?v=d925426"),
-      import("./daemon-control-model.mjs?v=d925426"),
-      import("./composer-state.mjs?v=d925426"),
-      import("./app-menu-state.mjs?v=d925426"),
-      import("./graph-backoff.mjs?v=d925426"),
-      import("./share-model.mjs?v=d925426"),
-      import("./share-ui-state.mjs?v=d925426"),
-      import("./cockpit-health-model.mjs?v=d925426"),
-      import("./model-choice.mjs?v=d925426"),
+      import("./write-helpers.mjs?v=c3454ad"),
+      import("./ide-helpers.mjs?v=c3454ad"),
+      import("./refresh-helpers.mjs?v=c3454ad"),
+      import("./transcript-model.mjs?v=c3454ad"),
+      import("./scrollback-helpers.mjs?v=c3454ad"),
+      import("./daemon-control-model.mjs?v=c3454ad"),
+      import("./composer-state.mjs?v=c3454ad"),
+      import("./app-menu-state.mjs?v=c3454ad"),
+      import("./graph-backoff.mjs?v=c3454ad"),
+      import("./share-model.mjs?v=c3454ad"),
+      import("./share-ui-state.mjs?v=c3454ad"),
+      import("./cockpit-health-model.mjs?v=c3454ad"),
+      import("./model-choice.mjs?v=c3454ad"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
     setStatusBadge(`helpers import error: ${err.message}`, "error");
     return;
+  }
+
+  // SPEC-DELTA-2026-10-09-stale-index-self-heal.md: GitHub Pages caches index.html for
+  // 10 min, so a page can run an old build after a publish. config.json is no-store, so
+  // when its stamp differs, reload once to a fresh URL. Skipped mid sign-in redirect.
+  try {
+    const freshStamp = CONFIG && CONFIG.pwa && CONFIG.pwa.buildStamp;
+    const tried = sessionStorage.getItem("cockpit.reloadedFor");
+    if (
+      REFRESH_HELPERS.shouldReloadForNewBuild(BUILD_STAMP, freshStamp, tried) &&
+      !/[#?&](code|state|error)=/.test(location.href)
+    ) {
+      sessionStorage.setItem("cockpit.reloadedFor", freshStamp);
+      const sha = String(freshStamp).trim().split(/\s+/).pop();
+      location.replace(`${location.pathname}?v=${encodeURIComponent(sha)}${location.hash}`);
+      return;
+    }
+  } catch {
+    // blocked sessionStorage: just run this build
   }
 
   try {
@@ -4275,7 +4297,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=d925426");
+      const guestModule = await import("./guest-app.mjs?v=c3454ad");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
