@@ -1360,6 +1360,44 @@ body[data-view="tracker"] .cockpit-mode-toggle {
   .cockpit-tracker-group[data-tracker-source="copilot"] { --cp-tracker-src: #c4b5fd; }
 }
 .cockpit-tracker-group + .cockpit-tracker-group { margin-top: 3px; }
+/* Collapsible groups (SPEC-DELTA-2026-10-09-tracker-collapsible-groups.md): the header is one
+   full-width button; a closed source hides every sibling after its <h2>, a closed sub-group only
+   its own list. */
+.cockpit-tracker-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.cockpit-tracker-chevron { flex: none; width: 1em; text-align: center; }
+.cockpit-tracker-toggle-label { flex: none; }
+.cockpit-tracker-toggle .cockpit-tracker-toggle-signal { display: none; }
+.cockpit-tracker-group-title[data-collapsed="true"] ~ * { display: none; }
+.cockpit-tracker-subgroup-title[data-collapsed="true"] + .cockpit-session-list { display: none; }
+[data-collapsed="true"] .cockpit-tracker-toggle-signal[data-status] { display: inline-block; }
+.cockpit-tracker-collapse-all {
+  margin-left: auto;
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1.3;
+  padding: 0 8px;
+  color: var(--cp-muted);
+  background: transparent;
+  border: 1px solid var(--cp-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.cockpit-tracker-topbar .cockpit-pin-btn { margin-left: 0; }
 .cockpit-tracker-hint { margin: 0; padding: 0 var(--cp-gap); font-size: 0.7rem; line-height: 1.3; color: var(--cp-muted); }
 /* Claude Code's sidebar groups + Routines under the Claude band (AC-243). */
 .cockpit-tracker-subgroup-title {

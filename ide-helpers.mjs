@@ -399,3 +399,52 @@ export function trackerHoverText(row, nowMs) {
   if (meta.length > 0) lines.push(meta.join(" · "));
   return lines.join("\n");
 }
+
+// ---------------------------------------------------------------------------
+// Tracker collapsible groups (SPEC-DELTA-2026-10-09-tracker-collapsible-groups.md,
+// AC-288..AC-292). The state is a plain array of "closed" keys.
+// ---------------------------------------------------------------------------
+
+export const TRACKER_COLLAPSED_STORAGE_KEY = "cockpit.tracker.collapsed";
+
+/** `claude` for a source header, `claude/Routines` for one of its sub-groups. */
+export function trackerCollapseKey(source, subLabel) {
+  return subLabel ? `${source}/${subLabel}` : source;
+}
+
+/** The stored closed-set; anything unparsable or of the wrong shape means "all open". */
+export function parseTrackerCollapsed(raw) {
+  if (typeof raw !== "string" || !raw) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return [...new Set(parsed.filter((k) => typeof k === "string" && k))];
+}
+
+export function toggleTrackerCollapsed(collapsed, key) {
+  return collapsed.includes(key) ? collapsed.filter((k) => k !== key) : [...collapsed, key];
+}
+
+const TRACKER_SIGNAL_ORDER = ["user", "problem", "agent"];
+
+/** Most urgent status among hidden rows: waiting-on-you > problem > running; null if none. */
+export function trackerCollapsedSignal(rows) {
+  if (!Array.isArray(rows)) return null;
+  for (const kind of TRACKER_SIGNAL_ORDER) if (rows.some((r) => r && r.statusKind === kind)) return kind;
+  return null;
+}
+
+/** "Collapse all" while any rendered group is open, "Expand all" once every one is closed. */
+export function trackerCollapseAllLabel(allKeys, collapsed) {
+  return allKeys.length > 0 && allKeys.every((k) => collapsed.includes(k)) ? "Expand all" : "Collapse all";
+}
+
+/** The closed-set after pressing the button; keys that are not on screen are left alone. */
+export function trackerCollapseAll(allKeys, collapsed) {
+  if (trackerCollapseAllLabel(allKeys, collapsed) === "Expand all") return collapsed.filter((k) => !allKeys.includes(k));
+  return [...new Set([...collapsed, ...allKeys])];
+}

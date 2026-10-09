@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-10-09 08:33 CEST 8910066 in config.json + app.js).
+  script (replaces 2026-10-09 09:18 CEST ae82311 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -48,11 +48,11 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=8910066")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=ae82311")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=8910066" />
+  <link rel="stylesheet" href="./style.css?v=ae82311" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
@@ -186,6 +186,8 @@
         <button type="button" id="btn-tracker-exit" class="cockpit-tracker-exit-btn cockpit-back-btn"
                 data-target-view="v2-list" aria-label="Back to cockpit">&#8592;</button>
         <span id="tracker-summary" class="cockpit-tracker-summary" aria-live="polite"></span>
+        <button type="button" id="btn-tracker-collapse-all" class="cockpit-tracker-collapse-all"
+                title="Close or open every group">Collapse all</button>
         <!-- Same pin toggle as the header's (#btn-pin-topmost): identical
              markup and styling, same shared state -- the header is hidden
              in Tracker mode, so the topbar carries its own copy. -->
@@ -702,6 +704,6 @@
   </main>
 
 
-  <script src="./app.js?v=8910066" defer></script>
+  <script src="./app.js?v=ae82311" defer></script>
 </body>
 </html>
