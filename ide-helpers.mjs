@@ -589,3 +589,28 @@ export function isCustomProtocolLink(url) {
   if (!m) return false;
   return !["http", "https", "about", "blob", "data", "file", "javascript", "mailto", "tel"].includes(m[1].toLowerCase());
 }
+
+// ---------------------------------------------------------------------------
+// Tracker status of an IDE (Cursor GUI) tab (SPEC-DELTA-2026-10-09-tracker-ide-tab-status.md,
+// AC-310..AC-313). The mirror's `waitingOn` only reads the transcript's shape, with no notion of
+// time: "user" = the assistant wrote the last message (so EVERY finished chat is "your turn"),
+// "agent" = no turn_ended after the last user message (so a stopped or abandoned run is
+// "running" forever). The Tracker uses the same rules as the Claude rows instead.
+// ---------------------------------------------------------------------------
+
+export const TRACKER_IDE_RUNNING_STALE_MS = 30 * 60 * 1000;
+
+/**
+ * @param {{waitingOn?: string, pendingQuestion?: object|null, lastActivityAt?: string|number|null, title?: string, messageCount?: number, openStub?: boolean}} tab
+ * @param {number} nowMs
+ * @returns {{statusKind: "agent"|"user"|"none", statusLabel: string}}
+ */
+export function trackerIdeTabStatus(tab, nowMs) {
+  if (isEmptyIdeTab(tab)) return { statusKind: "none", statusLabel: "Empty tab" };
+  if (tab && tab.waitingOn === "user" && tab.pendingQuestion) return { statusKind: "user", statusLabel: "waiting on you" };
+  const last = Date.parse(tab && tab.lastActivityAt);
+  if (tab && tab.waitingOn === "agent" && Number.isFinite(last) && nowMs - last < TRACKER_IDE_RUNNING_STALE_MS) {
+    return { statusKind: "agent", statusLabel: "running" };
+  }
+  return { statusKind: "none", statusLabel: "done" };
+}

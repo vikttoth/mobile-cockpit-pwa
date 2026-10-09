@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-09 10:33 CEST 1790a61`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-09 10:33 CEST 1790a61";
+// `2026-10-09 10:47 CEST d1dd22b`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-09 10:47 CEST d1dd22b";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -2016,8 +2016,7 @@ async function renderTrackerView() {
         lastActivityAt: t.lastActivityAt,
         composerId: t.composerId,
         link: t.link || null,
-        statusKind: IDE_HELPERS.isEmptyIdeTab(t) ? "none" : t.waitingOn || "none",
-        statusLabel: IDE_HELPERS.ideTabStatusLabel(t),
+        ...IDE_HELPERS.trackerIdeTabStatus(t, Date.now()),
         summary: t.summary || null,
         activity: t.activity || null,
       }));
@@ -2031,8 +2030,8 @@ async function renderTrackerView() {
     title: t.title,
     lastActivityAt: t.lastActivityAt,
     composerId: t.composerId,
-    statusKind: IDE_HELPERS.isEmptyIdeTab(t) ? "none" : t.waitingOn || "none",
-    statusLabel: IDE_HELPERS.ideTabStatusLabel(t),
+    // Same rules as the Claude rows (AC-310..AC-313): no time-blind "your turn" / "running".
+    ...IDE_HELPERS.trackerIdeTabStatus(t, Date.now()),
     summary: t.summary || null,
     activity: t.activity || null,
     kind: "gui",
@@ -4291,19 +4290,19 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE] = await Promise.all([
-      import("./write-helpers.mjs?v=1790a61"),
-      import("./ide-helpers.mjs?v=1790a61"),
-      import("./refresh-helpers.mjs?v=1790a61"),
-      import("./transcript-model.mjs?v=1790a61"),
-      import("./scrollback-helpers.mjs?v=1790a61"),
-      import("./daemon-control-model.mjs?v=1790a61"),
-      import("./composer-state.mjs?v=1790a61"),
-      import("./app-menu-state.mjs?v=1790a61"),
-      import("./graph-backoff.mjs?v=1790a61"),
-      import("./share-model.mjs?v=1790a61"),
-      import("./share-ui-state.mjs?v=1790a61"),
-      import("./cockpit-health-model.mjs?v=1790a61"),
-      import("./model-choice.mjs?v=1790a61"),
+      import("./write-helpers.mjs?v=d1dd22b"),
+      import("./ide-helpers.mjs?v=d1dd22b"),
+      import("./refresh-helpers.mjs?v=d1dd22b"),
+      import("./transcript-model.mjs?v=d1dd22b"),
+      import("./scrollback-helpers.mjs?v=d1dd22b"),
+      import("./daemon-control-model.mjs?v=d1dd22b"),
+      import("./composer-state.mjs?v=d1dd22b"),
+      import("./app-menu-state.mjs?v=d1dd22b"),
+      import("./graph-backoff.mjs?v=d1dd22b"),
+      import("./share-model.mjs?v=d1dd22b"),
+      import("./share-ui-state.mjs?v=d1dd22b"),
+      import("./cockpit-health-model.mjs?v=d1dd22b"),
+      import("./model-choice.mjs?v=d1dd22b"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4353,7 +4352,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=1790a61");
+      const guestModule = await import("./guest-app.mjs?v=d1dd22b");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
