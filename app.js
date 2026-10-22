@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-22 10:36 CEST 4dc9ce8`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-22 10:36 CEST 4dc9ce8";
+// `2026-10-22 11:00 CEST 0d5bc51`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-22 11:00 CEST 0d5bc51";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1718,7 +1718,12 @@ let trackerAttentionByGroup = {};
 
 // After a render: open the closed groups that hold a row which newly needs Viktor (AC-306),
 // then remember what needs him now (AC-308, localStorage; no baseline yet = open nothing).
+// 2026-10-22: the first render after a (re)open restores the saved open/closed state exactly;
+// attention only auto-opens groups for changes seen while the page is live.
+let trackerAttentionPrimed = false;
 function openGroupsForAttention() {
+  const restoreOnly = !trackerAttentionPrimed;
+  trackerAttentionPrimed = true;
   let seen = null;
   try {
     seen = IDE_HELPERS.parseTrackerSeen(localStorage.getItem(IDE_HELPERS.TRACKER_SEEN_STORAGE_KEY));
@@ -1731,7 +1736,7 @@ function openGroupsForAttention() {
   } catch {
     // not persisted
   }
-  if (result.opened.length > 0) setTrackerCollapsed(result.collapsed);
+  if (!restoreOnly && result.opened.length > 0) setTrackerCollapsed(result.collapsed);
 }
 
 // Re-paints every header's open/closed state in place (no refetch) and the Collapse/Expand all label.
@@ -4436,19 +4441,19 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE] = await Promise.all([
-      import("./write-helpers.mjs?v=4dc9ce8"),
-      import("./ide-helpers.mjs?v=4dc9ce8"),
-      import("./refresh-helpers.mjs?v=4dc9ce8"),
-      import("./transcript-model.mjs?v=4dc9ce8"),
-      import("./scrollback-helpers.mjs?v=4dc9ce8"),
-      import("./daemon-control-model.mjs?v=4dc9ce8"),
-      import("./composer-state.mjs?v=4dc9ce8"),
-      import("./app-menu-state.mjs?v=4dc9ce8"),
-      import("./graph-backoff.mjs?v=4dc9ce8"),
-      import("./share-model.mjs?v=4dc9ce8"),
-      import("./share-ui-state.mjs?v=4dc9ce8"),
-      import("./cockpit-health-model.mjs?v=4dc9ce8"),
-      import("./model-choice.mjs?v=4dc9ce8"),
+      import("./write-helpers.mjs?v=0d5bc51"),
+      import("./ide-helpers.mjs?v=0d5bc51"),
+      import("./refresh-helpers.mjs?v=0d5bc51"),
+      import("./transcript-model.mjs?v=0d5bc51"),
+      import("./scrollback-helpers.mjs?v=0d5bc51"),
+      import("./daemon-control-model.mjs?v=0d5bc51"),
+      import("./composer-state.mjs?v=0d5bc51"),
+      import("./app-menu-state.mjs?v=0d5bc51"),
+      import("./graph-backoff.mjs?v=0d5bc51"),
+      import("./share-model.mjs?v=0d5bc51"),
+      import("./share-ui-state.mjs?v=0d5bc51"),
+      import("./cockpit-health-model.mjs?v=0d5bc51"),
+      import("./model-choice.mjs?v=0d5bc51"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4498,7 +4503,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=4dc9ce8");
+      const guestModule = await import("./guest-app.mjs?v=0d5bc51");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
