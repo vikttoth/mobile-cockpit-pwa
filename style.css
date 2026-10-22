@@ -1315,10 +1315,34 @@ body[data-view="v2-detail"] main {
 
 /* Tracker view: chrome-free, grouped rows only -- the whole point is
    maximizing usable rows in a small pinned window (AC-217). */
-body[data-view="tracker"] .cockpit-header,
-body[data-view="tracker"] .cockpit-mode-toggle {
+body[data-view="tracker"] .cockpit-mode-toggle,
+body[data-view="tracker"] .cockpit-header h1,
+body[data-view="tracker"] .cockpit-header > .cockpit-pin-btn {
   display: none;
 }
+/* The header collapses to nothing, but its account button (initials + attention
+   dot) and menu stay reachable: pinned to the topbar's right edge. */
+body[data-view="tracker"] .cockpit-header {
+  padding: 0;
+  border: 0;
+  height: 0;
+}
+body[data-view="tracker"] .cockpit-avatar-btn {
+  position: fixed;
+  top: calc(3px + env(safe-area-inset-top));
+  right: calc(var(--cp-gap) + env(safe-area-inset-right));
+  z-index: 31;
+  width: 24px;
+  height: 24px;
+  font-size: 0.6rem;
+}
+body[data-view="tracker"] .cockpit-avatar-dot { width: 9px; height: 9px; border-width: 1.5px; }
+body[data-view="tracker"] .cockpit-app-menu {
+  position: fixed;
+  top: calc(32px + env(safe-area-inset-top));
+  right: calc(var(--cp-gap) + env(safe-area-inset-right));
+}
+body[data-view="tracker"] .cockpit-tracker-topbar { padding-right: calc(var(--cp-gap) + 30px); }
 .cockpit-tracker-topbar {
   display: flex;
   align-items: center;

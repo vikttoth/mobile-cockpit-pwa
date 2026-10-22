@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-09 10:52 CEST 2cda3cb`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-09 10:52 CEST 2cda3cb";
+// `2026-10-22 10:36 CEST 4dc9ce8`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-22 10:36 CEST 4dc9ce8";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -869,6 +869,7 @@ function applyHashRoute() {
 
 function setView(viewId, payload) {
   document.body.dataset.view = viewId;
+  rememberTopLevelView(viewId);
   for (const section of document.querySelectorAll(".cockpit-view")) {
     section.hidden = section.dataset.viewId !== viewId;
   }
@@ -4298,6 +4299,54 @@ function refreshVisibleViewOnce() {
   }
 }
 
+// Window geometry + last top-level view survive a reopen (Viktor 2026-10-22).
+// Best-effort localStorage; resizeTo/moveTo only act in popup / installed-app
+// windows (a normal browser tab ignores them), so no-op elsewhere.
+const LAST_VIEW_STORAGE_KEY = "cockpit.lastView";
+const WINDOW_GEOM_STORAGE_KEY = "cockpit.windowGeometry";
+const RESTORABLE_VIEWS = ["v2-list", "shared-list", "ide-tabs", "tracker"];
+
+function rememberTopLevelView(viewId) {
+  if (!RESTORABLE_VIEWS.includes(viewId)) return;
+  try { localStorage.setItem(LAST_VIEW_STORAGE_KEY, viewId); } catch { /* blocked storage */ }
+}
+
+function restoreLastView() {
+  try {
+    const hasRoute = WRITE_HELPERS && WRITE_HELPERS.parseLocationHash(window.location.hash);
+    if (hasRoute) return;
+    const saved = localStorage.getItem(LAST_VIEW_STORAGE_KEY);
+    if (saved && saved !== document.body.dataset.view && RESTORABLE_VIEWS.includes(saved)) setView(saved);
+  } catch { /* blocked storage */ }
+}
+
+function wireWindowGeometry() {
+  if (typeof window === "undefined" || window.matchMedia("(pointer: coarse)").matches) return;
+  const save = () => {
+    try {
+      const w = window.outerWidth, h = window.outerHeight;
+      if (w < 200 || h < 200) return; // minimized / transient
+      localStorage.setItem(WINDOW_GEOM_STORAGE_KEY, JSON.stringify({ w, h, x: window.screenX, y: window.screenY }));
+    } catch { /* blocked storage */ }
+  };
+  try {
+    const g = JSON.parse(localStorage.getItem(WINDOW_GEOM_STORAGE_KEY) || "null");
+    if (g && g.w >= 200 && g.h >= 200) {
+      const sw = window.screen.availWidth, sh = window.screen.availHeight;
+      const w = Math.min(g.w, sw), h = Math.min(g.h, sh);
+      const x = Math.max(0, Math.min(g.x, sw - w)), y = Math.max(0, Math.min(g.y, sh - h));
+      window.resizeTo(w, h);
+      window.moveTo(x, y);
+    }
+  } catch { /* blocked storage / resize refused */ }
+  let timer = null;
+  window.addEventListener("resize", () => { clearTimeout(timer); timer = setTimeout(save, 400); });
+  // Moves fire no event; sample on blur/hide and on a slow tick.
+  window.addEventListener("blur", save);
+  window.addEventListener("pagehide", save);
+  setInterval(() => { if (!document.hidden) save(); }, 5000);
+}
+
 function wireAppMenu() {
   const btn = document.getElementById("btn-app-menu");
   const menu = document.getElementById("app-menu");
@@ -4354,6 +4403,7 @@ function updateAppMenuAlert() {
 // =============================================================================
 
 async function bootstrap() {
+  wireWindowGeometry();
   wireAppMenu();
   wireIdeRowSummaryPopover();
   // SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md: auto-pin on
@@ -4386,19 +4436,19 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE] = await Promise.all([
-      import("./write-helpers.mjs?v=2cda3cb"),
-      import("./ide-helpers.mjs?v=2cda3cb"),
-      import("./refresh-helpers.mjs?v=2cda3cb"),
-      import("./transcript-model.mjs?v=2cda3cb"),
-      import("./scrollback-helpers.mjs?v=2cda3cb"),
-      import("./daemon-control-model.mjs?v=2cda3cb"),
-      import("./composer-state.mjs?v=2cda3cb"),
-      import("./app-menu-state.mjs?v=2cda3cb"),
-      import("./graph-backoff.mjs?v=2cda3cb"),
-      import("./share-model.mjs?v=2cda3cb"),
-      import("./share-ui-state.mjs?v=2cda3cb"),
-      import("./cockpit-health-model.mjs?v=2cda3cb"),
-      import("./model-choice.mjs?v=2cda3cb"),
+      import("./write-helpers.mjs?v=4dc9ce8"),
+      import("./ide-helpers.mjs?v=4dc9ce8"),
+      import("./refresh-helpers.mjs?v=4dc9ce8"),
+      import("./transcript-model.mjs?v=4dc9ce8"),
+      import("./scrollback-helpers.mjs?v=4dc9ce8"),
+      import("./daemon-control-model.mjs?v=4dc9ce8"),
+      import("./composer-state.mjs?v=4dc9ce8"),
+      import("./app-menu-state.mjs?v=4dc9ce8"),
+      import("./graph-backoff.mjs?v=4dc9ce8"),
+      import("./share-model.mjs?v=4dc9ce8"),
+      import("./share-ui-state.mjs?v=4dc9ce8"),
+      import("./cockpit-health-model.mjs?v=4dc9ce8"),
+      import("./model-choice.mjs?v=4dc9ce8"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4448,7 +4498,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=2cda3cb");
+      const guestModule = await import("./guest-app.mjs?v=4dc9ce8");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
@@ -4750,6 +4800,7 @@ async function bootstrap() {
     applyHashRoute();
   });
   applyHashRoute();
+  restoreLastView();
   startAutoRefresh();
 }
 
