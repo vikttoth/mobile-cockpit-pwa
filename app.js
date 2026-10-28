@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-28 17:36 CET a819ebd`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-28 17:36 CET a819ebd";
+// `2026-10-28 17:41 CET 80df920`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-28 17:41 CET 80df920";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -2140,11 +2140,15 @@ function updateTrackerShareBadges() {
     const icon = li.querySelector(".cockpit-row-share-icon");
     if (!icon) continue;
     const item = SHARE_MODEL.findItem(cachedShares, li.dataset.shareKind, li.dataset.shareId);
-    const guests = item ? item.guests.filter((g) => g.mode !== "off") : [];
+    // Any remembered guest keeps the icon (so the "Shared by me" rows always match their originals);
+    // it is dimmed when nobody can actually see the session right now (all sharing off, or every guest Off/paused).
+    const guests = item ? item.guests : [];
+    const paused = new Set(Array.isArray(cachedShares && cachedShares.pausedGuests) ? cachedShares.pausedGuests : []);
+    const active = guests.filter((g) => g.mode !== "off" && !paused.has(g.email));
     icon.hidden = guests.length === 0;
-    icon.dataset.paused = String(!enabled);
+    icon.dataset.paused = String(!enabled || active.length === 0);
     icon.title = guests.length
-      ? `${enabled ? "Shared with" : "Sharing paused for"}: ${guests.map((g) => SHARE_UI.nameFromEmail(g.email)).join(", ")}`
+      ? `${active.length && enabled ? "Shared with" : "Not visible now (off / paused)"}: ${guests.map((g) => `${SHARE_UI.nameFromEmail(g.email)} (${paused.has(g.email) ? "paused" : g.mode})`).join(", ")}`
       : "";
   }
 }
@@ -4946,20 +4950,20 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE, FAVORITES_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=a819ebd"),
-      import("./ide-helpers.mjs?v=a819ebd"),
-      import("./refresh-helpers.mjs?v=a819ebd"),
-      import("./transcript-model.mjs?v=a819ebd"),
-      import("./scrollback-helpers.mjs?v=a819ebd"),
-      import("./daemon-control-model.mjs?v=a819ebd"),
-      import("./composer-state.mjs?v=a819ebd"),
-      import("./app-menu-state.mjs?v=a819ebd"),
-      import("./graph-backoff.mjs?v=a819ebd"),
-      import("./share-model.mjs?v=a819ebd"),
-      import("./share-ui-state.mjs?v=a819ebd"),
-      import("./cockpit-health-model.mjs?v=a819ebd"),
-      import("./model-choice.mjs?v=a819ebd"),
-      import("./favorites-model.mjs?v=a819ebd"),
+      import("./write-helpers.mjs?v=80df920"),
+      import("./ide-helpers.mjs?v=80df920"),
+      import("./refresh-helpers.mjs?v=80df920"),
+      import("./transcript-model.mjs?v=80df920"),
+      import("./scrollback-helpers.mjs?v=80df920"),
+      import("./daemon-control-model.mjs?v=80df920"),
+      import("./composer-state.mjs?v=80df920"),
+      import("./app-menu-state.mjs?v=80df920"),
+      import("./graph-backoff.mjs?v=80df920"),
+      import("./share-model.mjs?v=80df920"),
+      import("./share-ui-state.mjs?v=80df920"),
+      import("./cockpit-health-model.mjs?v=80df920"),
+      import("./model-choice.mjs?v=80df920"),
+      import("./favorites-model.mjs?v=80df920"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -5009,7 +5013,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=a819ebd");
+      const guestModule = await import("./guest-app.mjs?v=80df920");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
