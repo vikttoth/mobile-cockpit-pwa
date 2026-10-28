@@ -1898,3 +1898,10 @@ body:is([data-view="v2-list"], [data-view="shared-list"], [data-view="ide-tabs"]
 .fav-btn { padding: 0 5px; font-size: 0.7rem; line-height: 1.5; }
 .fav-body { max-height: 70vh; }
 .fav-topbar .fav-search { flex: 1 1 auto; }
+
+/* ---- Share from AI Tracker (SPEC-DELTA-2026-10-28-share-from-ai-tracker.md) ---- */
+/* The host reaches "Shared by me" from the VT menu; only a guest keeps the Shared pill. */
+body:not([data-guest="true"]) #btn-mode-shared { display: none; }
+.cockpit-row-share-icon { flex: none; padding: 0 2px; font-size: 0.8rem; line-height: 1; background: none; border: 0; cursor: pointer; }
+.cockpit-row-share-icon[hidden] { display: none; }
+.cockpit-row-share-icon[data-paused="true"] { opacity: 0.4; }

@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-10-28 16:51 CET 16d4a7b in config.json + app.js).
+  script (replaces 2026-10-28 17:15 CET 27feb8b in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -48,11 +48,11 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=16d4a7b")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=27feb8b")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=16d4a7b" />
+  <link rel="stylesheet" href="./style.css?v=27feb8b" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
@@ -133,6 +133,12 @@
       <div class="cockpit-app-menu-row">
         <button type="button" id="btn-open-diagnostics" class="cockpit-btn cockpit-btn-small">Diagnostics</button>
       </div>
+      <!-- SPEC-DELTA-2026-10-28-share-from-ai-tracker.md: global sharing switch + the
+           "Shared by me" overview (the Shared tab is gone for the host). -->
+      <div class="cockpit-app-menu-row" id="share-menu-row">
+        <button type="button" id="btn-share-master" class="cockpit-btn cockpit-btn-small">Stop all sharing</button>
+        <button type="button" id="btn-open-shared" class="cockpit-btn cockpit-btn-small">Shared by me…</button>
+      </div>
       <div id="diagnostics-sheet" class="v2-settings-sheet" hidden>
         <section class="v2-settings-section">
           <h3 class="v2-settings-section-title">Diagnostics</h3>
@@ -159,7 +165,7 @@
   <nav class="cockpit-mode-toggle" role="tablist" aria-label="View mode">
     <button type="button" id="btn-mode-v2" class="cockpit-mode-btn"
             role="tab" data-target-view="v2-list" aria-current="true"
-            title="Mobile follow-along: chat-model sessions with live streaming, queue/force, model switch, sub-agents">Chat</button>
+            title="Mobile follow-along: chat-model sessions with live streaming, queue/force, model switch, sub-agents">Cursor CLI</button>
     <button type="button" id="btn-mode-shared" class="cockpit-mode-btn"
             role="tab" data-target-view="shared-list"
             title="Sessions someone else shared with you, read-only (SPEC-DELTA-2026-09-25-session-sharing-stage1)">Shared</button>
@@ -169,7 +175,7 @@
          body[data-view="tracker"] in style.css (hides header + this nav). -->
     <button type="button" id="btn-mode-tracker" class="cockpit-mode-btn"
             role="tab" data-target-view="tracker"
-            title="Grouped session tracker: Claude Code (Active group) + Cursor (GUI + CLI) + Copilot browser tabs, one compact list">Tracker</button>
+            title="Grouped session tracker: Claude Code (Active group) + Cursor (GUI + CLI) + Copilot browser tabs, one compact list">AI Tracker</button>
     <button type="button" id="btn-mode-favorites" class="cockpit-mode-btn"
             role="tab" data-target-view="favorites"
             title="Documents, summaries and links Claude made for you: Pinned / Latest / Archive (SPEC-DELTA-2026-10-28-favorites-tab)">Favorites</button>
@@ -183,6 +189,26 @@
       cockpit and the rows themselves, to fit as much as possible in a small
       pinned desktop window.
     -->
+    <!-- SPEC-DELTA-2026-10-28-share-from-ai-tracker.md: right-click (long-press on
+         Android) an AI Tracker row -> this sheet. Reuses renderSharePanel's "sheet" panel. -->
+    <div id="tracker-share-sheet" class="cockpit-modal" hidden>
+      <div class="cockpit-modal-inner">
+        <div class="cockpit-modal-header">
+          <h2 id="tsheet-title">Share</h2>
+          <button type="button" id="btn-tsheet-close" class="cockpit-btn" aria-label="Close">✕</button>
+        </div>
+        <div class="cockpit-modal-body">
+          <ul id="tsheet-shared-list" class="v2-share-list"></ul>
+          <p id="tsheet-share-empty" class="cockpit-hint" hidden>Not shared with anyone yet.</p>
+          <form id="tsheet-invite-form" class="v2-share-invite-form">
+            <input type="email" id="tsheet-share-invite-email" placeholder="colleague@nokia.com" required />
+            <button type="submit" class="cockpit-btn">Share</button>
+          </form>
+          <p id="tsheet-share-error" class="cockpit-error" hidden role="alert"></p>
+        </div>
+      </div>
+    </div>
+
     <!-- SPEC-DELTA-2026-10-28-favorites-tab.md -->
     <section id="view-favorites" class="cockpit-view" data-view-id="favorites" hidden>
       <div class="fav-topbar">
@@ -751,6 +777,6 @@
   </main>
 
 
-  <script src="./app.js?v=16d4a7b" defer></script>
+  <script src="./app.js?v=27feb8b" defer></script>
 </body>
 </html>

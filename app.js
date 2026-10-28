@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-28 16:51 CET 16d4a7b`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-28 16:51 CET 16d4a7b";
+// `2026-10-28 17:15 CET 27feb8b`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-28 17:15 CET 27feb8b";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1693,6 +1693,7 @@ function claudeTrackerRow(r) {
   return {
     title: r.title,
     sessionId: r.sessionId || null,
+    composerId: r.cliSessionId || null, // = the claude-code-tabs id a "claude-tab" share is keyed by
     lastActivityAt: r.lastActivityAt,
     link: r.link || null,
     statusKind: staleRunning ? "none" : r.statusKind || null,
@@ -2020,6 +2021,15 @@ function buildTrackerList(rows, onActivate, action = null) {
         activate();
       }
     });
+    if (row.share) {
+      li.dataset.shareKind = row.share.kind;
+      li.dataset.shareId = row.share.id;
+      li.addEventListener("contextmenu", (ev) => {
+        ev.preventDefault();
+        hideTrackerRowPopover();
+        openTrackerShareSheet(row);
+      });
+    }
 
     if (row.statusKind) {
       const dot = document.createElement("span");
@@ -2051,6 +2061,20 @@ function buildTrackerList(rows, onActivate, action = null) {
       li.appendChild(where);
     }
 
+    if (row.share) {
+      const icon = document.createElement("button");
+      icon.type = "button";
+      icon.className = "cockpit-row-share-icon";
+      icon.textContent = "👥";
+      icon.hidden = true; // updateTrackerShareBadges() shows it when someone has access
+      icon.setAttribute("aria-label", "Shared - open sharing");
+      icon.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        openTrackerShareSheet(row);
+      });
+      li.appendChild(icon);
+    }
+
     if (row.lastActivityAt) {
       const time = document.createElement("time");
       time.className = "cockpit-row-time";
@@ -2071,6 +2095,97 @@ function buildTrackerList(rows, onActivate, action = null) {
   }
   if (action) ul.appendChild(buildTrackerActionRow(action));
   return ul;
+}
+
+// SPEC-DELTA-2026-10-28-share-from-ai-tracker.md: share a session straight from its AI Tracker
+// row (right-click, or long-press on Android which fires `contextmenu`), see who has it at a
+// glance (row icon), and switch all sharing off/on from the VT menu.
+
+/** The row the share sheet is open for: { kind, id, title, panel: "sheet" } or null. */
+let trackerShareTarget = null;
+
+/** Rows carry `share: {kind, id}` when they can be shared (Copilot/Cowork have no transcript mirror). */
+function tagTrackerShare(rows, kind, idOf) {
+  for (const r of rows) {
+    const id = idOf(r);
+    if (id) r.share = { kind, id };
+  }
+}
+
+function openTrackerShareSheet(row) {
+  if (!row || !row.share) return;
+  trackerShareTarget = { kind: row.share.kind, id: row.share.id, title: row.title || null, panel: "sheet" };
+  const sheet = document.getElementById("tracker-share-sheet");
+  const title = document.getElementById("tsheet-title");
+  if (title) title.textContent = `Share: ${IDE_HELPERS.formatTabTitle(row.title || "", 40)}`;
+  const err = document.getElementById("tsheet-share-error");
+  if (err) err.hidden = true;
+  if (sheet) sheet.hidden = false;
+  renderSharePanel(trackerShareTarget);
+  refreshSharesIfStale(0).then(() => renderSharePanel(trackerShareTarget)).catch(() => null); // best-effort: stale share data is fine
+}
+
+function closeTrackerShareSheet() {
+  const sheet = document.getElementById("tracker-share-sheet");
+  if (sheet) sheet.hidden = true;
+  trackerShareTarget = null;
+  updateTrackerShareBadges();
+}
+
+/** Shows the share icon on every AI Tracker row someone can currently see. */
+function updateTrackerShareBadges() {
+  if (!SHARE_MODEL) return;
+  const enabled = !cachedShares || cachedShares.sharingEnabled !== false;
+  for (const li of document.querySelectorAll("[data-share-kind]")) {
+    const icon = li.querySelector(".cockpit-row-share-icon");
+    if (!icon) continue;
+    const item = SHARE_MODEL.findItem(cachedShares, li.dataset.shareKind, li.dataset.shareId);
+    const guests = item ? item.guests.filter((g) => g.mode !== "off") : [];
+    icon.hidden = guests.length === 0;
+    icon.dataset.paused = String(!enabled);
+    icon.title = guests.length
+      ? `${enabled ? "Shared with" : "Sharing paused for"}: ${guests.map((g) => SHARE_UI.nameFromEmail(g.email)).join(", ")}`
+      : "";
+  }
+}
+
+/** VT menu: "Stop all sharing" / "Resume sharing" label from shares.json. */
+function updateShareMasterButton() {
+  const btn = document.getElementById("btn-share-master");
+  if (!btn || !SHARE_UI) return;
+  const st = SHARE_UI.deriveStopAllState(cachedShares);
+  btn.textContent = st.stopped ? "Resume sharing" : "Stop all sharing";
+  btn.dataset.stopped = String(st.stopped);
+}
+
+async function handleShareMasterClick() {
+  const stopped = cachedShares && cachedShares.sharingEnabled === false;
+  if (!stopped && !window.confirm("Stop all sharing? Every guest loses access to every shared item right away. Their modes are remembered.")) return;
+  try {
+    await mutateSharesPwa((s) => SHARE_MODEL.setSharingEnabled(s, { enabled: stopped, now: Date.now() }));
+  } catch (err) {
+    window.alert(`Could not change sharing: ${err.message}`);
+  }
+  updateShareMasterButton();
+  updateTrackerShareBadges();
+}
+
+function wireTrackerShare() {
+  document.getElementById("btn-tsheet-close")?.addEventListener("click", closeTrackerShareSheet);
+  document.getElementById("tracker-share-sheet")?.addEventListener("click", (ev) => {
+    if (ev.target.id === "tracker-share-sheet") closeTrackerShareSheet();
+  });
+  document.getElementById("tsheet-invite-form")?.addEventListener("submit", (evt) => {
+    handleShareInviteSubmit(evt, "sheet").catch((err) => window.alert(err.message));
+  });
+  document.getElementById("btn-share-master")?.addEventListener("click", () => {
+    handleShareMasterClick();
+  });
+  document.getElementById("btn-open-shared")?.addEventListener("click", () => {
+    document.getElementById("btn-app-menu")?.click();
+    setView("shared-list");
+  });
+  refreshSharesIfStale(0).then(updateShareMasterButton).catch(() => null); // best-effort: stale share data is fine
 }
 
 /** First run only: the two Archive sub-groups start closed (stored like any manual collapse). */
@@ -2256,6 +2371,14 @@ async function renderTrackerView() {
   }
   const watchStartRow = IDE_HELPERS.copilotWatchStartRow(browserSnap.copilotWatch, copilotEdgeStart, Date.now());
 
+  // Which rows can be shared (SPEC-DELTA-2026-10-28-share-from-ai-tracker.md).
+  tagTrackerShare(cursorGuiRows, "cursor-tab", (r) => r.composerId);
+  tagTrackerShare(cursorCliRows, "session", (r) => r.sessionId);
+  tagTrackerShare(cursorArchiveRows, "cursor-tab", (r) => r.composerId);
+  tagTrackerShare(claudeRows, "claude-tab", (r) => r.composerId);
+  tagTrackerShare(claudeArchiveRows, "claude-tab", (r) => r.composerId);
+  for (const sg of claudeSubgroups || []) tagTrackerShare(sg.rows, "claude-tab", (r) => r.composerId);
+
   groupsEl.innerHTML = "";
   trackerAttentionByGroup = {};
   trackerGroupRowKeys = {};
@@ -2326,6 +2449,8 @@ async function renderTrackerView() {
   applyTrackerCollapsed();
   openGroupsForAttention();
   updateTrackerStatusState();
+  updateTrackerShareBadges();
+  refreshSharesIfStale().then(updateTrackerShareBadges).catch(() => null); // best-effort: stale share data is fine
 }
 
 // -----------------------------------------------------------------------------
@@ -3011,8 +3136,9 @@ async function handleV2RenameClick() {
 function renderSharePanel(target) {
   if (!target || !SHARE_UI) return;
   const isIde = target.panel === "ide";
-  const list = document.getElementById(isIde ? "ide-detail-shared-list" : "v2-detail-shared-list");
-  const empty = document.getElementById(isIde ? "ide-share-empty-state" : "v2-share-empty-state");
+  const isSheet = target.panel === "sheet";
+  const list = document.getElementById(isSheet ? "tsheet-shared-list" : isIde ? "ide-detail-shared-list" : "v2-detail-shared-list");
+  const empty = document.getElementById(isSheet ? "tsheet-share-empty" : isIde ? "ide-share-empty-state" : "v2-share-empty-state");
   if (!list) return;
   const rows = SHARE_UI.deriveShareRows({ shares: cachedShares, kind: target.kind, id: target.id, relayStatus: cachedRelayStatus });
   list.innerHTML = "";
@@ -3620,6 +3746,7 @@ async function handleV2ModeChange() {
 
 /** Which item the currently visible Share panel belongs to. */
 function currentShareTarget(panel) {
+  if (panel === "sheet") return trackerShareTarget;
   if (panel === "ide") {
     if (!activeIdeTabComposerId) return null;
     const kind = ideTrackerSource === "claude-code" ? "claude-tab" : "cursor-tab";
@@ -3634,7 +3761,7 @@ function currentShareTarget(panel) {
 }
 
 function shareErrorEl(panel) {
-  return document.getElementById(panel === "ide" ? "ide-share-error-state" : "v2-share-error-state");
+  return document.getElementById(panel === "sheet" ? "tsheet-share-error" : panel === "ide" ? "ide-share-error-state" : "v2-share-error-state");
 }
 
 async function runShareAction(panel, fn) {
@@ -3651,12 +3778,14 @@ async function runShareAction(panel, fn) {
   const target = currentShareTarget(panel);
   if (target) renderSharePanel(target);
   if (panel === "chat" && activeV2DetailRecord) applyHostAccess(activeV2DetailRecord);
+  updateTrackerShareBadges();
+  updateShareMasterButton();
 }
 
 async function handleShareInviteSubmit(evt, panel) {
   evt.preventDefault();
   const target = currentShareTarget(panel);
-  const emailInput = document.getElementById(panel === "ide" ? "ide-share-invite-email" : "v2-share-invite-email");
+  const emailInput = document.getElementById(panel === "sheet" ? "tsheet-share-invite-email" : panel === "ide" ? "ide-share-invite-email" : "v2-share-invite-email");
   if (!target || !emailInput) return;
   const email = emailInput.value.trim();
   if (!email) return;
@@ -4751,20 +4880,20 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE, FAVORITES_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=16d4a7b"),
-      import("./ide-helpers.mjs?v=16d4a7b"),
-      import("./refresh-helpers.mjs?v=16d4a7b"),
-      import("./transcript-model.mjs?v=16d4a7b"),
-      import("./scrollback-helpers.mjs?v=16d4a7b"),
-      import("./daemon-control-model.mjs?v=16d4a7b"),
-      import("./composer-state.mjs?v=16d4a7b"),
-      import("./app-menu-state.mjs?v=16d4a7b"),
-      import("./graph-backoff.mjs?v=16d4a7b"),
-      import("./share-model.mjs?v=16d4a7b"),
-      import("./share-ui-state.mjs?v=16d4a7b"),
-      import("./cockpit-health-model.mjs?v=16d4a7b"),
-      import("./model-choice.mjs?v=16d4a7b"),
-      import("./favorites-model.mjs?v=16d4a7b"),
+      import("./write-helpers.mjs?v=27feb8b"),
+      import("./ide-helpers.mjs?v=27feb8b"),
+      import("./refresh-helpers.mjs?v=27feb8b"),
+      import("./transcript-model.mjs?v=27feb8b"),
+      import("./scrollback-helpers.mjs?v=27feb8b"),
+      import("./daemon-control-model.mjs?v=27feb8b"),
+      import("./composer-state.mjs?v=27feb8b"),
+      import("./app-menu-state.mjs?v=27feb8b"),
+      import("./graph-backoff.mjs?v=27feb8b"),
+      import("./share-model.mjs?v=27feb8b"),
+      import("./share-ui-state.mjs?v=27feb8b"),
+      import("./cockpit-health-model.mjs?v=27feb8b"),
+      import("./model-choice.mjs?v=27feb8b"),
+      import("./favorites-model.mjs?v=27feb8b"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4814,7 +4943,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=16d4a7b");
+      const guestModule = await import("./guest-app.mjs?v=27feb8b");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
@@ -4876,6 +5005,7 @@ async function bootstrap() {
   }
   wireDaemonControlButtons();
   wireFavoritesView();
+  wireTrackerShare();
   wireDiagnosticsButton();
   // AC-132: timers skip ticks while hidden, so coming back refreshes once
   // right away instead of showing up-to-a-poll-interval-old data.
