@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-28 17:15 CET 27feb8b`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-28 17:15 CET 27feb8b";
+// `2026-10-28 17:30 CET a10a5dd`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-28 17:30 CET a10a5dd";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -2188,6 +2188,24 @@ function wireTrackerShare() {
   refreshSharesIfStale(0).then(updateShareMasterButton).catch(() => null); // best-effort: stale share data is fine
 }
 
+/** One row per shares.json item that still has a guest (paused guests marked), for the "Shared by me" group. */
+function sharedTrackerRows() {
+  if (!cachedShares || !Array.isArray(cachedShares.items) || !SHARE_UI) return [];
+  const paused = new Set(Array.isArray(cachedShares.pausedGuests) ? cachedShares.pausedGuests : []);
+  return cachedShares.items
+    .filter((it) => Array.isArray(it.guests) && it.guests.length > 0)
+    .map((it) => ({
+      title: it.title || it.id,
+      lastActivityAt: null,
+      statusKind: null,
+      statusLabel: null,
+      share: { kind: it.kind, id: it.id },
+      where: it.guests
+        .map((g) => `${SHARE_UI.nameFromEmail(g.email)} (${paused.has(g.email) ? "paused" : g.mode})`)
+        .join(", "),
+    }));
+}
+
 /** First run only: the two Archive sub-groups start closed (stored like any manual collapse). */
 function closeTrackerArchivesOnce() {
   const flag = "cockpit.trackerArchiveDefaultClosed";
@@ -2208,6 +2226,7 @@ async function renderTrackerView() {
   errorEl.hidden = true;
   errorEl.textContent = "";
 
+  await refreshSharesIfStale().catch(() => null); // best-effort: the "Shared by me" group uses the cache
   let claudeSnap, cursorSnap, browserSnap, v2IndexResult, digestsDoc;
   try {
     [claudeSnap, cursorSnap, browserSnap, v2IndexResult, digestsDoc] = await Promise.all([
@@ -2394,6 +2413,12 @@ async function renderTrackerView() {
   empty.hidden = true;
   groupsEl.hidden = false;
 
+  // Everything currently shared, even a session the lists above no longer show (Viktor 2026-10-28:
+  // a session shared with Karesz was nowhere in the Tracker). Not counted in the header total.
+  const sharedRows = sharedTrackerRows();
+  if (sharedRows.length > 0) {
+    appendTrackerGroup(groupsEl, "Shared by me", sharedRows, (row) => openTrackerShareSheet(row), "shared");
+  }
   appendTrackerGroup(groupsEl, "Claude Code", claudeRows, (row) => {
     if (row.archived) return openArchived(row, claudeSnap, "claude-code");
     if (row.link) openAppLink(row.link);
@@ -4880,20 +4905,20 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE, FAVORITES_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=27feb8b"),
-      import("./ide-helpers.mjs?v=27feb8b"),
-      import("./refresh-helpers.mjs?v=27feb8b"),
-      import("./transcript-model.mjs?v=27feb8b"),
-      import("./scrollback-helpers.mjs?v=27feb8b"),
-      import("./daemon-control-model.mjs?v=27feb8b"),
-      import("./composer-state.mjs?v=27feb8b"),
-      import("./app-menu-state.mjs?v=27feb8b"),
-      import("./graph-backoff.mjs?v=27feb8b"),
-      import("./share-model.mjs?v=27feb8b"),
-      import("./share-ui-state.mjs?v=27feb8b"),
-      import("./cockpit-health-model.mjs?v=27feb8b"),
-      import("./model-choice.mjs?v=27feb8b"),
-      import("./favorites-model.mjs?v=27feb8b"),
+      import("./write-helpers.mjs?v=a10a5dd"),
+      import("./ide-helpers.mjs?v=a10a5dd"),
+      import("./refresh-helpers.mjs?v=a10a5dd"),
+      import("./transcript-model.mjs?v=a10a5dd"),
+      import("./scrollback-helpers.mjs?v=a10a5dd"),
+      import("./daemon-control-model.mjs?v=a10a5dd"),
+      import("./composer-state.mjs?v=a10a5dd"),
+      import("./app-menu-state.mjs?v=a10a5dd"),
+      import("./graph-backoff.mjs?v=a10a5dd"),
+      import("./share-model.mjs?v=a10a5dd"),
+      import("./share-ui-state.mjs?v=a10a5dd"),
+      import("./cockpit-health-model.mjs?v=a10a5dd"),
+      import("./model-choice.mjs?v=a10a5dd"),
+      import("./favorites-model.mjs?v=a10a5dd"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4943,7 +4968,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=27feb8b");
+      const guestModule = await import("./guest-app.mjs?v=a10a5dd");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,

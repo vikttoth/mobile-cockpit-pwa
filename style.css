@@ -1905,3 +1905,4 @@ body:not([data-guest="true"]) #btn-mode-shared { display: none; }
 .cockpit-row-share-icon { flex: none; padding: 0 2px; font-size: 0.8rem; line-height: 1; background: none; border: 0; cursor: pointer; }
 .cockpit-row-share-icon[hidden] { display: none; }
 .cockpit-row-share-icon[data-paused="true"] { opacity: 0.4; }
+.cockpit-tracker-group[data-tracker-source="shared"] { --cp-tracker-src: #0f766e; }
