@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-28 17:30 CET a10a5dd`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-28 17:30 CET a10a5dd";
+// `2026-10-28 17:36 CET a819ebd`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-28 17:36 CET a819ebd";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -2188,22 +2188,63 @@ function wireTrackerShare() {
   refreshSharesIfStale(0).then(updateShareMasterButton).catch(() => null); // best-effort: stale share data is fine
 }
 
-/** One row per shares.json item that still has a guest (paused guests marked), for the "Shared by me" group. */
-function sharedTrackerRows() {
+/** "Claude Code › Archive", "Cursor › GUI tabs" ... : where a rendered Tracker row lives. */
+function trackerOriginLabel(li) {
+  const strip = (el) => {
+    const label = el && el.querySelector(".cockpit-tracker-toggle-label");
+    return label ? label.textContent.replace(/\s*\(\d+\)\s*$/, "").trim() : "";
+  };
+  const section = li.closest(".cockpit-tracker-group");
+  const top = strip(section && section.querySelector(".cockpit-tracker-group-title"));
+  const ul = li.closest("ul");
+  const prev = ul && ul.previousElementSibling;
+  const sub = prev && prev.classList.contains("cockpit-tracker-subgroup-title") ? strip(prev) : "";
+  return sub ? `${top} › ${sub}` : top;
+}
+
+/** One row per shares.json item that still has a guest (paused guests marked), for the last "Shared by me"
+ *  group: guests + where the session lives in the Tracker above (or that no list shows it). */
+function sharedTrackerRows(groupsEl) {
   if (!cachedShares || !Array.isArray(cachedShares.items) || !SHARE_UI) return [];
   const paused = new Set(Array.isArray(cachedShares.pausedGuests) ? cachedShares.pausedGuests : []);
+  const live = [...groupsEl.querySelectorAll("[data-share-kind]")];
+  const notListed = { "claude-tab": "Claude Code", "cursor-tab": "Cursor", session: "Cursor CLI" };
   return cachedShares.items
     .filter((it) => Array.isArray(it.guests) && it.guests.length > 0)
-    .map((it) => ({
-      title: it.title || it.id,
-      lastActivityAt: null,
-      statusKind: null,
-      statusLabel: null,
-      share: { kind: it.kind, id: it.id },
-      where: it.guests
+    .map((it) => {
+      const li = live.find((el) => el.dataset.shareKind === it.kind && el.dataset.shareId === it.id) || null;
+      const guests = it.guests
         .map((g) => `${SHARE_UI.nameFromEmail(g.email)} (${paused.has(g.email) ? "paused" : g.mode})`)
-        .join(", "),
-    }));
+        .join(", ");
+      return {
+        title: it.title || it.id,
+        lastActivityAt: null,
+        statusKind: null,
+        statusLabel: null,
+        share: { kind: it.kind, id: it.id },
+        jumpTo: li,
+        where: `${li ? trackerOriginLabel(li) : `${notListed[it.kind] || it.kind} · not in the lists`} · ${guests}`,
+      };
+    });
+}
+
+/** Click on a "Shared by me" row: open its group, scroll to the real row and flash it; no real row -> the share sheet. */
+function jumpToTrackerRow(row) {
+  const li = row.jumpTo;
+  if (!li || !li.isConnected) {
+    openTrackerShareSheet(row);
+    return;
+  }
+  const keys = [];
+  const section = li.closest(".cockpit-tracker-group");
+  const ul = li.closest("ul");
+  const prev = ul && ul.previousElementSibling;
+  const heads = [section && section.querySelector(".cockpit-tracker-group-title"), prev && prev.classList.contains("cockpit-tracker-subgroup-title") ? prev : null];
+  for (const h of heads) if (h && h.dataset.collapseKey) keys.push(h.dataset.collapseKey);
+  if (keys.some((k) => trackerCollapsed.includes(k))) setTrackerCollapsed(trackerCollapsed.filter((k) => !keys.includes(k)));
+  li.scrollIntoView({ block: "center", behavior: "smooth" });
+  li.classList.add("cockpit-row-flash");
+  setTimeout(() => li.classList.remove("cockpit-row-flash"), 1800);
 }
 
 /** First run only: the two Archive sub-groups start closed (stored like any manual collapse). */
@@ -2413,12 +2454,6 @@ async function renderTrackerView() {
   empty.hidden = true;
   groupsEl.hidden = false;
 
-  // Everything currently shared, even a session the lists above no longer show (Viktor 2026-10-28:
-  // a session shared with Karesz was nowhere in the Tracker). Not counted in the header total.
-  const sharedRows = sharedTrackerRows();
-  if (sharedRows.length > 0) {
-    appendTrackerGroup(groupsEl, "Shared by me", sharedRows, (row) => openTrackerShareSheet(row), "shared");
-  }
   appendTrackerGroup(groupsEl, "Claude Code", claudeRows, (row) => {
     if (row.archived) return openArchived(row, claudeSnap, "claude-code");
     if (row.link) openAppLink(row.link);
@@ -2471,6 +2506,12 @@ async function renderTrackerView() {
     copilotSubgroups.push({ label: "Not trackable (plain Chrome/Edge)", rows: untrackedBrowserRows });
   }
   appendTrackerGroup(groupsEl, "Copilot / Cowork", [], activateBrowserRow, "copilot", copilotSubgroups);
+  // Last group: everything currently shared, even a session no list above shows (Viktor 2026-10-28:
+  // a session shared with Karesz was nowhere in the Tracker). Not counted in the header total.
+  const sharedRows = sharedTrackerRows(groupsEl);
+  if (sharedRows.length > 0) {
+    appendTrackerGroup(groupsEl, "Shared by me", sharedRows, (row) => jumpToTrackerRow(row), "shared");
+  }
   applyTrackerCollapsed();
   openGroupsForAttention();
   updateTrackerStatusState();
@@ -4905,20 +4946,20 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE, FAVORITES_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=a10a5dd"),
-      import("./ide-helpers.mjs?v=a10a5dd"),
-      import("./refresh-helpers.mjs?v=a10a5dd"),
-      import("./transcript-model.mjs?v=a10a5dd"),
-      import("./scrollback-helpers.mjs?v=a10a5dd"),
-      import("./daemon-control-model.mjs?v=a10a5dd"),
-      import("./composer-state.mjs?v=a10a5dd"),
-      import("./app-menu-state.mjs?v=a10a5dd"),
-      import("./graph-backoff.mjs?v=a10a5dd"),
-      import("./share-model.mjs?v=a10a5dd"),
-      import("./share-ui-state.mjs?v=a10a5dd"),
-      import("./cockpit-health-model.mjs?v=a10a5dd"),
-      import("./model-choice.mjs?v=a10a5dd"),
-      import("./favorites-model.mjs?v=a10a5dd"),
+      import("./write-helpers.mjs?v=a819ebd"),
+      import("./ide-helpers.mjs?v=a819ebd"),
+      import("./refresh-helpers.mjs?v=a819ebd"),
+      import("./transcript-model.mjs?v=a819ebd"),
+      import("./scrollback-helpers.mjs?v=a819ebd"),
+      import("./daemon-control-model.mjs?v=a819ebd"),
+      import("./composer-state.mjs?v=a819ebd"),
+      import("./app-menu-state.mjs?v=a819ebd"),
+      import("./graph-backoff.mjs?v=a819ebd"),
+      import("./share-model.mjs?v=a819ebd"),
+      import("./share-ui-state.mjs?v=a819ebd"),
+      import("./cockpit-health-model.mjs?v=a819ebd"),
+      import("./model-choice.mjs?v=a819ebd"),
+      import("./favorites-model.mjs?v=a819ebd"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4968,7 +5009,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=a10a5dd");
+      const guestModule = await import("./guest-app.mjs?v=a819ebd");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
