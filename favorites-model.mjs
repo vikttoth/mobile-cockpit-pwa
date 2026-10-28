@@ -129,12 +129,17 @@ export function listItems(doc, list) {
   return parseFavorites(doc).items.filter((x) => x.list === list);
 }
 
-/** Case-insensitive AND-match of whitespace-separated terms over title/note/kind/url. */
+/** Lower-case and strip accents (NFD, combining marks removed): "Összefoglaló" -> "osszefoglalo", ő/ű too. */
+export function foldText(s) {
+  return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+
+/** Case- and accent-insensitive AND-match of whitespace-separated terms over title/note/kind/url. */
 export function filterItems(items, query) {
-  const terms = String(query || "").toLowerCase().split(/\s+/).filter(Boolean);
+  const terms = foldText(query).split(/\s+/).filter(Boolean);
   if (!terms.length) return items;
   return items.filter((x) => {
-    const hay = `${x.title} ${x.note} ${x.kind} ${x.url}`.toLowerCase();
+    const hay = foldText(`${x.title} ${x.note} ${x.kind} ${x.url}`);
     return terms.every((t) => hay.includes(t));
   });
 }
