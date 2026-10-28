@@ -1897,3 +1897,4 @@ body:is([data-view="v2-list"], [data-view="shared-list"], [data-view="ide-tabs"]
 .fav-actions { flex-wrap: nowrap; gap: 2px; max-width: none; }
 .fav-btn { padding: 0 5px; font-size: 0.7rem; line-height: 1.5; }
 .fav-body { max-height: 70vh; }
+.fav-topbar .fav-search { flex: 1 1 auto; }

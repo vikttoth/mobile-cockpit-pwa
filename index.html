@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-10-28 16:47 CET e9fa2b5 in config.json + app.js).
+  script (replaces 2026-10-28 16:51 CET 16d4a7b in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -48,11 +48,11 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=e9fa2b5")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=16d4a7b")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=e9fa2b5" />
+  <link rel="stylesheet" href="./style.css?v=16d4a7b" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
@@ -186,6 +186,7 @@
     <!-- SPEC-DELTA-2026-10-28-favorites-tab.md -->
     <section id="view-favorites" class="cockpit-view" data-view-id="favorites" hidden>
       <div class="fav-topbar">
+        <input type="search" id="fav-search" class="fav-search" placeholder="Find in all lists…" aria-label="Find in all lists" autocomplete="off">
         <button type="button" id="btn-fav-add" class="cockpit-btn cockpit-btn-small">+ Add link</button>
         <span id="fav-status" class="cockpit-hint" role="status"></span>
       </div>
@@ -201,7 +202,6 @@
       <div class="fav-section" data-fav-list="pinned">
         <div class="fav-section-head">
           <h2 class="fav-section-title">★ Pinned <span class="fav-count" data-fav-count="pinned"></span></h2>
-          <input type="search" class="fav-search" data-fav-search="pinned" placeholder="Find…" aria-label="Find in pinned" autocomplete="off">
         </div>
         <div class="fav-body" data-fav-body="pinned">
           <ul class="fav-list" data-fav-ul="pinned"></ul>
@@ -211,7 +211,6 @@
       <div class="fav-section" data-fav-list="latest">
         <div class="fav-section-head">
           <h2 class="fav-section-title">Latest <span class="fav-count" data-fav-count="latest"></span></h2>
-          <input type="search" class="fav-search" data-fav-search="latest" placeholder="Find…" aria-label="Find in latest" autocomplete="off">
         </div>
         <div class="fav-body" data-fav-body="latest">
           <ul class="fav-list" data-fav-ul="latest"></ul>
@@ -221,7 +220,6 @@
       <div class="fav-section" data-fav-list="archive">
         <div class="fav-section-head">
           <button type="button" class="fav-collapse-btn" data-fav-toggle="archive" aria-expanded="false" title="Show / hide the archive">▸</button><h2 class="fav-section-title">Archive <span class="fav-count" data-fav-count="archive"></span></h2>
-          <input type="search" class="fav-search" data-fav-search="archive" placeholder="Find…" aria-label="Find in archive" autocomplete="off">
         </div>
         <div class="fav-body" data-fav-body="archive" hidden>
           <ul class="fav-list" data-fav-ul="archive"></ul>
@@ -753,6 +751,6 @@
   </main>
 
 
-  <script src="./app.js?v=e9fa2b5" defer></script>
+  <script src="./app.js?v=16d4a7b" defer></script>
 </body>
 </html>

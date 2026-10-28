@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-28 16:47 CET e9fa2b5`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-28 16:47 CET e9fa2b5";
+// `2026-10-28 16:51 CET 16d4a7b`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-28 16:51 CET 16d4a7b";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -3989,7 +3989,8 @@ function wireDaemonControlButtons() {
 let favDoc = null;
 let favEtag = null;
 let favInFlight = false;
-const favQuery = { pinned: "", latest: "", archive: "" };
+let favQuery = ""; // ONE find box for all three lists
+let favArchiveOpen = false; // the user's own open/closed choice for the Archive
 const FAV_ICONS = { word: "W", excel: "X", powerpoint: "P", pdf: "PDF", file: "▤", link: "↗" };
 const FAV_COLLAPSE_KEY = "cockpit.favArchiveOpen";
 
@@ -4143,13 +4144,17 @@ function renderFavoritesLists() {
     const count = document.querySelector(`[data-fav-count="${list}"]`);
     if (!ul) continue;
     const full = FAVORITES_MODEL.listItems(doc, list);
-    const shown = FAVORITES_MODEL.filterItems(full, favQuery[list]);
+    const shown = FAVORITES_MODEL.filterItems(full, favQuery);
     ul.replaceChildren(...shown.map((it) => favRow(it, list, full)));
     if (empty) {
       empty.hidden = shown.length > 0;
-      empty.textContent = full.length && !shown.length ? "No match." : "Nothing here.";
+      empty.textContent = "Nothing here.";
     }
-    if (count) count.textContent = favQuery[list] ? `${shown.length}/${full.length}` : String(full.length);
+    if (count) count.textContent = favQuery ? `${shown.length}/${full.length}` : String(full.length);
+    // While finding: sections without a hit disappear, the Archive opens itself when it has one.
+    const section = ul.closest(".fav-section");
+    if (section) section.hidden = !!favQuery && shown.length === 0;
+    if (list === "archive") applyFavArchiveOpen(!!favQuery && shown.length > 0 ? true : favArchiveOpen);
   }
 }
 
@@ -4166,24 +4171,26 @@ function favDropIndex(e, list, draggedId) {
   return at;
 }
 
-function setFavArchiveOpen(open) {
+function applyFavArchiveOpen(open) {
   const body = document.querySelector('[data-fav-body="archive"]');
   const btn = document.querySelector('[data-fav-toggle="archive"]');
   if (body) body.hidden = !open;
   if (btn) { btn.textContent = open ? "▾" : "▸"; btn.setAttribute("aria-expanded", open ? "true" : "false"); }
+}
+
+function setFavArchiveOpen(open) {
+  favArchiveOpen = open;
+  applyFavArchiveOpen(open);
   try { localStorage.setItem(FAV_COLLAPSE_KEY, open ? "1" : "0"); } catch { /* blocked storage */ }
 }
 
 function wireFavoritesView() {
   const view = document.getElementById("view-favorites");
   if (!view) return;
-  for (const input of view.querySelectorAll("[data-fav-search]")) {
-    input.addEventListener("input", () => {
-      favQuery[input.dataset.favSearch] = input.value;
-      if (input.value && input.dataset.favSearch === "archive") setFavArchiveOpen(true);
-      renderFavoritesLists();
-    });
-  }
+  document.getElementById("fav-search")?.addEventListener("input", (e) => {
+    favQuery = e.target.value;
+    renderFavoritesLists();
+  });
   for (const body of view.querySelectorAll("[data-fav-body]")) {
     const list = body.dataset.favBody;
     const section = body.closest(".fav-section");
@@ -4201,7 +4208,7 @@ function wireFavoritesView() {
     }
   }
   const toggle = view.querySelector('[data-fav-toggle="archive"]');
-  if (toggle) toggle.addEventListener("click", () => setFavArchiveOpen(document.querySelector('[data-fav-body="archive"]').hidden));
+  if (toggle) toggle.addEventListener("click", () => setFavArchiveOpen(!favArchiveOpen));
   try { if (localStorage.getItem(FAV_COLLAPSE_KEY) === "1") setFavArchiveOpen(true); } catch { /* blocked storage */ }
 
   const form = document.getElementById("fav-add-form");
@@ -4744,20 +4751,20 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE, FAVORITES_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=e9fa2b5"),
-      import("./ide-helpers.mjs?v=e9fa2b5"),
-      import("./refresh-helpers.mjs?v=e9fa2b5"),
-      import("./transcript-model.mjs?v=e9fa2b5"),
-      import("./scrollback-helpers.mjs?v=e9fa2b5"),
-      import("./daemon-control-model.mjs?v=e9fa2b5"),
-      import("./composer-state.mjs?v=e9fa2b5"),
-      import("./app-menu-state.mjs?v=e9fa2b5"),
-      import("./graph-backoff.mjs?v=e9fa2b5"),
-      import("./share-model.mjs?v=e9fa2b5"),
-      import("./share-ui-state.mjs?v=e9fa2b5"),
-      import("./cockpit-health-model.mjs?v=e9fa2b5"),
-      import("./model-choice.mjs?v=e9fa2b5"),
-      import("./favorites-model.mjs?v=e9fa2b5"),
+      import("./write-helpers.mjs?v=16d4a7b"),
+      import("./ide-helpers.mjs?v=16d4a7b"),
+      import("./refresh-helpers.mjs?v=16d4a7b"),
+      import("./transcript-model.mjs?v=16d4a7b"),
+      import("./scrollback-helpers.mjs?v=16d4a7b"),
+      import("./daemon-control-model.mjs?v=16d4a7b"),
+      import("./composer-state.mjs?v=16d4a7b"),
+      import("./app-menu-state.mjs?v=16d4a7b"),
+      import("./graph-backoff.mjs?v=16d4a7b"),
+      import("./share-model.mjs?v=16d4a7b"),
+      import("./share-ui-state.mjs?v=16d4a7b"),
+      import("./cockpit-health-model.mjs?v=16d4a7b"),
+      import("./model-choice.mjs?v=16d4a7b"),
+      import("./favorites-model.mjs?v=16d4a7b"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4807,7 +4814,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=e9fa2b5");
+      const guestModule = await import("./guest-app.mjs?v=16d4a7b");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
