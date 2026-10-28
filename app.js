@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-28 16:10 CET 23944df`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-28 16:10 CET 23944df";
+// `2026-10-28 16:39 CET 7fa83c5`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-28 16:39 CET 7fa83c5";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -872,6 +872,9 @@ function applyHashRoute() {
 }
 
 function setView(viewId, payload) {
+  // SPEC-DELTA-2026-10-28-merge-ide-tracker-into-tracker.md: the IDE Tracker tab is gone; every
+  // old entry point (fallbacks, a remembered last view) lands on the Tracker.
+  if (viewId === "ide-tabs") viewId = "tracker";
   document.body.dataset.view = viewId;
   rememberTopLevelView(viewId);
   for (const section of document.querySelectorAll(".cockpit-view")) {
@@ -1812,19 +1815,22 @@ function appendTrackerGroup(container, label, rows, onActivate, sourceKey, subgr
   section.dataset.trackerSource = sourceKey;
   container.appendChild(section);
 
-  const total = subgroups ? subgroups.reduce((n, sg) => n + sg.rows.length, 0) : rows.length;
+  // SPEC-DELTA-2026-10-28-merge-ide-tracker-into-tracker.md: an "Archive" sub-group (closed
+  // history chats) is listed but never counted, never raises attention, never gets status marks.
+  const liveSubgroups = subgroups ? subgroups.filter((sg) => !sg.archive) : null;
+  const total = liveSubgroups ? liveSubgroups.reduce((n, sg) => n + sg.rows.length, 0) : rows.length;
   // SPEC-DELTA-2026-10-09-tracker-attention-auto-open.md: remember which rows need Viktor per group.
   trackerAttentionByGroup[IDE_HELPERS.trackerCollapseKey(sourceKey)] = IDE_HELPERS.trackerAttentionKeys(
     sourceKey,
-    subgroups ? subgroups.flatMap((sg) => sg.rows) : rows,
+    liveSubgroups ? liveSubgroups.flatMap((sg) => sg.rows) : rows,
   );
-  for (const sg of subgroups || []) {
+  for (const sg of liveSubgroups || []) {
     trackerAttentionByGroup[IDE_HELPERS.trackerCollapseKey(sourceKey, sg.label)] = IDE_HELPERS.trackerAttentionKeys(sourceKey, sg.rows);
   }
   const title = document.createElement("h2");
   title.className = "cockpit-tracker-group-title";
   title.dataset.trackerSource = sourceKey;
-  const allRows = subgroups ? subgroups.flatMap((sg) => sg.rows) : rows;
+  const allRows = liveSubgroups ? liveSubgroups.flatMap((sg) => sg.rows) : rows;
   appendTrackerToggle(title, IDE_HELPERS.trackerCollapseKey(sourceKey), `${label} (${total})`, allRows);
   section.appendChild(title);
 
@@ -1842,7 +1848,7 @@ function appendTrackerGroup(container, label, rows, onActivate, sourceKey, subgr
     trackerGroupRowKeys[IDE_HELPERS.trackerCollapseKey(sourceKey)] = rowKeysOf(sourceKey, rows);
     return;
   }
-  trackerGroupRowKeys[IDE_HELPERS.trackerCollapseKey(sourceKey)] = rowKeysOf(sourceKey, subgroups.flatMap((sg) => sg.rows));
+  trackerGroupRowKeys[IDE_HELPERS.trackerCollapseKey(sourceKey)] = rowKeysOf(sourceKey, liveSubgroups.flatMap((sg) => sg.rows));
   for (const sg of subgroups) {
     const sub = document.createElement("h3");
     sub.className = "cockpit-tracker-subgroup-title";
@@ -1851,7 +1857,7 @@ function appendTrackerGroup(container, label, rows, onActivate, sourceKey, subgr
     const list = buildTrackerList(sg.rows, onActivate, sg.action || null);
     tagTrackerRows(list, sg.rows, sourceKey);
     section.appendChild(list);
-    trackerGroupRowKeys[IDE_HELPERS.trackerCollapseKey(sourceKey, sg.label)] = rowKeysOf(sourceKey, sg.rows);
+    if (!sg.archive) trackerGroupRowKeys[IDE_HELPERS.trackerCollapseKey(sourceKey, sg.label)] = rowKeysOf(sourceKey, sg.rows);
   }
 }
 
@@ -2067,6 +2073,17 @@ function buildTrackerList(rows, onActivate, action = null) {
   return ul;
 }
 
+/** First run only: the two Archive sub-groups start closed (stored like any manual collapse). */
+function closeTrackerArchivesOnce() {
+  const flag = "cockpit.trackerArchiveDefaultClosed";
+  try {
+    if (localStorage.getItem(flag)) return;
+    localStorage.setItem(flag, "1");
+  } catch { return; }
+  const keys = ["claude", "cursor"].map((s) => IDE_HELPERS.trackerCollapseKey(s, "Archive"));
+  setTrackerCollapsed([...new Set([...trackerCollapsed, ...keys])]);
+}
+
 async function renderTrackerView() {
   const groupsEl = document.getElementById("tracker-groups");
   const empty = document.getElementById("tracker-empty-state");
@@ -2125,6 +2142,33 @@ async function renderTrackerView() {
         summary: t.summary || null,
         activity: t.activity || null,
       }));
+  // SPEC-DELTA-2026-10-28-merge-ide-tracker-into-tracker.md: the old IDE Tracker's "Archive"
+  // (closed history chats) as a closed-by-default sub-group per source; rows open the in-app
+  // read-only transcript view (a closed chat has no live tool/tab to jump to).
+  const archiveCap = (CONFIG.pwa && CONFIG.pwa.recentSessionsCount) || 50;
+  const archiveRowsOf = (snap) =>
+    IDE_HELPERS.orderIdeTabsForDisplay(IDE_HELPERS.pickIdeTabList(snap, "history"), archiveCap, {}).map((t) => ({
+      title: t.title,
+      lastActivityAt: t.lastActivityAt,
+      composerId: t.composerId,
+      statusKind: null,
+      statusLabel: null,
+      summary: t.summary || null,
+      activity: null,
+      archived: true,
+    }));
+  const claudeArchiveRows = archiveRowsOf(claudeSnap);
+  const cursorArchiveRows = archiveRowsOf(cursorSnap);
+  const claudeArchiveGroup = { label: "Archive", rows: claudeArchiveRows, archive: true };
+  const claudeAllSubgroups = claudeSubgroups
+    ? [...claudeSubgroups, claudeArchiveGroup]
+    : claudeArchiveRows.length ? [{ label: "Sessions", rows: claudeRows }, claudeArchiveGroup] : null;
+  const openArchived = (row, snap, source) => {
+    ideTrackerSource = source;
+    cachedIdeSnapshot = snap;
+    setView("ide-tab-detail", { composerId: row.composerId });
+  };
+  closeTrackerArchivesOnce();
   const claudeCount = (claudeSubgroups ? claudeSubgroups.reduce((n, sg) => n + sg.rows.length, 0) : claudeRows.length);
   // Only worth saying when there is nothing to show; with last-good data the
   // mirror's error is transient and the rows are right.
@@ -2228,14 +2272,17 @@ async function renderTrackerView() {
   groupsEl.hidden = false;
 
   appendTrackerGroup(groupsEl, "Claude Code", claudeRows, (row) => {
+    if (row.archived) return openArchived(row, claudeSnap, "claude-code");
     if (row.link) openAppLink(row.link);
-  }, "claude", claudeSubgroups, claudeHint);
+  }, "claude", claudeAllSubgroups, claudeHint);
   // Open GUI tabs first, then this cockpit's CLI sessions (Viktor, 2026-10-08).
   const cursorSubgroups = [
     { label: "GUI tabs", rows: cursorGuiRows },
     { label: "CLI sessions", rows: cursorCliRows },
+    ...(cursorArchiveRows.length ? [{ label: "Archive", rows: cursorArchiveRows, archive: true }] : []),
   ];
   appendTrackerGroup(groupsEl, "Cursor", cursorRows, (row) => {
+    if (row.archived) return openArchived(row, cursorSnap, "cursor");
     if (row.kind === "cli") {
       setView("v2-detail", { sessionId: row.sessionId });
       return;
@@ -4564,7 +4611,7 @@ function refreshVisibleViewOnce() {
 // windows (a normal browser tab ignores them), so no-op elsewhere.
 const LAST_VIEW_STORAGE_KEY = "cockpit.lastView";
 const WINDOW_GEOM_STORAGE_KEY = "cockpit.windowGeometry";
-const RESTORABLE_VIEWS = ["v2-list", "shared-list", "ide-tabs", "tracker", "favorites"];
+const RESTORABLE_VIEWS = ["v2-list", "shared-list", "tracker", "favorites"];
 
 function rememberTopLevelView(viewId) {
   if (!RESTORABLE_VIEWS.includes(viewId)) return;
@@ -4576,7 +4623,8 @@ function restoreLastView() {
     const hasRoute = WRITE_HELPERS && WRITE_HELPERS.parseLocationHash(window.location.hash);
     if (hasRoute) return;
     const saved = localStorage.getItem(LAST_VIEW_STORAGE_KEY);
-    if (saved && saved !== document.body.dataset.view && RESTORABLE_VIEWS.includes(saved)) setView(saved);
+    const target = saved === "ide-tabs" ? "tracker" : saved;
+    if (target && target !== document.body.dataset.view && RESTORABLE_VIEWS.includes(target)) setView(target);
   } catch { /* blocked storage */ }
 }
 
@@ -4696,20 +4744,20 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE, FAVORITES_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=23944df"),
-      import("./ide-helpers.mjs?v=23944df"),
-      import("./refresh-helpers.mjs?v=23944df"),
-      import("./transcript-model.mjs?v=23944df"),
-      import("./scrollback-helpers.mjs?v=23944df"),
-      import("./daemon-control-model.mjs?v=23944df"),
-      import("./composer-state.mjs?v=23944df"),
-      import("./app-menu-state.mjs?v=23944df"),
-      import("./graph-backoff.mjs?v=23944df"),
-      import("./share-model.mjs?v=23944df"),
-      import("./share-ui-state.mjs?v=23944df"),
-      import("./cockpit-health-model.mjs?v=23944df"),
-      import("./model-choice.mjs?v=23944df"),
-      import("./favorites-model.mjs?v=23944df"),
+      import("./write-helpers.mjs?v=7fa83c5"),
+      import("./ide-helpers.mjs?v=7fa83c5"),
+      import("./refresh-helpers.mjs?v=7fa83c5"),
+      import("./transcript-model.mjs?v=7fa83c5"),
+      import("./scrollback-helpers.mjs?v=7fa83c5"),
+      import("./daemon-control-model.mjs?v=7fa83c5"),
+      import("./composer-state.mjs?v=7fa83c5"),
+      import("./app-menu-state.mjs?v=7fa83c5"),
+      import("./graph-backoff.mjs?v=7fa83c5"),
+      import("./share-model.mjs?v=7fa83c5"),
+      import("./share-ui-state.mjs?v=7fa83c5"),
+      import("./cockpit-health-model.mjs?v=7fa83c5"),
+      import("./model-choice.mjs?v=7fa83c5"),
+      import("./favorites-model.mjs?v=7fa83c5"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4759,7 +4807,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=23944df");
+      const guestModule = await import("./guest-app.mjs?v=7fa83c5");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,

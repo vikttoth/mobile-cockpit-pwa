@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-10-28 16:10 CET 23944df in config.json + app.js).
+  script (replaces 2026-10-28 16:39 CET 7fa83c5 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -48,11 +48,11 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=23944df")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=7fa83c5")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=23944df" />
+  <link rel="stylesheet" href="./style.css?v=7fa83c5" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
@@ -163,8 +163,7 @@
     <button type="button" id="btn-mode-shared" class="cockpit-mode-btn"
             role="tab" data-target-view="shared-list"
             title="Sessions someone else shared with you, read-only (SPEC-DELTA-2026-09-25-session-sharing-stage1)">Shared</button>
-    <button type="button" id="btn-mode-ide-tabs" class="cockpit-mode-btn"
-            role="tab" data-target-view="ide-tabs">IDE Tracker</button>
+    <!-- IDE Tracker tab removed 2026-10-28 (SPEC-DELTA-2026-10-28-merge-ide-tracker-into-tracker.md): its Archive + read-only transcript view live under Tracker. -->
     <!-- SPEC-DELTA-2026-10-07-cockpit-pin-density-unified-view.md: a
          dedicated, chrome-free grouped view -- see #view-tracker below and
          body[data-view="tracker"] in style.css (hides header + this nav). -->
@@ -346,7 +345,7 @@
     -->
     <section id="view-ide-tab-detail" class="cockpit-view" data-view-id="ide-tab-detail" hidden>
       <div class="cockpit-detail-header">
-        <button type="button" class="cockpit-back-btn" data-target-view="ide-tabs" aria-label="Back to IDE tabs">← Back to IDE tabs</button>
+        <button type="button" class="cockpit-back-btn" data-target-view="tracker" aria-label="Back to Tracker">← Back to Tracker</button>
         <button type="button" id="btn-ide-detail-refresh" class="cockpit-btn" aria-label="Refresh IDE tab">↻</button>
       </div>
       <h2 id="ide-detail-title">…</h2>
@@ -754,6 +753,6 @@
   </main>
 
 
-  <script src="./app.js?v=23944df" defer></script>
+  <script src="./app.js?v=7fa83c5" defer></script>
 </body>
 </html>
