@@ -106,7 +106,7 @@ function isoOrNull(v) {
  * @returns {boolean} true = reload now
  */
 export function shouldReloadForNewBuild(runningStamp, configStamp, triedStamp) {
-  const ok = (s) => typeof s === "string" && s.trim() !== "" && !s.includes("2026-10-22 11:00 CEST 0d5bc51");
+  const ok = (s) => typeof s === "string" && s.trim() !== "" && !s.includes("2026-10-28 15:58 CET 8e71962");
   if (!ok(runningStamp) || !ok(configStamp)) return false;
   if (runningStamp === configStamp) return false;
   return triedStamp !== configStamp;

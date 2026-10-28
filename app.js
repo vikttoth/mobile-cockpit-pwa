@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-22 11:00 CEST 0d5bc51`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-22 11:00 CEST 0d5bc51";
+// `2026-10-28 15:58 CET 8e71962`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-10-28 15:58 CET 8e71962";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -68,6 +68,10 @@ let REFRESH_HELPERS = null;
  *  mirror of ../lib/daemon-control-model.mjs (see
  *  pwa-daemon-control-coherence.sh). */
 let DAEMON_CONTROL_MODEL = null;
+
+/** Pure helpers for the Favorites tab (SPEC-DELTA-2026-10-28-favorites-tab) --
+ *  byte-for-byte mirror of ../lib/favorites-model.mjs. */
+let FAVORITES_MODEL = null;
 
 /** Dynamically imported pure helpers for the global diagnostics panel
  *  (SPEC-DELTA-2026-10-01-health-visibility-and-manual-self-heal) --
@@ -887,6 +891,8 @@ function setView(viewId, payload) {
     renderIdeTabsList().catch((err) => showIdeTabsError(err.message));
   } else if (viewId === "ide-tab-detail" && payload && payload.composerId) {
     renderIdeTabDetail(payload.composerId);
+  } else if (viewId === "favorites") {
+    renderFavoritesView();
   } else if (viewId === "v2-list") {
     renderV2List().catch((err) => showV2ListError(err.message));
   } else if (viewId === "v2-detail" && payload && payload.sessionId) {
@@ -3924,6 +3930,255 @@ function wireDaemonControlButtons() {
 }
 
 // =============================================================================
+// 7c-2b. Favorites tab (SPEC-DELTA-2026-10-28-favorites-tab)
+// =============================================================================
+//
+// Three lists over one OneDrive file (favorites.json): Pinned, Latest
+// (newest at the bottom), Archive (unpinned / put away, restorable). All
+// state logic is in favorites-model.mjs; this is rendering + the
+// read-modify-write-with-retry glue. Rows can be dragged between/within
+// lists (desktop) or moved with the row buttons (touch).
+
+let favDoc = null;
+let favEtag = null;
+let favInFlight = false;
+const favQuery = { pinned: "", latest: "", archive: "" };
+const FAV_ICONS = { word: "W", excel: "X", powerpoint: "P", pdf: "PDF", file: "▤", link: "↗" };
+const FAV_COLLAPSE_KEY = "cockpit.favArchiveOpen";
+
+function setFavStatus(text, isError) {
+  const el = document.getElementById("fav-status");
+  if (!el) return;
+  el.textContent = text || "";
+  el.dataset.tone = isError ? "error" : "";
+}
+
+async function loadFavorites() {
+  const { json, etag } = await loadJson(CONFIG.favorites.endpoint);
+  favDoc = FAVORITES_MODEL.parseFavorites(json);
+  favEtag = etag;
+}
+
+/** Re-read, apply `mutate`, PUT with If-Match; retry when another writer won. */
+async function mutateFavorites(mutate) {
+  if (favInFlight) return;
+  favInFlight = true;
+  try {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await loadFavorites();
+      const next = mutate(favDoc);
+      try {
+        await putJson(CONFIG.favorites.endpoint, next, favEtag);
+        favDoc = next;
+        favEtag = null; // stale after our own write; next load refreshes it
+        setFavStatus("");
+        renderFavoritesLists();
+        return;
+      } catch (err) {
+        if (err && err.code === "PRECONDITION_FAILED") continue;
+        throw err;
+      }
+    }
+    throw new Error("Favorites changed elsewhere — try again");
+  } catch (err) {
+    setFavStatus(err.message || String(err), true);
+    renderFavoritesLists();
+  } finally {
+    favInFlight = false;
+  }
+}
+
+async function renderFavoritesView() {
+  setFavStatus("Loading…");
+  try {
+    await loadFavorites();
+    setFavStatus("");
+  } catch (err) {
+    setFavStatus(`Could not load: ${err.message}`, true);
+  }
+  renderFavoritesLists();
+}
+
+function favOpen(item) {
+  window.open(item.url, "_blank", "noopener");
+  mutateFavorites((d) => FAVORITES_MODEL.markOpened(d, item.id, new Date().toISOString()));
+}
+
+function favButton(label, title, onClick) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "fav-btn";
+  b.textContent = label;
+  b.title = title;
+  b.addEventListener("click", (e) => { e.stopPropagation(); onClick(); });
+  return b;
+}
+
+function favRow(item, list, full) {
+  const idx = full.findIndex((x) => x.id === item.id);
+  const li = document.createElement("li");
+  li.className = "fav-row";
+  li.draggable = true;
+  li.dataset.id = item.id;
+  li.addEventListener("dragstart", (e) => {
+    e.dataTransfer.setData("text/plain", item.id);
+    e.dataTransfer.effectAllowed = "move";
+    li.classList.add("fav-dragging");
+  });
+  li.addEventListener("dragend", () => li.classList.remove("fav-dragging"));
+
+  const icon = document.createElement("span");
+  icon.className = "fav-icon";
+  icon.dataset.kind = item.kind;
+  icon.textContent = FAV_ICONS[item.kind] || FAV_ICONS.link;
+
+  const main = document.createElement("button");
+  main.type = "button";
+  main.className = "fav-main";
+  main.title = item.url;
+  const title = document.createElement("span");
+  title.className = "fav-title";
+  title.textContent = item.title;
+  const meta = document.createElement("span");
+  meta.className = "fav-meta";
+  const nowMs = Date.now();
+  const bits = [FAVORITES_MODEL.openedLabel(item, nowMs)];
+  if (item.addedAt) bits.unshift(`added ${item.addedAt.slice(0, 10)}`);
+  if (item.note) bits.push(item.note);
+  meta.textContent = bits.join(" · ");
+  if (FAVORITES_MODEL.isOld(item, nowMs)) {
+    const old = document.createElement("span");
+    old.className = "fav-old";
+    old.textContent = "old";
+    old.title = "Not opened for 90+ days";
+    meta.prepend(old);
+  }
+  main.append(title, meta);
+  main.addEventListener("click", () => favOpen(item));
+
+  const actions = document.createElement("span");
+  actions.className = "fav-actions";
+  const move = (to, at) => mutateFavorites((d) => FAVORITES_MODEL.moveItem(d, item.id, to, at));
+  if (list !== "archive") {
+    actions.append(
+      favButton("▲", "Move up", () => idx > 0 && move(list, idx - 1)),
+      favButton("▼", "Move down", () => idx < full.length - 1 && move(list, idx + 1)),
+    );
+  }
+  if (list === "pinned") {
+    actions.append(favButton("Unpin", "Unpin (goes to Archive)", () => move("archive")));
+  } else if (list === "latest") {
+    actions.append(
+      favButton("★", "Pin", () => move("pinned")),
+      favButton("Archive", "Put in Archive", () => move("archive")),
+    );
+  } else {
+    actions.append(
+      favButton("★", "Pin", () => move("pinned")),
+      favButton("Restore", "Back to Latest", () => move("latest")),
+      favButton("✕", "Remove for good", () => {
+        if (window.confirm(`Remove “${item.title}” from the list for good?`)) {
+          mutateFavorites((d) => FAVORITES_MODEL.removeItem(d, item.id));
+        }
+      }),
+    );
+  }
+  li.append(icon, main, actions);
+  return li;
+}
+
+function renderFavoritesLists() {
+  if (!FAVORITES_MODEL) return;
+  const doc = favDoc || FAVORITES_MODEL.emptyFavorites();
+  for (const list of FAVORITES_MODEL.FAVORITE_LISTS) {
+    const ul = document.querySelector(`[data-fav-ul="${list}"]`);
+    const empty = document.querySelector(`[data-fav-empty="${list}"]`);
+    const count = document.querySelector(`[data-fav-count="${list}"]`);
+    if (!ul) continue;
+    const full = FAVORITES_MODEL.listItems(doc, list);
+    const shown = FAVORITES_MODEL.filterItems(full, favQuery[list]);
+    ul.replaceChildren(...shown.map((it) => favRow(it, list, full)));
+    if (empty) {
+      empty.hidden = shown.length > 0;
+      empty.textContent = full.length && !shown.length ? "No match." : "Nothing here.";
+    }
+    if (count) count.textContent = favQuery[list] ? `${shown.length}/${full.length}` : String(full.length);
+  }
+}
+
+/** Index in the list's full order where a drop at `e` should land. */
+function favDropIndex(e, list, draggedId) {
+  const full = FAVORITES_MODEL.listItems(favDoc || FAVORITES_MODEL.emptyFavorites(), list);
+  const rowEl = e.target.closest && e.target.closest(".fav-row");
+  if (!rowEl || rowEl.dataset.id === draggedId) return undefined; // end of list
+  const rest = full.filter((x) => x.id !== draggedId);
+  let at = rest.findIndex((x) => x.id === rowEl.dataset.id);
+  if (at < 0) return undefined;
+  const r = rowEl.getBoundingClientRect();
+  if (e.clientY > r.top + r.height / 2) at += 1;
+  return at;
+}
+
+function setFavArchiveOpen(open) {
+  const body = document.querySelector('[data-fav-body="archive"]');
+  const btn = document.querySelector('[data-fav-toggle="archive"]');
+  if (body) body.hidden = !open;
+  if (btn) { btn.textContent = open ? "▾" : "▸"; btn.setAttribute("aria-expanded", open ? "true" : "false"); }
+  try { localStorage.setItem(FAV_COLLAPSE_KEY, open ? "1" : "0"); } catch { /* blocked storage */ }
+}
+
+function wireFavoritesView() {
+  const view = document.getElementById("view-favorites");
+  if (!view) return;
+  for (const input of view.querySelectorAll("[data-fav-search]")) {
+    input.addEventListener("input", () => {
+      favQuery[input.dataset.favSearch] = input.value;
+      if (input.value && input.dataset.favSearch === "archive") setFavArchiveOpen(true);
+      renderFavoritesLists();
+    });
+  }
+  for (const body of view.querySelectorAll("[data-fav-body]")) {
+    const list = body.dataset.favBody;
+    const section = body.closest(".fav-section");
+    for (const target of [section]) {
+      target.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; section.classList.add("fav-drop"); });
+      target.addEventListener("dragleave", (e) => { if (!section.contains(e.relatedTarget)) section.classList.remove("fav-drop"); });
+      target.addEventListener("drop", (e) => {
+        e.preventDefault();
+        section.classList.remove("fav-drop");
+        const id = e.dataTransfer.getData("text/plain");
+        if (!id) return;
+        const at = favDropIndex(e, list, id);
+        mutateFavorites((d) => FAVORITES_MODEL.moveItem(d, id, list, at));
+      });
+    }
+  }
+  const toggle = view.querySelector('[data-fav-toggle="archive"]');
+  if (toggle) toggle.addEventListener("click", () => setFavArchiveOpen(document.querySelector('[data-fav-body="archive"]').hidden));
+  try { if (localStorage.getItem(FAV_COLLAPSE_KEY) === "1") setFavArchiveOpen(true); } catch { /* blocked storage */ }
+
+  const form = document.getElementById("fav-add-form");
+  document.getElementById("btn-fav-add")?.addEventListener("click", () => { form.hidden = !form.hidden; if (!form.hidden) document.getElementById("fav-add-url").focus(); });
+  document.getElementById("btn-fav-add-cancel")?.addEventListener("click", () => { form.hidden = true; form.reset(); });
+  form?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const item = {
+      url: document.getElementById("fav-add-url").value.trim(),
+      title: document.getElementById("fav-add-title").value,
+      note: document.getElementById("fav-add-note").value,
+      list: "latest",
+    };
+    try {
+      await mutateFavorites((d) => FAVORITES_MODEL.addItem(d, item, new Date().toISOString()));
+      form.reset();
+      form.hidden = true;
+    } catch (err) {
+      setFavStatus(err.message, true);
+    }
+  });
+}
+
+// =============================================================================
 // 7c-3. Global diagnostics panel (SPEC-DELTA-2026-10-01-health-visibility-
 //        and-manual-self-heal)
 // =============================================================================
@@ -4309,7 +4564,7 @@ function refreshVisibleViewOnce() {
 // windows (a normal browser tab ignores them), so no-op elsewhere.
 const LAST_VIEW_STORAGE_KEY = "cockpit.lastView";
 const WINDOW_GEOM_STORAGE_KEY = "cockpit.windowGeometry";
-const RESTORABLE_VIEWS = ["v2-list", "shared-list", "ide-tabs", "tracker"];
+const RESTORABLE_VIEWS = ["v2-list", "shared-list", "ide-tabs", "tracker", "favorites"];
 
 function rememberTopLevelView(viewId) {
   if (!RESTORABLE_VIEWS.includes(viewId)) return;
@@ -4440,20 +4695,21 @@ async function bootstrap() {
   // they have no inter-dependency.
   try {
     let GRAPH_BACKOFF_HELPERS;
-    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE] = await Promise.all([
-      import("./write-helpers.mjs?v=0d5bc51"),
-      import("./ide-helpers.mjs?v=0d5bc51"),
-      import("./refresh-helpers.mjs?v=0d5bc51"),
-      import("./transcript-model.mjs?v=0d5bc51"),
-      import("./scrollback-helpers.mjs?v=0d5bc51"),
-      import("./daemon-control-model.mjs?v=0d5bc51"),
-      import("./composer-state.mjs?v=0d5bc51"),
-      import("./app-menu-state.mjs?v=0d5bc51"),
-      import("./graph-backoff.mjs?v=0d5bc51"),
-      import("./share-model.mjs?v=0d5bc51"),
-      import("./share-ui-state.mjs?v=0d5bc51"),
-      import("./cockpit-health-model.mjs?v=0d5bc51"),
-      import("./model-choice.mjs?v=0d5bc51"),
+    [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE, FAVORITES_MODEL] = await Promise.all([
+      import("./write-helpers.mjs?v=8e71962"),
+      import("./ide-helpers.mjs?v=8e71962"),
+      import("./refresh-helpers.mjs?v=8e71962"),
+      import("./transcript-model.mjs?v=8e71962"),
+      import("./scrollback-helpers.mjs?v=8e71962"),
+      import("./daemon-control-model.mjs?v=8e71962"),
+      import("./composer-state.mjs?v=8e71962"),
+      import("./app-menu-state.mjs?v=8e71962"),
+      import("./graph-backoff.mjs?v=8e71962"),
+      import("./share-model.mjs?v=8e71962"),
+      import("./share-ui-state.mjs?v=8e71962"),
+      import("./cockpit-health-model.mjs?v=8e71962"),
+      import("./model-choice.mjs?v=8e71962"),
+      import("./favorites-model.mjs?v=8e71962"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -4503,7 +4759,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=0d5bc51");
+      const guestModule = await import("./guest-app.mjs?v=8e71962");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
@@ -4564,6 +4820,7 @@ async function bootstrap() {
     setInterval(() => { if (!document.hidden) loadDaemonControlStatus(); }, CONFIG.daemonControl.pollIntervalSeconds * 1000);
   }
   wireDaemonControlButtons();
+  wireFavoritesView();
   wireDiagnosticsButton();
   // AC-132: timers skip ticks while hidden, so coming back refreshes once
   // right away instead of showing up-to-a-poll-interval-old data.

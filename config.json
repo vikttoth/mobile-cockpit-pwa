@@ -50,6 +50,11 @@
     "endpoint": "/me/drive/root:/cursor-cockpit/health.json",
     "pollIntervalSeconds": 60
   },
+  "favorites": {
+    "_comment": "SPEC-DELTA-2026-10-28-favorites-tab. relativePath MUST match FAVORITES_RELATIVE_PATH in lib/config.mjs.",
+    "relativePath": "cursor-cockpit/favorites.json",
+    "endpoint": "/me/drive/root:/cursor-cockpit/favorites.json"
+  },
   "daemonControl": {
     "_comment": "SPEC-DELTA-2026-09-27-daemon-control-watchdog. controlRelativePath/statusRelativePath MUST match DAEMON_CONTROL_RELATIVE_PATH/DAEMON_STATUS_RELATIVE_PATH in lib/config.mjs. Coherence enforced by pwa-config-coherence.sh. staleAfterSeconds is 3x the watchdog's own 1-minute Scheduled Task cadence -- past that, the PWA shows 'unknown' rather than trusting a possibly-dead watchdog's last write.",
     "controlRelativePath": "cursor-cockpit/daemon-control.json",

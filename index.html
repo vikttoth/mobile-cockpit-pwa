@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-10-22 11:00 CEST 0d5bc51 in config.json + app.js).
+  script (replaces 2026-10-28 15:58 CET 8e71962 in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -48,11 +48,11 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=0d5bc51")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=8e71962")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=0d5bc51" />
+  <link rel="stylesheet" href="./style.css?v=8e71962" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
@@ -171,6 +171,9 @@
     <button type="button" id="btn-mode-tracker" class="cockpit-mode-btn"
             role="tab" data-target-view="tracker"
             title="Grouped session tracker: Claude Code (Active group) + Cursor (GUI + CLI) + Copilot browser tabs, one compact list">Tracker</button>
+    <button type="button" id="btn-mode-favorites" class="cockpit-mode-btn"
+            role="tab" data-target-view="favorites"
+            title="Documents, summaries and links Claude made for you: Pinned / Latest / Archive (SPEC-DELTA-2026-10-28-favorites-tab)">Favorites</button>
   </nav>
 
   <main>
@@ -181,6 +184,53 @@
       cockpit and the rows themselves, to fit as much as possible in a small
       pinned desktop window.
     -->
+    <!-- SPEC-DELTA-2026-10-28-favorites-tab.md -->
+    <section id="view-favorites" class="cockpit-view" data-view-id="favorites" hidden>
+      <div class="fav-topbar">
+        <button type="button" id="btn-fav-add" class="cockpit-btn cockpit-btn-small">+ Add link</button>
+        <span id="fav-status" class="cockpit-hint" role="status"></span>
+      </div>
+      <form id="fav-add-form" class="fav-add-form" hidden>
+        <input type="url" id="fav-add-url" placeholder="https://… (link or OneDrive/SharePoint doc)" required autocomplete="off">
+        <input type="text" id="fav-add-title" placeholder="Title (optional)" autocomplete="off">
+        <input type="text" id="fav-add-note" placeholder="Note (optional)" autocomplete="off">
+        <div class="fav-add-actions">
+          <button type="submit" class="cockpit-btn cockpit-btn-small">Save</button>
+          <button type="button" id="btn-fav-add-cancel" class="cockpit-btn cockpit-btn-small">Cancel</button>
+        </div>
+      </form>
+      <div class="fav-section" data-fav-list="pinned">
+        <div class="fav-section-head">
+          <h2 class="fav-section-title">★ Pinned <span class="fav-count" data-fav-count="pinned"></span></h2>
+          <input type="search" class="fav-search" data-fav-search="pinned" placeholder="Find…" aria-label="Find in pinned" autocomplete="off">
+        </div>
+        <div class="fav-body" data-fav-body="pinned">
+          <ul class="fav-list" data-fav-ul="pinned"></ul>
+          <p class="cockpit-hint fav-empty" data-fav-empty="pinned" hidden>Nothing here.</p>
+        </div>
+      </div>
+      <div class="fav-section" data-fav-list="latest">
+        <div class="fav-section-head">
+          <h2 class="fav-section-title">Latest <span class="fav-count" data-fav-count="latest"></span></h2>
+          <input type="search" class="fav-search" data-fav-search="latest" placeholder="Find…" aria-label="Find in latest" autocomplete="off">
+        </div>
+        <div class="fav-body" data-fav-body="latest">
+          <ul class="fav-list" data-fav-ul="latest"></ul>
+          <p class="cockpit-hint fav-empty" data-fav-empty="latest" hidden>Nothing here.</p>
+        </div>
+      </div>
+      <div class="fav-section" data-fav-list="archive">
+        <div class="fav-section-head">
+          <button type="button" class="fav-collapse-btn" data-fav-toggle="archive" aria-expanded="false" title="Show / hide the archive">▸</button><h2 class="fav-section-title">Archive <span class="fav-count" data-fav-count="archive"></span></h2>
+          <input type="search" class="fav-search" data-fav-search="archive" placeholder="Find…" aria-label="Find in archive" autocomplete="off">
+        </div>
+        <div class="fav-body" data-fav-body="archive" hidden>
+          <ul class="fav-list" data-fav-ul="archive"></ul>
+          <p class="cockpit-hint fav-empty" data-fav-empty="archive" hidden>Nothing here.</p>
+        </div>
+      </div>
+    </section>
+
     <section id="view-tracker" class="cockpit-view" data-view-id="tracker" hidden>
       <div class="cockpit-tracker-topbar">
         <button type="button" id="btn-tracker-exit" class="cockpit-tracker-exit-btn cockpit-back-btn"
@@ -704,6 +754,6 @@
   </main>
 
 
-  <script src="./app.js?v=0d5bc51" defer></script>
+  <script src="./app.js?v=8e71962" defer></script>
 </body>
 </html>
