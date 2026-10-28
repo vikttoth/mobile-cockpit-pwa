@@ -1864,3 +1864,36 @@ body[data-view="shared-detail"] main { padding: 0; }
   border: 1px solid var(--cp-border); border-radius: var(--cp-radius); cursor: pointer; }
 body[data-guest="true"] #btn-mode-favorites { display: none !important; }
 #fav-status:empty { display: none; }
+
+/* ---- Compact list views (Viktor 2026-10-28: "tracker szep compact") -------
+   Every top-level tab (Chat / Shared / IDE Tracker / Favorites) gets the
+   Tracker's density: 12px root (rem sizes scale), tight gaps, slim header,
+   nav and rows. Detail / composer views keep the normal size (reading and
+   typing). */
+html:has(body:is([data-view="v2-list"], [data-view="shared-list"], [data-view="ide-tabs"], [data-view="favorites"])) { font-size: 12px; }
+body:is([data-view="v2-list"], [data-view="shared-list"], [data-view="ide-tabs"], [data-view="favorites"]) { --cp-gap: 6px; }
+body:is([data-view="v2-list"], [data-view="shared-list"], [data-view="ide-tabs"], [data-view="favorites"]) .cockpit-header { padding: 2px var(--cp-gap); }
+body:is([data-view="v2-list"], [data-view="shared-list"], [data-view="ide-tabs"], [data-view="favorites"]) .cockpit-header h1 { font-size: 0.95rem; }
+body:is([data-view="v2-list"], [data-view="shared-list"], [data-view="ide-tabs"], [data-view="favorites"]) .cockpit-avatar-btn { width: 24px; height: 24px; font-size: 0.6rem; }
+body:is([data-view="v2-list"], [data-view="shared-list"], [data-view="ide-tabs"], [data-view="favorites"]) .cockpit-mode-btn { min-height: 26px; padding: 3px 0; }
+body:is([data-view="v2-list"], [data-view="shared-list"], [data-view="ide-tabs"], [data-view="favorites"]) main { padding: 3px var(--cp-gap); }
+body:is([data-view="v2-list"], [data-view="shared-list"], [data-view="ide-tabs"], [data-view="favorites"]) .cockpit-session-row { padding: 3px var(--cp-gap); min-height: auto; }
+body:is([data-view="v2-list"], [data-view="shared-list"], [data-view="ide-tabs"], [data-view="favorites"]) .cockpit-row-archive-btn,
+body:is([data-view="v2-list"], [data-view="shared-list"], [data-view="ide-tabs"], [data-view="favorites"]) .cockpit-row-info { min-height: 20px; padding: 1px 6px; }
+body:is([data-view="v2-list"], [data-view="shared-list"], [data-view="ide-tabs"], [data-view="favorites"]) .cockpit-btn { min-height: 0; padding: 3px 8px; }
+
+/* Favorites rows at Tracker density */
+.fav-topbar { padding: 0 0 3px; gap: 6px; }
+.fav-add-form { padding: 4px; margin-bottom: 4px; }
+.fav-add-form input { margin-bottom: 3px; padding: 3px 6px; }
+.fav-section { margin-bottom: 4px; }
+.fav-section-head { padding: 2px 6px; gap: 6px; }
+.fav-section-title { font-size: 0.85rem; }
+.fav-search { padding: 1px 6px; font-size: 0.8rem; flex-basis: 7rem; }
+.fav-row { padding: 2px 6px; gap: 6px; }
+.fav-icon { min-width: 1.6rem; padding: 1px 3px; font-size: 0.6rem; }
+.fav-main { padding: 0; }
+.fav-meta { font-size: 0.7rem; line-height: 1.2; }
+.fav-actions { flex-wrap: nowrap; gap: 2px; max-width: none; }
+.fav-btn { padding: 0 5px; font-size: 0.7rem; line-height: 1.5; }
+.fav-body { max-height: 70vh; }
