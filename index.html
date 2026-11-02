@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-10-30 12:30 CET 0a40acc in config.json + app.js).
+  script (replaces 2026-11-02 09:47 CET 6bfd44f in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -48,11 +48,11 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=0a40acc")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=6bfd44f")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=0a40acc" />
+  <link rel="stylesheet" href="./style.css?v=6bfd44f" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
@@ -213,6 +213,7 @@
     <section id="view-favorites" class="cockpit-view" data-view-id="favorites" hidden>
       <div class="fav-topbar">
         <input type="search" id="fav-search" class="fav-search" placeholder="Find in all lists…" aria-label="Find in all lists" autocomplete="off">
+        <button type="button" id="btn-fav-collapse-all" class="cockpit-tracker-collapse-all" title="Close or open every list">Collapse all</button>
         <button type="button" id="btn-fav-add" class="cockpit-btn cockpit-btn-small">+ Add link</button>
         <span id="fav-status" class="cockpit-hint" role="status"></span>
       </div>
@@ -227,7 +228,7 @@
       </form>
       <div class="fav-section" data-fav-list="pinned">
         <div class="fav-section-head">
-          <h2 class="fav-section-title">★ Pinned <span class="fav-count" data-fav-count="pinned"></span></h2>
+          <button type="button" class="fav-collapse-btn" data-fav-toggle="pinned" aria-expanded="true" title="Show / hide Pinned">▾</button><h2 class="fav-section-title">★ Pinned <span class="fav-count" data-fav-count="pinned"></span></h2>
         </div>
         <div class="fav-body" data-fav-body="pinned">
           <ul class="fav-list" data-fav-ul="pinned"></ul>
@@ -236,7 +237,7 @@
       </div>
       <div class="fav-section" data-fav-list="latest">
         <div class="fav-section-head">
-          <h2 class="fav-section-title">Latest <span class="fav-count" data-fav-count="latest"></span></h2>
+          <button type="button" class="fav-collapse-btn" data-fav-toggle="latest" aria-expanded="true" title="Show / hide Latest">▾</button><h2 class="fav-section-title">Latest <span class="fav-count" data-fav-count="latest"></span></h2>
         </div>
         <div class="fav-body" data-fav-body="latest">
           <ul class="fav-list" data-fav-ul="latest"></ul>
@@ -777,6 +778,6 @@
   </main>
 
 
-  <script src="./app.js?v=0a40acc" defer></script>
+  <script src="./app.js?v=6bfd44f" defer></script>
 </body>
 </html>

@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-10-30 12:30 CET 0a40acc`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-10-30 12:30 CET 0a40acc";
+// `2026-11-02 09:47 CET 6bfd44f`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-11-02 09:47 CET 6bfd44f";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -1746,7 +1746,9 @@ function openGroupsForAttention() {
   } catch {
     // not persisted
   }
-  if (!restoreOnly && result.opened.length > 0) setTrackerCollapsed(result.collapsed);
+  // 2026-11-02 (Viktor): the last open/closed state is always kept -- a closed group stays closed
+  // after a refresh or a live update; its badge/dot on the header still shows what needs him.
+  void restoreOnly;
 }
 
 // Re-paints every header's open/closed state in place (no refetch) and the Collapse/Expand all label.
@@ -4189,9 +4191,20 @@ let favDoc = null;
 let favEtag = null;
 let favInFlight = false;
 let favQuery = ""; // ONE find box for all three lists
-let favArchiveOpen = false; // the user's own open/closed choice for the Archive
+// The user's own closed lists, persisted; Archive starts closed on first run.
+let favClosed = ["archive"];
 const FAV_ICONS = { word: "W", excel: "X", powerpoint: "P", pdf: "PDF", file: "▤", link: "↗" };
-const FAV_COLLAPSE_KEY = "cockpit.favArchiveOpen";
+const FAV_COLLAPSE_KEY = "cockpit.favClosed";
+const FAV_LEGACY_ARCHIVE_KEY = "cockpit.favArchiveOpen";
+try {
+  const raw = localStorage.getItem(FAV_COLLAPSE_KEY);
+  if (raw) {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) favClosed = parsed.filter((k) => ["pinned", "latest", "archive"].includes(k));
+  } else if (localStorage.getItem(FAV_LEGACY_ARCHIVE_KEY) === "1") {
+    favClosed = [];
+  }
+} catch { /* blocked storage: defaults */ }
 
 function setFavStatus(text, isError) {
   const el = document.getElementById("fav-status");
@@ -4361,8 +4374,10 @@ function renderFavoritesLists() {
     // While finding: sections without a hit disappear, the Archive opens itself when it has one.
     const section = ul.closest(".fav-section");
     if (section) section.hidden = !!favQuery && shown.length === 0;
-    if (list === "archive") applyFavArchiveOpen(!!favQuery && shown.length > 0 ? true : favArchiveOpen);
+    // While finding, a list with a hit opens itself (the saved choice is untouched).
+    applyFavOpen(list, !!favQuery && shown.length > 0 ? true : !favClosed.includes(list));
   }
+  updateFavCollapseAllLabel();
 }
 
 /** Index in the list's full order where a drop at `e` should land. */
@@ -4378,17 +4393,22 @@ function favDropIndex(e, list, draggedId) {
   return at;
 }
 
-function applyFavArchiveOpen(open) {
-  const body = document.querySelector('[data-fav-body="archive"]');
-  const btn = document.querySelector('[data-fav-toggle="archive"]');
+function applyFavOpen(list, open) {
+  const body = document.querySelector(`[data-fav-body="${list}"]`);
+  const btn = document.querySelector(`[data-fav-toggle="${list}"]`);
   if (body) body.hidden = !open;
   if (btn) { btn.textContent = open ? "▾" : "▸"; btn.setAttribute("aria-expanded", open ? "true" : "false"); }
 }
 
-function setFavArchiveOpen(open) {
-  favArchiveOpen = open;
-  applyFavArchiveOpen(open);
-  try { localStorage.setItem(FAV_COLLAPSE_KEY, open ? "1" : "0"); } catch { /* blocked storage */ }
+function updateFavCollapseAllLabel() {
+  const all = document.getElementById("btn-fav-collapse-all");
+  if (all) all.textContent = favClosed.length >= 3 ? "Expand all" : "Collapse all";
+}
+
+function setFavClosed(next) {
+  favClosed = next;
+  try { localStorage.setItem(FAV_COLLAPSE_KEY, JSON.stringify(next)); } catch { /* blocked storage */ }
+  renderFavoritesLists();
 }
 
 function wireFavoritesView() {
@@ -4414,9 +4434,14 @@ function wireFavoritesView() {
       });
     }
   }
-  const toggle = view.querySelector('[data-fav-toggle="archive"]');
-  if (toggle) toggle.addEventListener("click", () => setFavArchiveOpen(!favArchiveOpen));
-  try { if (localStorage.getItem(FAV_COLLAPSE_KEY) === "1") setFavArchiveOpen(true); } catch { /* blocked storage */ }
+  for (const toggle of view.querySelectorAll("[data-fav-toggle]")) {
+    const list = toggle.dataset.favToggle;
+    toggle.addEventListener("click", () => setFavClosed(favClosed.includes(list) ? favClosed.filter((k) => k !== list) : [...favClosed, list]));
+  }
+  document.getElementById("btn-fav-collapse-all")?.addEventListener("click", () => {
+    setFavClosed(favClosed.length >= 3 ? [] : ["pinned", "latest", "archive"]);
+  });
+  renderFavoritesLists();
 
   const form = document.getElementById("fav-add-form");
   document.getElementById("btn-fav-add")?.addEventListener("click", () => { form.hidden = !form.hidden; if (!form.hidden) document.getElementById("fav-add-url").focus(); });
@@ -4958,20 +4983,20 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE, FAVORITES_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=0a40acc"),
-      import("./ide-helpers.mjs?v=0a40acc"),
-      import("./refresh-helpers.mjs?v=0a40acc"),
-      import("./transcript-model.mjs?v=0a40acc"),
-      import("./scrollback-helpers.mjs?v=0a40acc"),
-      import("./daemon-control-model.mjs?v=0a40acc"),
-      import("./composer-state.mjs?v=0a40acc"),
-      import("./app-menu-state.mjs?v=0a40acc"),
-      import("./graph-backoff.mjs?v=0a40acc"),
-      import("./share-model.mjs?v=0a40acc"),
-      import("./share-ui-state.mjs?v=0a40acc"),
-      import("./cockpit-health-model.mjs?v=0a40acc"),
-      import("./model-choice.mjs?v=0a40acc"),
-      import("./favorites-model.mjs?v=0a40acc"),
+      import("./write-helpers.mjs?v=6bfd44f"),
+      import("./ide-helpers.mjs?v=6bfd44f"),
+      import("./refresh-helpers.mjs?v=6bfd44f"),
+      import("./transcript-model.mjs?v=6bfd44f"),
+      import("./scrollback-helpers.mjs?v=6bfd44f"),
+      import("./daemon-control-model.mjs?v=6bfd44f"),
+      import("./composer-state.mjs?v=6bfd44f"),
+      import("./app-menu-state.mjs?v=6bfd44f"),
+      import("./graph-backoff.mjs?v=6bfd44f"),
+      import("./share-model.mjs?v=6bfd44f"),
+      import("./share-ui-state.mjs?v=6bfd44f"),
+      import("./cockpit-health-model.mjs?v=6bfd44f"),
+      import("./model-choice.mjs?v=6bfd44f"),
+      import("./favorites-model.mjs?v=6bfd44f"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -5021,7 +5046,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=0a40acc");
+      const guestModule = await import("./guest-app.mjs?v=6bfd44f");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
