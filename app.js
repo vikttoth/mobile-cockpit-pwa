@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-11-02 09:47 CET 6bfd44f`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-11-02 09:47 CET 6bfd44f";
+// `2026-11-03 10:21 CET 41f64a56`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-11-03 10:21 CET 41f64a56";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -3952,12 +3952,16 @@ function renderHealthBadge(status) {
   }
   el.dataset.state = status.state;
   el.title = status.remediation || "";
+  // Every state that only a sign-in at the laptop fixes reads the same, so the
+  // badge says what to do instead of how the cache happens to be broken
+  // (SPEC-DELTA-2026-11-03-auto-signin-and-guidance); the exact steps are in
+  // the tooltip and the diagnostics sheet.
   const labels = {
     ok: "auth ok",
-    cache_missing: "auth: not signed in on laptop",
-    cache_corrupt: "auth: cache corrupt",
-    auth_failing: "auth: sign-in failing",
-    expired: "auth: token expired",
+    cache_missing: "auth: sign in at laptop",
+    cache_corrupt: "auth: sign in at laptop",
+    auth_failing: "auth: sign in at laptop",
+    expired: "auth: sign in at laptop",
     expiring_soon: "auth: expiring soon",
   };
   el.textContent = labels[status.state] || `auth: ${status.state}`;
@@ -3976,6 +3980,8 @@ async function loadHealth() {
     const { json } = await loadJson(CONFIG.health.endpoint);
     cachedHealthStatus = json;
     renderHealthBadge(json);
+    // Repair visibility depends on whether sign-in is the real problem.
+    renderDaemonControlBadge(cachedDaemonStatus);
   } catch {
     // Read-only, best-effort -- a failed fetch just leaves the badge as it
     // was (or hidden, if it never loaded), same "don't crash the rest of
@@ -4050,7 +4056,16 @@ function renderDaemonControlBadge(status) {
   // host something to actually try. Both "error" (a prior action failed)
   // and "unknown" (the watchdog itself hasn't reported in -- the exact
   // symptom of a wedged WSL, SPEC.md's motivating incident) are covered.
-  if (repairBtn) repairBtn.hidden = state !== "error" && state !== "unknown";
+  // ...but not when the laptop already reported that sign-in is the problem:
+  // a WSL restart cannot sign anyone in (2026-11-03 incident).
+  const signInIsTheProblem =
+    !!cachedHealthStatus && ["cache_missing", "cache_corrupt", "auth_failing", "expired"].includes(cachedHealthStatus.state);
+  const troubled = state === "error" || state === "unknown";
+  if (repairBtn) repairBtn.hidden = !troubled || signInIsTheProblem;
+  // "Sign in" replaces Repair when sign-in is the known problem, and sits next
+  // to it when the cause is unclear (daemon silent) -- it is harmless then.
+  const signInBtn = document.getElementById("btn-daemon-signin");
+  if (signInBtn) signInBtn.hidden = !troubled && !signInIsTheProblem;
 }
 
 /** Last-loaded daemon-status.json, cached for the diagnostics panel
@@ -4168,13 +4183,36 @@ async function handleDaemonRepairClick() {
   }
 }
 
+/** SPEC-DELTA-2026-11-03-phone-signin-button: asks the laptop to sign in again.
+ *  Works even when the laptop has lost its Graph sign-in -- the Windows-side
+ *  watchdog reads this request from the OneDrive-synced copy of
+ *  daemon-control.json, no token needed. Harmless when already signed in. */
+async function handleDaemonSignInClick() {
+  if (daemonControlRequestInFlight) return;
+  daemonControlRequestInFlight = true;
+  try {
+    await writeDaemonControlRequest("signin");
+    window.alert(
+      "Sign-in requested. Within a minute or two the laptop opens the Microsoft page by itself — " +
+        "usually it completes without a click. If nothing changes, approve the page at the laptop.",
+    );
+    setTimeout(loadDaemonControlStatus, 1500);
+  } catch (err) {
+    window.alert(`Failed to send sign-in request: ${err.message}`);
+  } finally {
+    daemonControlRequestInFlight = false;
+  }
+}
+
 function wireDaemonControlButtons() {
   const startBtn = document.getElementById("btn-daemon-start");
   const stopBtn = document.getElementById("btn-daemon-stop");
   const repairBtn = document.getElementById("btn-daemon-repair");
+  const signInBtn = document.getElementById("btn-daemon-signin");
   if (startBtn) startBtn.addEventListener("click", handleDaemonStartClick);
   if (stopBtn) stopBtn.addEventListener("click", handleDaemonStopClick);
   if (repairBtn) repairBtn.addEventListener("click", handleDaemonRepairClick);
+  if (signInBtn) signInBtn.addEventListener("click", handleDaemonSignInClick);
 }
 
 // =============================================================================
@@ -4983,20 +5021,20 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE, FAVORITES_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=6bfd44f"),
-      import("./ide-helpers.mjs?v=6bfd44f"),
-      import("./refresh-helpers.mjs?v=6bfd44f"),
-      import("./transcript-model.mjs?v=6bfd44f"),
-      import("./scrollback-helpers.mjs?v=6bfd44f"),
-      import("./daemon-control-model.mjs?v=6bfd44f"),
-      import("./composer-state.mjs?v=6bfd44f"),
-      import("./app-menu-state.mjs?v=6bfd44f"),
-      import("./graph-backoff.mjs?v=6bfd44f"),
-      import("./share-model.mjs?v=6bfd44f"),
-      import("./share-ui-state.mjs?v=6bfd44f"),
-      import("./cockpit-health-model.mjs?v=6bfd44f"),
-      import("./model-choice.mjs?v=6bfd44f"),
-      import("./favorites-model.mjs?v=6bfd44f"),
+      import("./write-helpers.mjs?v=41f64a56"),
+      import("./ide-helpers.mjs?v=41f64a56"),
+      import("./refresh-helpers.mjs?v=41f64a56"),
+      import("./transcript-model.mjs?v=41f64a56"),
+      import("./scrollback-helpers.mjs?v=41f64a56"),
+      import("./daemon-control-model.mjs?v=41f64a56"),
+      import("./composer-state.mjs?v=41f64a56"),
+      import("./app-menu-state.mjs?v=41f64a56"),
+      import("./graph-backoff.mjs?v=41f64a56"),
+      import("./share-model.mjs?v=41f64a56"),
+      import("./share-ui-state.mjs?v=41f64a56"),
+      import("./cockpit-health-model.mjs?v=41f64a56"),
+      import("./model-choice.mjs?v=41f64a56"),
+      import("./favorites-model.mjs?v=41f64a56"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -5046,7 +5084,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=6bfd44f");
+      const guestModule = await import("./guest-app.mjs?v=41f64a56");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,

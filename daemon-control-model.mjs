@@ -20,9 +20,9 @@
 export const DAEMON_CONTROL_SCHEMA_VERSION = 1;
 export const DAEMON_STATUS_SCHEMA_VERSION = 1;
 
-/** @typedef {'start'|'stop'|'repair:wsl-restart'} DaemonControlAction */
+/** @typedef {'start'|'stop'|'repair:wsl-restart'|'signin'} DaemonControlAction */
 
-const VALID_ACTIONS = ["start", "stop", "repair:wsl-restart"];
+const VALID_ACTIONS = ["start", "stop", "repair:wsl-restart", "signin"];
 
 /**
  * Build the JSON the PWA writes to `daemon-control.json`.

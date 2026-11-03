@@ -25,9 +25,26 @@
 import { deriveControlDisplayState } from "./daemon-control-model.mjs";
 import { activeEntriesByGuest } from "./share-model.mjs";
 
+/**
+ * The one canonical "how to sign in again" text (SPEC-DELTA-2026-11-03-auto-
+ * signin-and-guidance). Interactive sign-in only works on the laptop -- the
+ * phone cannot complete it -- so this is steps, not a link (the PWA's "Sign in"
+ * button asks the laptop to start it; the Desktop shortcut is the fallback). The laptop's own
+ * health publisher (lib/msal-cache-health.mjs) reuses these constants so the
+ * PWA's fallback text and the daemon's published remediation never drift.
+ */
+export const AUTH_SIGNIN_STEPS =
+  "Sign-in is lost on the laptop, so it cannot send anything to this phone -- Repair will not help. " +
+  "Tap \"Sign in\" next to the daemon status here: the laptop opens the Microsoft page in Edge by itself and usually " +
+  "completes it without a click (otherwise approve it at the laptop, or double-click \"Cockpit sign-in\" on its Desktop). " +
+  "It recovers within a minute or two.";
+export const AUTH_SIGNIN_RUNNING =
+  "Automatic sign-in is running on the laptop -- if a Microsoft page opened in Edge, approve it. No other action needed.";
+
 const LIKELY_CAUSES = {
-  auth: ["The cached Microsoft sign-in on the laptop may have expired -- needs a fresh interactive login there."],
+  auth: [AUTH_SIGNIN_STEPS],
   daemon: [
+    "Sign-in may be lost on the laptop (it then cannot send anything) -- see Sign-in above; Repair will not help in that case.",
     "WSL itself may be unresponsive (service wedge) -- try Repair.",
     "The laptop may be off or asleep -- nothing can be done remotely until it's back.",
   ],
