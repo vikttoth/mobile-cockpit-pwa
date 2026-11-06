@@ -936,6 +936,48 @@ export function resolveFinishedTurn(record, opts) {
  * @param {{now: number}} opts
  * @returns {object} new session record
  */
+/** Silent automatic retries of one turn (restart or transient network failure); a successful turn resets the count. */
+export const MAX_AUTO_RETRIES = 3;
+/** Delay before the 1st/2nd/3rd transient-failure retry. */
+export const RETRY_BACKOFF_MS = Object.freeze([20_000, 60_000, 180_000]);
+const TRANSIENT_ERROR_RE = /ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|fetch failed|socket hang up|network (error|is unreachable)|temporarily unavailable|\b50[234]\b/i;
+
+/**
+ * Is this failed run delta a network-type blip worth retrying silently? Deliberately NOT matched: "Unexpected end of
+ * JSON input" (an unknown model: the CLI exits 0 with no output) and turn timeouts (a retry would just burn 10 min again).
+ */
+export function isTransientFailure(delta) {
+  return !!delta && (delta.errorRetryable === true || TRANSIENT_ERROR_RE.test(String(delta.errorMessage ?? "")));
+}
+
+/**
+ * Put the newest UNANSWERED user prompt back at the FRONT of the queue (its in-flight copy leaves the transcript, so
+ * the re-run shows it once; any partial stream is dropped). Returns null when there is nothing to retry (no prompt, it
+ * already has a reply) or the budget is used up. Does not touch status: the caller decides (restart recovery re-runs
+ * at once via resolveFinishedTurn; a transient failure waits for retryAfter).
+ */
+export function requeueUnansweredPrompt(record, opts) {
+  const messages = Array.isArray(record.messages) ? record.messages : [];
+  let lastUserAt = -1;
+  messages.forEach((m, i) => { if (m && m.role === "user") lastUserAt = i; });
+  const unanswered = lastUserAt >= 0 && !messages.slice(lastUserAt + 1).some((m) => m && m.role === "assistant");
+  const retries = Number.isInteger(record.recoveryRetries) ? record.recoveryRetries : 0;
+  if (!unanswered || retries >= MAX_AUTO_RETRIES) return null;
+  const prompt = messages[lastUserAt];
+  const seq = (Number.isInteger(record.queueSeq) ? record.queueSeq : 0) + 1;
+  const item = { id: "q" + seq, role: "user", text: prompt.text, ts: opts.now };
+  if (typeof prompt.author === "string" && prompt.author) item.author = prompt.author;
+  return {
+    ...record,
+    messages: messages.slice(0, lastUserAt),
+    queue: [item, ...(Array.isArray(record.queue) ? record.queue : [])],
+    queueSeq: seq,
+    streaming: null,
+    recoveryRetries: retries + 1,
+    updatedAt: isoNow(opts.now),
+  };
+}
+
 export function recoverOrphanedRunningSession(record, opts) {
   if (!Number.isFinite(opts?.now)) {
     throw new Error("recoverOrphanedRunningSession: now must be a finite epoch-ms number");
@@ -943,33 +985,11 @@ export function recoverOrphanedRunningSession(record, opts) {
   if (record.status !== "running") {
     return { ...record };
   }
-  // Auto-retry (Viktor 2026-11-06: a deploy restart killed a colleague's question mid-turn): an interrupted turn
-  // whose prompt got no answer is re-run ONCE. The prompt goes back to the FRONT of the queue and its in-flight
-  // copy leaves the transcript, so the re-run does not show it twice; any partial reply is dropped (it is re-made).
-  // recoveryRetries caps this at one retry per consecutive failure (a poison prompt that kills the daemon must not
-  // loop); a successful turn resets it (resolveFinishedTurn).
-  const messages = Array.isArray(record.messages) ? record.messages : [];
-  let lastUserAt = -1;
-  messages.forEach((m, i) => { if (m && m.role === "user") lastUserAt = i; });
-  const unanswered = lastUserAt >= 0 && !messages.slice(lastUserAt + 1).some((m) => m && m.role === "assistant");
-  const retries = Number.isInteger(record.recoveryRetries) ? record.recoveryRetries : 0;
-  if (unanswered && retries < 1) {
-    const prompt = messages[lastUserAt];
-    const item = { id: "q" + ((Number.isInteger(record.queueSeq) ? record.queueSeq : 0) + 1), role: "user", text: prompt.text, ts: opts.now };
-    if (typeof prompt.author === "string" && prompt.author) item.author = prompt.author;
-    const retryRecord = appendMessage(
-      {
-        ...record,
-        messages: messages.slice(0, lastUserAt),
-        queue: [item, ...(Array.isArray(record.queue) ? record.queue : [])],
-        queueSeq: Number(item.id.slice(1)),
-        streaming: null,
-        recoveryRetries: retries + 1,
-      },
-      { role: "system", text: "Recovered after a daemon restart; the interrupted turn is being re-run automatically.", now: opts.now },
-    );
-    return resolveFinishedTurn(retryRecord, { resultDelta: { status: "failed" }, now: opts.now });
-  }
+  // Auto-retry (Viktor 2026-11-06: a deploy restart killed a colleague's question, and he does not want to SEE a
+  // failure when things recover): an interrupted, still unanswered prompt is re-run at once, up to MAX_AUTO_RETRIES in
+  // a row, with NO note in the transcript (the daemon log carries it). Only when the budget is gone does it show failed.
+  const retryRecord = requeueUnansweredPrompt(record, opts);
+  if (retryRecord) return resolveFinishedTurn(retryRecord, { resultDelta: { status: "failed" }, now: opts.now });
   const withNote = appendMessage(record, {
     role: "system",
     text: "Recovered after a daemon restart; the previous run's process was lost and this turn is marked failed.",
