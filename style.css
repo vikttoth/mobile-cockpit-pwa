@@ -186,6 +186,11 @@ main { padding: var(--cp-gap); }
 #daemon-control-badge[data-state="error"] { color: var(--cp-error); }
 #daemon-control-badge[data-state="unknown"] { color: var(--cp-warning); }
 #daemon-control-checked-ago { margin-left: 4px; }
+.cockpit-btn.is-copied {
+  color: #fff;
+  background: var(--cp-success);
+  border-color: var(--cp-success);
+}
 .cockpit-btn-small {
   min-height: 28px;
   min-width: 0;

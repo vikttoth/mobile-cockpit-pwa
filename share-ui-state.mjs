@@ -75,6 +75,17 @@ export function deriveStopAllState(shares) {
 }
 
 /**
+ * What a press of a Stop/Resume sharing button means. The button's own rendered state
+ * (`data-stopped`) wins over the cached registry: 2026-11-06 the handlers decided from a stale
+ * `cachedShares`, so a press on "Resume" could write `sharingEnabled:false` again and nothing changed.
+ * Writing the absolute value the user saw is idempotent, so a stale label can never do the opposite.
+ */
+export function sharingToggleIntent(buttonStopped, cachedShares) {
+  const stopped = buttonStopped === "true" ? true : buttonStopped === "false" ? false : deriveStopAllState(cachedShares).stopped;
+  return { enable: stopped, needsConfirm: !stopped };
+}
+
+/**
  * Is the HOST's own chat view read-only right now, and why?
  *   - a guest holds Control of it (AC-157) -> Take back control
  *   - another device holds the lease, e.g. the laptop via mc (task 15, AC-163) -> Take over

@@ -20,7 +20,7 @@
   pinned via CDN with SRI for tamper-evidence.
 
   Cache-busting: meta no-cache headers + a build-stamp injected by deploy
-  script (replaces 2026-11-03 10:21 CET 41f64a56 in config.json + app.js).
+  script (replaces 2026-11-06 12:00 CET e449b46f in config.json + app.js).
 -->
 <html lang="en">
 <head>
@@ -48,11 +48,11 @@
     this. Both defer-scripts execute in source order. app.js stays a
     CLASSIC script (NOT type=module) so the source-order guarantee with
     the MSAL UMD bundle holds; pure helpers are pulled in via a dynamic
-    `import("./write-helpers.mjs?v=41f64a56")` inside bootstrap() (see app.js).
+    `import("./write-helpers.mjs?v=e449b46f")` inside bootstrap() (see app.js).
   -->
   <script defer src="./vendor/msal-browser.min.js"></script>
 
-  <link rel="stylesheet" href="./style.css?v=41f64a56" />
+  <link rel="stylesheet" href="./style.css?v=e449b46f" />
 </head>
 <body data-view="v2-list">
   <header class="cockpit-header" role="banner">
@@ -779,6 +779,6 @@
   </main>
 
 
-  <script src="./app.js?v=41f64a56" defer></script>
+  <script src="./app.js?v=e449b46f" defer></script>
 </body>
 </html>

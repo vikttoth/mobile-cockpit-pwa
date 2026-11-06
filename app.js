@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-11-03 10:21 CET 41f64a56`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-11-03 10:21 CET 41f64a56";
+// `2026-11-06 12:00 CET e449b46f`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-11-06 12:00 CET e449b46f";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -2165,10 +2165,10 @@ function updateShareMasterButton() {
 }
 
 async function handleShareMasterClick() {
-  const stopped = cachedShares && cachedShares.sharingEnabled === false;
-  if (!stopped && !window.confirm("Stop all sharing? Every guest loses access to every shared item right away. Their modes are remembered.")) return;
+  const intent = SHARE_UI.sharingToggleIntent(document.getElementById("btn-share-master")?.dataset.stopped, cachedShares);
+  if (intent.needsConfirm && !window.confirm("Stop all sharing? Every guest loses access to every shared item right away. Their modes are remembered.")) return;
   try {
-    await mutateSharesPwa((s) => SHARE_MODEL.setSharingEnabled(s, { enabled: stopped, now: Date.now() }));
+    await mutateSharesPwa((s) => SHARE_MODEL.setSharingEnabled(s, { enabled: intent.enable, now: Date.now() }));
   } catch (err) {
     window.alert(`Could not change sharing: ${err.message}`);
   }
@@ -3263,7 +3263,7 @@ function renderSharePanel(target) {
     copy.type = "button";
     copy.className = "cockpit-btn cockpit-btn-small";
     copy.textContent = "Copy link";
-    copy.addEventListener("click", () => handleShareCopyLinkClick(target.panel));
+    copy.addEventListener("click", () => handleShareCopyLinkClick(target.panel, copy));
     actions.appendChild(copy);
     const del = document.createElement("button");
     del.type = "button";
@@ -3885,7 +3885,21 @@ async function handleShareRemoveClick(panel, email) {
   );
 }
 
-async function handleShareCopyLinkClick(panel) {
+/** In-place confirmation on the pressed button (the status badge sits far away, Viktor 2026-11-06: "nem látszik"). */
+function flashCopiedButton(btn) {
+  if (!btn) return;
+  const label = btn.dataset.label || btn.textContent;
+  btn.dataset.label = label;
+  btn.textContent = "✓ Copied";
+  btn.classList.add("is-copied");
+  clearTimeout(btn._copiedTimer);
+  btn._copiedTimer = setTimeout(() => {
+    btn.textContent = label;
+    btn.classList.remove("is-copied");
+  }, 2000);
+}
+
+async function handleShareCopyLinkClick(panel, btn) {
   const target = currentShareTarget(panel);
   if (!target) return;
   const link = SHARE_MODEL.buildShareLink({
@@ -3897,16 +3911,17 @@ async function handleShareCopyLinkClick(panel) {
   try {
     await navigator.clipboard.writeText(link);
     setStatusBadge("Link copied", "ok");
+    flashCopiedButton(btn);
   } catch {
     window.prompt("Copy this link:", link);
   }
 }
 
-async function handleShareStopAllClick() {
-  const stopped = cachedShares && cachedShares.sharingEnabled === false;
-  if (!stopped && !window.confirm("Stop all sharing? Every guest loses access to every shared item right away. Their modes are remembered.")) return;
+async function handleShareStopAllClick(btn) {
+  const intent = SHARE_UI.sharingToggleIntent(btn?.dataset.stopped, cachedShares);
+  if (intent.needsConfirm && !window.confirm("Stop all sharing? Every guest loses access to every shared item right away. Their modes are remembered.")) return;
   await runShareAction("chat", () =>
-    mutateSharesPwa((s) => SHARE_MODEL.setSharingEnabled(s, { enabled: stopped, now: Date.now() })),
+    mutateSharesPwa((s) => SHARE_MODEL.setSharingEnabled(s, { enabled: intent.enable, now: Date.now() })),
   );
 }
 
@@ -5021,20 +5036,20 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE, FAVORITES_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=41f64a56"),
-      import("./ide-helpers.mjs?v=41f64a56"),
-      import("./refresh-helpers.mjs?v=41f64a56"),
-      import("./transcript-model.mjs?v=41f64a56"),
-      import("./scrollback-helpers.mjs?v=41f64a56"),
-      import("./daemon-control-model.mjs?v=41f64a56"),
-      import("./composer-state.mjs?v=41f64a56"),
-      import("./app-menu-state.mjs?v=41f64a56"),
-      import("./graph-backoff.mjs?v=41f64a56"),
-      import("./share-model.mjs?v=41f64a56"),
-      import("./share-ui-state.mjs?v=41f64a56"),
-      import("./cockpit-health-model.mjs?v=41f64a56"),
-      import("./model-choice.mjs?v=41f64a56"),
-      import("./favorites-model.mjs?v=41f64a56"),
+      import("./write-helpers.mjs?v=e449b46f"),
+      import("./ide-helpers.mjs?v=e449b46f"),
+      import("./refresh-helpers.mjs?v=e449b46f"),
+      import("./transcript-model.mjs?v=e449b46f"),
+      import("./scrollback-helpers.mjs?v=e449b46f"),
+      import("./daemon-control-model.mjs?v=e449b46f"),
+      import("./composer-state.mjs?v=e449b46f"),
+      import("./app-menu-state.mjs?v=e449b46f"),
+      import("./graph-backoff.mjs?v=e449b46f"),
+      import("./share-model.mjs?v=e449b46f"),
+      import("./share-ui-state.mjs?v=e449b46f"),
+      import("./cockpit-health-model.mjs?v=e449b46f"),
+      import("./model-choice.mjs?v=e449b46f"),
+      import("./favorites-model.mjs?v=e449b46f"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -5084,7 +5099,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=41f64a56");
+      const guestModule = await import("./guest-app.mjs?v=e449b46f");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
@@ -5223,7 +5238,7 @@ async function bootstrap() {
   const btnSharedStopAll = document.getElementById("btn-shared-stop-all");
   if (btnSharedStopAll) {
     btnSharedStopAll.addEventListener("click", () => {
-      handleShareStopAllClick()
+      handleShareStopAllClick(btnSharedStopAll)
         .then(() => renderSharedList())
         .catch((err) => showSharedListError(err.message));
     });
@@ -5367,7 +5382,7 @@ async function bootstrap() {
   const btnShareStopAll = document.getElementById("btn-v2-share-stop-all");
   if (btnShareStopAll) {
     btnShareStopAll.addEventListener("click", () => {
-      handleShareStopAllClick().catch((err) => showV2DetailError(err.message));
+      handleShareStopAllClick(btnShareStopAll).catch((err) => showV2DetailError(err.message));
     });
   }
   const btnAccessAction = document.getElementById("btn-v2-access-action");
