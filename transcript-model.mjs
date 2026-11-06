@@ -891,6 +891,7 @@ export function resolveFinishedTurn(record, opts) {
     throw new Error("resolveFinishedTurn: now must be a finite epoch-ms number");
   }
   let merged = { ...record, ...opts.resultDelta };
+  if (opts.resultDelta.status === "done" && record.recoveryRetries) merged.recoveryRetries = 0;
   const replyText = typeof opts.resultDelta.output === "string" && opts.resultDelta.output.trim().length > 0
     ? opts.resultDelta.output
     : (typeof record.streaming?.text === "string" && record.streaming.text.trim().length > 0
@@ -941,6 +942,33 @@ export function recoverOrphanedRunningSession(record, opts) {
   }
   if (record.status !== "running") {
     return { ...record };
+  }
+  // Auto-retry (Viktor 2026-11-06: a deploy restart killed a colleague's question mid-turn): an interrupted turn
+  // whose prompt got no answer is re-run ONCE. The prompt goes back to the FRONT of the queue and its in-flight
+  // copy leaves the transcript, so the re-run does not show it twice; any partial reply is dropped (it is re-made).
+  // recoveryRetries caps this at one retry per consecutive failure (a poison prompt that kills the daemon must not
+  // loop); a successful turn resets it (resolveFinishedTurn).
+  const messages = Array.isArray(record.messages) ? record.messages : [];
+  let lastUserAt = -1;
+  messages.forEach((m, i) => { if (m && m.role === "user") lastUserAt = i; });
+  const unanswered = lastUserAt >= 0 && !messages.slice(lastUserAt + 1).some((m) => m && m.role === "assistant");
+  const retries = Number.isInteger(record.recoveryRetries) ? record.recoveryRetries : 0;
+  if (unanswered && retries < 1) {
+    const prompt = messages[lastUserAt];
+    const item = { id: "q" + ((Number.isInteger(record.queueSeq) ? record.queueSeq : 0) + 1), role: "user", text: prompt.text, ts: opts.now };
+    if (typeof prompt.author === "string" && prompt.author) item.author = prompt.author;
+    const retryRecord = appendMessage(
+      {
+        ...record,
+        messages: messages.slice(0, lastUserAt),
+        queue: [item, ...(Array.isArray(record.queue) ? record.queue : [])],
+        queueSeq: Number(item.id.slice(1)),
+        streaming: null,
+        recoveryRetries: retries + 1,
+      },
+      { role: "system", text: "Recovered after a daemon restart; the interrupted turn is being re-run automatically.", now: opts.now },
+    );
+    return resolveFinishedTurn(retryRecord, { resultDelta: { status: "failed" }, now: opts.now });
   }
   const withNote = appendMessage(record, {
     role: "system",
