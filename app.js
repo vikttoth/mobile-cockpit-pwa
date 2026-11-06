@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-11-06 12:00 CET e449b46f`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-11-06 12:00 CET e449b46f";
+// `2026-11-06 13:57 CET 1acc36a9`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-11-06 13:57 CET 1acc36a9";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -4094,6 +4094,11 @@ async function loadDaemonControlStatus() {
   try {
     const { json } = await loadJson(CONFIG.daemonControl.statusEndpoint);
     cachedDaemonStatus = json;
+    // SPEC-DELTA-2026-11-06-own-instance-per-user (AC-324): the daemon owns
+    // the allowed cwds; the shared config.json only holds the default owner's.
+    if (json && Array.isArray(json.allowedCwds) && json.allowedCwds.length > 0 && CONFIG.session) {
+      CONFIG.session.allowedCwds = json.allowedCwds.filter((p) => typeof p === "string" && p);
+    }
     renderDaemonControlBadge(json);
   } catch {
     cachedDaemonStatus = null;
@@ -5036,20 +5041,20 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE, FAVORITES_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=e449b46f"),
-      import("./ide-helpers.mjs?v=e449b46f"),
-      import("./refresh-helpers.mjs?v=e449b46f"),
-      import("./transcript-model.mjs?v=e449b46f"),
-      import("./scrollback-helpers.mjs?v=e449b46f"),
-      import("./daemon-control-model.mjs?v=e449b46f"),
-      import("./composer-state.mjs?v=e449b46f"),
-      import("./app-menu-state.mjs?v=e449b46f"),
-      import("./graph-backoff.mjs?v=e449b46f"),
-      import("./share-model.mjs?v=e449b46f"),
-      import("./share-ui-state.mjs?v=e449b46f"),
-      import("./cockpit-health-model.mjs?v=e449b46f"),
-      import("./model-choice.mjs?v=e449b46f"),
-      import("./favorites-model.mjs?v=e449b46f"),
+      import("./write-helpers.mjs?v=1acc36a9"),
+      import("./ide-helpers.mjs?v=1acc36a9"),
+      import("./refresh-helpers.mjs?v=1acc36a9"),
+      import("./transcript-model.mjs?v=1acc36a9"),
+      import("./scrollback-helpers.mjs?v=1acc36a9"),
+      import("./daemon-control-model.mjs?v=1acc36a9"),
+      import("./composer-state.mjs?v=1acc36a9"),
+      import("./app-menu-state.mjs?v=1acc36a9"),
+      import("./graph-backoff.mjs?v=1acc36a9"),
+      import("./share-model.mjs?v=1acc36a9"),
+      import("./share-ui-state.mjs?v=1acc36a9"),
+      import("./cockpit-health-model.mjs?v=1acc36a9"),
+      import("./model-choice.mjs?v=1acc36a9"),
+      import("./favorites-model.mjs?v=1acc36a9"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -5094,12 +5099,34 @@ async function bootstrap() {
   // cockpit's owner is a guest -- guest-app.mjs takes over the page and the
   // host wiring below never runs (no host views, no reads or writes under the
   // guest's own cursor-cockpit/).
-  if (SHARE_UI.isGuestAccount(activeAccount.username, CONFIG.sharing && CONFIG.sharing.hostUpn)) {
+  // SPEC-DELTA-2026-11-06-own-instance-per-user (AC-322): one hosted PWA
+  // serves every owner. An account that runs its own cockpit (it has a
+  // cursor-cockpit/ folder in its own drive) is the host of THAT cockpit;
+  // the resolved owner then replaces config's hostUpn, so share links, the
+  // Share panel and guest-app all follow it.
+  const cockpitFolder = String((CONFIG.sessionsIndex && CONFIG.sessionsIndex.relativePath) || "cursor-cockpit/sessions.json").split("/")[0];
+  const role = await SHARE_UI.resolveCockpitRole({
+    accountUpn: activeAccount.username,
+    configHostUpn: CONFIG.sharing && CONFIG.sharing.hostUpn,
+    linkHostUpn: SHARE_UI.shareLinkHostFromHash(window.location.hash),
+    probeOwnCockpit: async () => {
+      const res = await graphFetch(`/me/drive/root:/${encodeURIComponent(cockpitFolder)}`);
+      if (res.status === 404) return false;
+      if (!res.ok) throw new Error(`cockpit folder probe failed: ${res.status}`);
+      return true;
+    },
+  });
+  if (CONFIG.sharing && role.hostUpn.toLowerCase() !== String(CONFIG.sharing.hostUpn || "").toLowerCase()) {
+    CONFIG.sharing.hostUpn = role.hostUpn;
+    CONFIG.sharing.hostDisplayName =
+      role.role === "host" && activeAccount.name ? activeAccount.name : SHARE_UI.nameFromEmail(role.hostUpn);
+  }
+  if (role.role === "guest") {
     document.body.dataset.guest = "true";
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=e449b46f");
+      const guestModule = await import("./guest-app.mjs?v=1acc36a9");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,

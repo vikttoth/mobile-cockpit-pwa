@@ -24,6 +24,44 @@ export function isGuestAccount(accountUpn, hostUpn) {
   return accountUpn.trim().toLowerCase() !== hostUpn.trim().toLowerCase();
 }
 
+/** The `host=` parameter of a share link hash (`#shared/<kind>/<id>?host=<upn>`), or null. */
+export function shareLinkHostFromHash(hash) {
+  if (typeof hash !== "string") return null;
+  const m = /[?&]host=([^&]+)/.exec(hash);
+  if (!m) return null;
+  try {
+    const upn = decodeURIComponent(m[1]).trim().toLowerCase();
+    return upn.includes("@") ? upn : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Who is the signed-in account on this page (SPEC-DELTA-2026-11-06-own-
+ * instance-per-user, AC-322)? One hosted PWA serves every owner:
+ *   (a) a share link naming another host -> guest of that host;
+ *   (b) the account is config's hostUpn -> host;
+ *   (c) the account's own drive has a cockpit (probe true) -> host of its own;
+ *   (d) otherwise -> guest of config's hostUpn (the pre-2026-11-06 behaviour).
+ * The probe runs only when (a) and (b) do not decide; a probe that throws
+ * counts as "no own cockpit".
+ * @param {{accountUpn: string, configHostUpn: string, linkHostUpn?: string|null, probeOwnCockpit: () => Promise<boolean>}} opts
+ * @returns {Promise<{role: 'host'|'guest', hostUpn: string}>}
+ */
+export async function resolveCockpitRole({ accountUpn, configHostUpn, linkHostUpn, probeOwnCockpit }) {
+  const me = String(accountUpn || "").trim().toLowerCase();
+  if (linkHostUpn && isGuestAccount(me, linkHostUpn)) return { role: "guest", hostUpn: linkHostUpn };
+  if (!isGuestAccount(me, configHostUpn)) return { role: "host", hostUpn: me };
+  let own = false;
+  try {
+    own = (await probeOwnCockpit()) === true;
+  } catch {
+    own = false;
+  }
+  return own ? { role: "host", hostUpn: me } : { role: "guest", hostUpn: configHostUpn };
+}
+
 /**
  * One guest's connection state from share-relay-status.json, shared by
  * deriveShareRows and deriveSharesByPerson so the two views never drift

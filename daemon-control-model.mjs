@@ -101,13 +101,19 @@ export function isRequestUnhandled(control, lastHandledRequestId) {
  * @param {boolean} opts.daemonAlive
  * @param {boolean} opts.ideMirrorAlive
  * @param {{action: DaemonControlAction, requestId: string, at?: string, result?: 'ok'|'error', error?: string|null}|null} [opts.lastAction]
+ * @param {string} [opts.hostUpn]  the instance owner (SPEC-DELTA-2026-11-06-own-instance-per-user)
+ * @param {string[]} [opts.allowedCwds]  the daemon's allowed cwds, so the PWA composer offers them
  */
 export function buildStatusPayload(opts) {
-  const { nowIso, daemonAlive, ideMirrorAlive, lastAction } = opts || {};
+  const { nowIso, daemonAlive, ideMirrorAlive, lastAction, hostUpn, allowedCwds } = opts || {};
   if (typeof nowIso !== "string" || !nowIso) {
     throw new Error("buildStatusPayload: nowIso is required");
   }
+  const instance = {};
+  if (typeof hostUpn === "string" && hostUpn) instance.hostUpn = hostUpn;
+  if (Array.isArray(allowedCwds) && allowedCwds.length > 0) instance.allowedCwds = allowedCwds.slice();
   return {
+    ...instance,
     schemaVersion: DAEMON_STATUS_SCHEMA_VERSION,
     watchdogCheckedAt: nowIso,
     daemonAlive: !!daemonAlive,
