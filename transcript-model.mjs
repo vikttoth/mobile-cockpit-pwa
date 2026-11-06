@@ -125,7 +125,12 @@ export function buildSessionRecord(opts) {
     owner: "daemon",
     archived: false,
     pendingAction: null,
-    messages: [],
+    // Adopted chats (SPEC-DELTA-2026-11-06) arrive with their past conversation; new sessions start empty.
+    messages: Array.isArray(opts.messages)
+      ? opts.messages
+          .filter((m) => m && VALID_ROLES.includes(m.role) && typeof m.text === "string" && m.text.trim())
+          .map((m) => ({ role: m.role, text: m.text, ts: Number.isFinite(m.ts) ? m.ts : opts.now }))
+      : [],
     queue: [],
     lease: null,
     streaming: null,
@@ -136,7 +141,12 @@ export function buildSessionRecord(opts) {
     sharedWith: [],
     sharingEnabled: false,
     sequenceNumber,
-    customTitle: null,
+    customTitle: typeof opts.customTitle === "string" && opts.customTitle.trim() ? opts.customTitle.trim() : null,
+    // SPEC-DELTA-2026-11-06-adopt-external-cli-chats.md: a chat started outside the cockpit
+    // (found in the CLI store); it keeps its own cwd instead of the ALLOWED_CWDS list.
+    adopted: opts.adopted === true,
+    // true once the FULL past conversation is in messages[] (not just a tail).
+    historyFull: opts.historyFull === true,
     createdAt: nowIso,
     updatedAt: nowIso,
   };
@@ -961,6 +971,7 @@ export function upsertIndexEntry(indexFile, entry) {
       ? sessions.map((s, i) => (i === idx ? entry : s))
       : [...sessions, entry];
   return {
+    ...(Array.isArray(base.adoptedIgnore) ? { adoptedIgnore: base.adoptedIgnore } : {}),
     schemaVersion: base.schemaVersion || 1,
     sessions: nextSessions,
   };
@@ -984,7 +995,16 @@ export function removeIndexEntry(indexFile, id) {
     err.code = "SESSION_NOT_FOUND";
     throw err;
   }
+  // The deleted session's chat still sits in ~/.cursor/chats; remember its id so the
+  // external-chat adopt step (SPEC-DELTA-2026-11-06) never resurrects it.
+  const removed = sessions.find((s) => s && s.id === id);
+  const ignore = Array.isArray(base.adoptedIgnore) ? base.adoptedIgnore : [];
+  const adoptedIgnore =
+    removed && typeof removed.chatId === "string" && !ignore.includes(removed.chatId)
+      ? [...ignore, removed.chatId]
+      : ignore;
   return {
+    ...(adoptedIgnore.length > 0 ? { adoptedIgnore } : {}),
     schemaVersion: base.schemaVersion || 1,
     sessions: next,
   };
