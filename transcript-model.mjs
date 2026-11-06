@@ -121,7 +121,8 @@ export function buildSessionRecord(opts) {
     id: opts.id,
     chatId: opts.chatId ?? null,
     parentId: opts.parentId ?? null,
-    status: "pending",
+    // An adopted chat (SPEC-DELTA-2026-11-06) is idle, not "waiting on you": the Tracker maps pending to attention.
+    status: opts.adopted === true ? "done" : "pending",
     owner: "daemon",
     archived: false,
     pendingAction: null,
@@ -282,6 +283,8 @@ export function buildIndexEntry(record) {
     owner: record.owner,
     archived: record.archived,
     updatedAt: record.updatedAt,
+    // a silent transient-failure retry is waiting (SPEC-DELTA-2026-11-06-restart-auto-retry.md): the Tracker shows "retrying"
+    ...(record.retryAfter ? { retryAfter: record.retryAfter } : {}),
   };
 }
 
@@ -817,7 +820,7 @@ export function startNextTurn(record, opts) {
     { ...record, queue: rest, pendingAction: null },
     { role: "user", text: message.text, now: opts.now, author: message.author },
   );
-  return { ...appended, status: "running", startedAt: isoNow(opts.now) };
+  return { ...appended, status: "running", startedAt: isoNow(opts.now), retryAfter: null };
 }
 
 /**
@@ -890,7 +893,7 @@ export function resolveFinishedTurn(record, opts) {
   if (!Number.isFinite(opts?.now)) {
     throw new Error("resolveFinishedTurn: now must be a finite epoch-ms number");
   }
-  let merged = { ...record, ...opts.resultDelta };
+  let merged = { ...record, ...opts.resultDelta, retryAfter: null };
   if (opts.resultDelta.status === "done" && record.recoveryRetries) merged.recoveryRetries = 0;
   const replyText = typeof opts.resultDelta.output === "string" && opts.resultDelta.output.trim().length > 0
     ? opts.resultDelta.output
