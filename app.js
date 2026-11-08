@@ -37,8 +37,8 @@
 // =============================================================================
 //
 // BUILD_STAMP is replaced by the deploy script before upload (sed on
-// `2026-11-06 16:11 CET 33984ebb`). Keep the string literal — index.html cache-busts on it.
-const BUILD_STAMP = "2026-11-06 16:11 CET 33984ebb";
+// `2026-11-08 19:09 CET 270d8c70`). Keep the string literal — index.html cache-busts on it.
+const BUILD_STAMP = "2026-11-08 19:09 CET 270d8c70";
 
 /** Loaded asynchronously from ./config.json at boot. See pwa/config.json. */
 let CONFIG = null;
@@ -604,28 +604,33 @@ async function v2SetCustomTitle(id, customTitle) {
  * @returns {Promise<void>}
  */
 async function v2DeleteSession(id) {
-  const res = await graphFetch(v2RecordEndpoint(id), { method: "DELETE" });
-  if (!res.ok && res.status !== 404) {
-    const bodyText = await res.text().catch(() => "");
-    throw new Error(`v2DeleteSession: DELETE failed ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
-  }
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // SPEC-DELTA-2026-11-08-orphan-index-rows (AC-O01): index row FIRST, record file second (same order as
+  // lib/session-store.mjs#deleteSession). A failure between the two leaves only an invisible leftover file,
+  // never a visible row whose record is gone (a dead Tracker entry).
+  let indexDone = false;
+  for (let attempt = 0; attempt < 2 && !indexDone; attempt++) {
     const { index, etag } = await loadV2Index();
     let nextIndex;
     try {
       nextIndex = V2_MODEL.removeIndexEntry(index, id);
     } catch (err) {
-      if (err.code === "SESSION_NOT_FOUND") return; // already gone from the index too
-      throw err;
+      if (err.code !== "SESSION_NOT_FOUND") throw err;
+      indexDone = true; // already gone from the index
+      break;
     }
     try {
       await putV2Index(nextIndex, etag);
-      return;
+      indexDone = true;
     } catch (err) {
       if (err.code !== "PRECONDITION_FAILED" || attempt > 0) throw err;
     }
   }
-  throw new Error(`v2DeleteSession(${id}): index retries exhausted`);
+  if (!indexDone) throw new Error(`v2DeleteSession(${id}): index retries exhausted`);
+  const res = await graphFetch(v2RecordEndpoint(id), { method: "DELETE" });
+  if (!res.ok && res.status !== 404) {
+    const bodyText = await res.text().catch(() => "");
+    throw new Error(`v2DeleteSession: DELETE failed ${res.status} ${res.statusText}: ${bodyText.slice(0, 300)}`);
+  }
 }
 
 // SPEC task 15 (S-138, AC-163): the phone's "Take over" when the laptop holds
@@ -1598,6 +1603,10 @@ function wirePinButtons() {
 // Copilot (every browser-tab-mirror entry, unfiltered).
 // -----------------------------------------------------------------------------
 
+/** AC-O05: where the Tracker was left from ("tracker" while a detail opened from it loads) and a one-shot notice. */
+let v2DetailOrigin = null;
+let trackerNotice = null;
+
 function showTrackerError(message) {
   const el = document.getElementById("tracker-error-state");
   if (el) {
@@ -2274,6 +2283,10 @@ async function renderTrackerView() {
   if (!groupsEl || !empty || !errorEl || !IDE_HELPERS) return;
   errorEl.hidden = true;
   errorEl.textContent = "";
+  if (trackerNotice) {
+    showTrackerError(trackerNotice);
+    trackerNotice = null;
+  }
 
   await refreshSharesIfStale().catch(() => null); // best-effort: the "Shared by me" group uses the cache
   let claudeSnap, cursorSnap, browserSnap, v2IndexResult, digestsDoc;
@@ -2475,6 +2488,7 @@ async function renderTrackerView() {
   appendTrackerGroup(groupsEl, "Cursor", cursorRows, (row) => {
     if (row.archived) return openArchived(row, cursorSnap, "cursor");
     if (row.kind === "cli") {
+      v2DetailOrigin = "tracker";
       setView("v2-detail", { sessionId: row.sessionId });
       return;
     }
@@ -3074,10 +3088,19 @@ async function renderV2Detail(sessionId) {
     return;
   }
   if (!record) {
+    // SPEC-DELTA-2026-11-08-orphan-index-rows (AC-O05): say it where the click came from. The daemon rebuilds
+    // or removes such a row within a minute.
+    if (v2DetailOrigin === "tracker") {
+      v2DetailOrigin = null;
+      trackerNotice = "This session's data is missing; the cockpit is repairing it. Try again in a minute.";
+      setView("tracker");
+      return;
+    }
     showV2ListError(`v2 session not found: ${sessionId}`);
     setView("v2-list");
     return;
   }
+  v2DetailOrigin = null;
   activeV2DetailRecord = record;
 
   const set = (id, text) => {
@@ -5043,20 +5066,20 @@ async function bootstrap() {
   try {
     let GRAPH_BACKOFF_HELPERS;
     [WRITE_HELPERS, IDE_HELPERS, REFRESH_HELPERS, V2_MODEL, SCROLLBACK_HELPERS, DAEMON_CONTROL_MODEL, COMPOSER_STATE, APP_MENU_STATE, GRAPH_BACKOFF_HELPERS, SHARE_MODEL, SHARE_UI, COCKPIT_HEALTH_MODEL, MODEL_CHOICE, FAVORITES_MODEL] = await Promise.all([
-      import("./write-helpers.mjs?v=33984ebb"),
-      import("./ide-helpers.mjs?v=33984ebb"),
-      import("./refresh-helpers.mjs?v=33984ebb"),
-      import("./transcript-model.mjs?v=33984ebb"),
-      import("./scrollback-helpers.mjs?v=33984ebb"),
-      import("./daemon-control-model.mjs?v=33984ebb"),
-      import("./composer-state.mjs?v=33984ebb"),
-      import("./app-menu-state.mjs?v=33984ebb"),
-      import("./graph-backoff.mjs?v=33984ebb"),
-      import("./share-model.mjs?v=33984ebb"),
-      import("./share-ui-state.mjs?v=33984ebb"),
-      import("./cockpit-health-model.mjs?v=33984ebb"),
-      import("./model-choice.mjs?v=33984ebb"),
-      import("./favorites-model.mjs?v=33984ebb"),
+      import("./write-helpers.mjs?v=270d8c70"),
+      import("./ide-helpers.mjs?v=270d8c70"),
+      import("./refresh-helpers.mjs?v=270d8c70"),
+      import("./transcript-model.mjs?v=270d8c70"),
+      import("./scrollback-helpers.mjs?v=270d8c70"),
+      import("./daemon-control-model.mjs?v=270d8c70"),
+      import("./composer-state.mjs?v=270d8c70"),
+      import("./app-menu-state.mjs?v=270d8c70"),
+      import("./graph-backoff.mjs?v=270d8c70"),
+      import("./share-model.mjs?v=270d8c70"),
+      import("./share-ui-state.mjs?v=270d8c70"),
+      import("./cockpit-health-model.mjs?v=270d8c70"),
+      import("./model-choice.mjs?v=270d8c70"),
+      import("./favorites-model.mjs?v=270d8c70"),
     ]);
     graphBackoff = GRAPH_BACKOFF_HELPERS.createGraphBackoff();
   } catch (err) {
@@ -5128,7 +5151,7 @@ async function bootstrap() {
     setStatusBadge(`signed in: ${activeAccount.username} (guest)`, "ok");
     if (connEl) connEl.textContent = "online";
     try {
-      const guestModule = await import("./guest-app.mjs?v=33984ebb");
+      const guestModule = await import("./guest-app.mjs?v=270d8c70");
       GUEST_APP = guestModule.startGuestMode({
         config: CONFIG,
         account: activeAccount,
